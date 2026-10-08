@@ -21,6 +21,8 @@ typedef struct {
   int respcode;
 } rtsp_message;
 
+void rtsp_dispatch_request(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp);
+
 void msg_retain(rtsp_message *msg);
 void msg_free(rtsp_message **msgh);
 

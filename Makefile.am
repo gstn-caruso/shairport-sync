@@ -35,3 +35,8 @@ install-exec-hook:
 	$(MKDIR_P) $(DESTDIR)$(sysconfdir)
 	$(INSTALL_DATA) $(top_srcdir)/scripts/shairport-sync.conf $(DESTDIR)$(sysconfdir)/shairport-sync.conf.sample
 endif
+check_PROGRAMS = rtsp-dispatch-test
+rtsp_dispatch_test_SOURCES = tests/rtsp_dispatch_test.c $(shairport_sync_SOURCES)
+rtsp_dispatch_test_CFLAGS = $(AM_CFLAGS) -Dmain=shairport_receiver_main
+rtsp_dispatch_test_LDADD = $(shairport_sync_LDADD)
+TESTS += rtsp-dispatch-test

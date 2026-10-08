@@ -854,52 +854,6 @@ void handle_record_2(rtsp_conn_info *conn, __attribute((unused)) rtsp_message *r
   resp->respcode = 200;
 }
 
-void handle_record(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
-  debug(1, "Connection %d: RECORD", conn->connection_number);
-  if ((conn != NULL) && (principal_conn == conn)) {
-    if (conn->player_thread)
-      warn("Connection %d: RECORD: Duplicate RECORD message -- ignored", conn->connection_number);
-    else {
-      activity_monitor_signify_activity(1);
-      player_play(conn); // the thread better be 0
-    }
-
-    resp->respcode = 200;
-    // I think this is for telling the client what the absolute minimum latency
-    // actually is,
-    // and when the client specifies a latency, it should be added to this figure.
-
-    // Thus, [the old version of] AirPlay's latency figure of 77175, when added to 11025 gives you
-    // exactly 88200
-    // and iTunes' latency figure of 88553, when added to 11025 gives you 99578,
-    // pretty close to the 99400 we guessed.
-
-    msg_add_header(resp, "Audio-Latency", "11025");
-
-    char *p;
-    uint32_t rtptime = 0;
-    char *hdr = msg_get_header(req, "RTP-Info");
-
-    if (hdr) {
-      // debug(1,"FLUSH message received: \"%s\".",hdr);
-      // get the rtp timestamp
-      p = strstr(hdr, "rtptime=");
-      if (p) {
-        p = strchr(p, '=');
-        if (p) {
-          rtptime = uatoi(p + 1); // unsigned integer -- up to 2^32-1
-          // rtptime--;
-          // debug(1,"RTSP Flush Requested by handle_record: %u.",rtptime);
-          player_flush(rtptime, conn);
-        }
-      }
-    }
-  } else {
-    warn("Connection %d RECORD received without having the player (no ANNOUNCE?)",
-         conn->connection_number);
-    resp->respcode = 451;
-  }
-}
 
 
 int add_pstring_to_malloc(const char *s, void **allocation, size_t *size) {
@@ -1338,11 +1292,6 @@ void handle_setrate(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
   resp->respcode = 501; // Not Implemented
 }
 
-void handle_unimplemented_ap1(__attribute((unused)) rtsp_conn_info *conn, rtsp_message *req,
-                              rtsp_message *resp) {
-  debug_log_rtsp_message(1, "request not recognised for AirPlay 1 operation", req);
-  resp->respcode = 501;
-}
 
 void handle_setrateanchori(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
   debug(2, "Connection %d: SETRATEANCHORI %s :: Content-Length %d", conn->connection_number,
@@ -2160,35 +2109,7 @@ void handle_setpeersx(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *res
   resp->respcode = 200;
 }
 
-void handle_options(rtsp_conn_info *conn, __attribute__((unused)) rtsp_message *req,
-                    rtsp_message *resp) {
-  debug_log_rtsp_message(2, "OPTIONS request", req);
-  debug(3, "Connection %d: OPTIONS", conn->connection_number);
-  resp->respcode = 200;
-  msg_add_header(resp, "Public",
-                 "ANNOUNCE, SETUP, RECORD, "
-                 "PAUSE, FLUSH, TEARDOWN, "
-                 "OPTIONS, GET_PARAMETER, SET_PARAMETER");
-}
 
-void handle_teardown(rtsp_conn_info *conn, __attribute__((unused)) rtsp_message *req,
-                     rtsp_message *resp) {
-  debug(4, "Connection %d: TEARDOWN (Classic) %s Content-Length %d", conn->connection_number, req->path, req->contentlength);
-  debug_log_rtsp_message_conn(conn, 4, "TEARDOWN (Classic)", req);
-
-  // most of the cleanup here is done by the exiting player_thread, if any, and by the event
-  // receiver if and when it exits.
-
-  if (conn->player_thread) {
-    debug(2, "TEARDOWN (Classic) is stopping a player thread before exiting...");
-    player_stop(conn);                    // this nulls the player_thread and cancels the threads...
-    activity_monitor_signify_activity(0); // inactive, and should be after command_stop()
-  }
-
-  resp->respcode = 200;
-  msg_add_header(resp, "Connection", "close");
-  conn->stop = 1; //an anomaly needs to be fixed
-}
 
 void handle_options_2(rtsp_conn_info *conn, __attribute__((unused)) rtsp_message *req,
                       rtsp_message *resp) {
@@ -2196,9 +2117,9 @@ void handle_options_2(rtsp_conn_info *conn, __attribute__((unused)) rtsp_message
   debug(3, "Connection %d: OPTIONS", conn->connection_number);
   resp->respcode = 200;
   msg_add_header(resp, "Public",
-                 "ANNOUNCE, SETUP, RECORD, "
-                 "PAUSE, FLUSH, FLUSHBUFFERED, TEARDOWN, "
-                 "OPTIONS, POST, GET, PUT");
+                 "OPTIONS, SETUP, RECORD, FLUSH, FLUSHBUFFERED, TEARDOWN, "
+                 "GET_PARAMETER, SET_PARAMETER, POST, GET, SETPEERS, SETPEERSX, "
+                 "SETRATEANCHORTI, SETRATE");
 }
 
 void handle_teardown_2(rtsp_conn_info *conn, __attribute__((unused)) rtsp_message *req,
@@ -2936,121 +2857,6 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
   plist_free(messagePlist);
 }
 
-void handle_setup(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
-  debug(3, "Connection %d: SETUP", conn->connection_number);
-  resp->respcode = 451; // invalid arguments -- expect them
-  // check this connection has the principal_conn, obtained during a prior ANNOUNCE
-  if ((conn != NULL) && (principal_conn == conn)) {
-    uint16_t cport, tport;
-    char *ar = msg_get_header(req, "Active-Remote");
-    if (ar) {
-      debug(2, "Connection %d: SETUP: Active-Remote string seen: \"%s\".", conn->connection_number,
-            ar);
-      // get the active remote
-      if (conn->dacp_active_remote) // this is in case SETUP was previously called
-        free(conn->dacp_active_remote);
-      conn->dacp_active_remote = strdup(ar);
-    } else {
-      debug(2, "Connection %d: SETUP: Note: no Active-Remote information seen.",
-            conn->connection_number);
-      if (conn->dacp_active_remote) { // this is in case SETUP was previously called
-        free(conn->dacp_active_remote);
-        conn->dacp_active_remote = NULL;
-      }
-    }
-
-    ar = msg_get_header(req, "DACP-ID");
-    if (ar) {
-      debug(2, "Connection %d: SETUP: DACP-ID string seen: \"%s\".", conn->connection_number, ar);
-      if (conn->dacp_id) // this is in case SETUP was previously called
-        free(conn->dacp_id);
-      conn->dacp_id = strdup(ar);
-    } else {
-      debug(2, "Connection %d: SETUP doesn't include DACP-ID string information.",
-            conn->connection_number);
-      if (conn->dacp_id) { // this is in case SETUP was previously called
-        free(conn->dacp_id);
-        conn->dacp_id = NULL;
-      }
-    }
-
-    char *hdr = msg_get_header(req, "Transport");
-    if (hdr) {
-      char *p;
-      p = strstr(hdr, "control_port=");
-      if (p) {
-        p = strchr(p, '=') + 1;
-        cport = atoi(p);
-
-        p = strstr(hdr, "timing_port=");
-        if (p) {
-          p = strchr(p, '=') + 1;
-          tport = atoi(p);
-
-          if (conn->rtp_running) {
-            if ((conn->remote_control_port != cport) || (conn->remote_timing_port != tport)) {
-              warn("Connection %d: Duplicate SETUP message with different control (old %u, new %u) "
-                   "or "
-                   "timing (old %u, new "
-                   "%u) ports! This is probably fatal!",
-                   conn->connection_number, conn->remote_control_port, cport,
-                   conn->remote_timing_port, tport);
-            } else {
-              warn("Connection %d: Duplicate SETUP message with the same control (%u) and timing "
-                   "(%u) "
-                   "ports. This is "
-                   "probably not fatal.",
-                   conn->connection_number, conn->remote_control_port, conn->remote_timing_port);
-            }
-          } else {
-            rtp_setup(&conn->local, &conn->remote, cport, tport, conn);
-          }
-          if (conn->local_audio_port != 0) {
-
-            char resphdr[256] = "";
-            snprintf(resphdr, sizeof(resphdr),
-                     "RTP/AVP/"
-                     "UDP;unicast;interleaved=0-1;mode=record;control_port=%d;"
-                     "timing_port=%d;server_"
-                     "port=%d",
-                     conn->local_control_port, conn->local_timing_port, conn->local_audio_port);
-
-            msg_add_header(resp, "Transport", resphdr);
-
-            msg_add_header(resp, "Session", "1");
-
-            resp->respcode = 200; // it all worked out okay
-            debug(2,
-                  "Connection %d: SETUP DACP-ID \"%s\" from %s to %s with UDP ports Control: "
-                  "%d, Timing: %d and Audio: %d.",
-                  conn->connection_number, conn->dacp_id, (char *)&conn->client_ip_string,
-                  (char *)&conn->self_ip_string, conn->local_control_port, conn->local_timing_port,
-                  conn->local_audio_port);
-
-          } else {
-            debug(1, "Connection %d: SETUP seems to specify a null audio port.",
-                  conn->connection_number);
-          }
-        } else {
-          debug(1, "Connection %d: SETUP doesn't specify a timing_port.", conn->connection_number);
-        }
-      } else {
-        debug(1, "Connection %d: SETUP doesn't specify a control_port.", conn->connection_number);
-      }
-    } else {
-      debug(1, "Connection %d: SETUP doesn't contain a Transport header.", conn->connection_number);
-    }
-  } else {
-    warn("Connection %d SETUP received without having the player (no ANNOUNCE?)",
-         conn->connection_number);
-  }
-  if (resp->respcode == 200) {
-    do_pthread_setname(&conn->thread, "rtsp_1_%d", conn->connection_number);
-  } else {
-    debug(1, "Connection %d: SETUP error -- releasing the player lock.", conn->connection_number);
-    release_play_lock(conn);
-  }
-}
 
 /*
 static void handle_ignore(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
@@ -3179,450 +2985,38 @@ static void handle_set_parameter(rtsp_conn_info *conn, rtsp_message *req, rtsp_m
   resp->respcode = 200;
 }
 
-static void handle_announce(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
-  debug(2, "Connection %d: ANNOUNCE", conn->connection_number);
-  conn->airplay_stream_category = classic_airplay_stream; // already set in Classic AirPlay build
-  play_lock_r get_play_status = get_play_lock(
-      conn, 1); // always allow interruption in the Classic-AirPlay-in-AirPlay-2 mode (?)
-  if (get_play_status != play_lock_aquisition_failed) {
 
-    // this has already been checked for in Classic Airplay and would be play_lock_already_acquired
-    // here. if this new session did not break in, then it's okay to reset the next UDP ports to the
-    // start of the range
-    if (get_play_status ==
-        play_lock_acquired_without_breaking_in) { // if it's safe to re-use original UDP ports
-      resetFreeUDPPort();
+static const struct method_handler {
+  const char *method;
+  void (*handler)(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp);
+} method_handlers[] = {{"OPTIONS", handle_options_2},
+                       {"FLUSH", handle_flush},
+                       {"TEARDOWN", handle_teardown_2},
+                       {"SETUP", handle_setup_2},
+                       {"GET_PARAMETER", handle_get_parameter},
+                       {"SET_PARAMETER", handle_set_parameter},
+                       {"RECORD", handle_record_2},
+                       {"GET", handle_get},
+                       {"POST", handle_post},
+                       {"SETPEERS", handle_setpeers},
+                       {"SETPEERSX", handle_setpeersx},
+                       {"SETRATEANCHORTI", handle_setrateanchori},
+                       {"FLUSHBUFFERED", handle_flushbuffered},
+                       {"SETRATE", handle_setrate},
+                       {NULL, NULL}};
+
+void rtsp_dispatch_request(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
+  resp->respcode = 501;
+  for (const struct method_handler *method = method_handlers; method->method; method++) {
+    if (strcmp(method->method, req->method) == 0) {
+      method->handler(conn, req, resp);
+      return;
     }
-
-    /*
-    {
-      char *cp = req->content;
-      int cp_left = req->contentlength;
-      while (cp_left > 1) {
-        if (strlen(cp) != 0)
-          debug(1,">>>>>> %s", cp);
-        cp += strlen(cp) + 1;
-        cp_left -= strlen(cp) + 1;
-      }
-    }
-    */
-
-    // In AirPlay 2, an ANNOUNCE signifies the start of an AirPlay 1 session.
-    debug(1, "Connection %d: %s connection from %s:%u to self at %s:%u.", conn->connection_number,
-          get_category_string(conn->airplay_stream_category), conn->client_ip_string,
-          conn->client_rtsp_port, conn->self_ip_string, conn->self_rtsp_port);
-    conn->airplay_type = ap_1;
-    conn->timing_type = ts_ntp;
-    conn->type = 96; // this is the AirPlay 2 code for Realtime Audio -- not sure it's right
-    conn->stream.type = ast_unknown;
-    resp->respcode = 200; // presumed OK
-    char *pssid = NULL;
-    char *paesiv = NULL;
-    char *prsaaeskey = NULL;
-    char *pfmtp = NULL;
-    char *pminlatency = NULL;
-    char *pmaxlatency = NULL;
-    //    char *pAudioMediaInfo = NULL;
-    char *pUncompressedCDAudio = NULL;
-    char *cp = req->content;
-    int cp_left = req->contentlength;
-    char *next;
-    while (cp_left && cp) {
-      next = nextline(cp, cp_left);
-      cp_left -= next - cp;
-
-      if (!strncmp(cp, "a=rtpmap:96 L16/44100/2", strlen("a=rtpmap:96 L16/44100/2")))
-        pUncompressedCDAudio = cp + strlen("a=rtpmap:96 L16/44100/2");
-
-      //      if (!strncmp(cp, "m=audio", strlen("m=audio")))
-      //        pAudioMediaInfo = cp + strlen("m=audio");
-
-      if (!strncmp(cp, "o=iTunes", strlen("o=iTunes")))
-        pssid = cp + strlen("o=iTunes");
-
-      if (!strncmp(cp, "a=fmtp:", strlen("a=fmtp:")))
-        pfmtp = cp + strlen("a=fmtp:");
-
-      if (!strncmp(cp, "a=aesiv:", strlen("a=aesiv:")))
-        paesiv = cp + strlen("a=aesiv:");
-
-      if (!strncmp(cp, "a=rsaaeskey:", strlen("a=rsaaeskey:")))
-        prsaaeskey = cp + strlen("a=rsaaeskey:");
-
-      if (!strncmp(cp, "a=min-latency:", strlen("a=min-latency:")))
-        pminlatency = cp + strlen("a=min-latency:");
-
-      if (!strncmp(cp, "a=max-latency:", strlen("a=max-latency:")))
-        pmaxlatency = cp + strlen("a=max-latency:");
-
-      cp = next;
-    }
-
-    if (pUncompressedCDAudio) {
-      debug(2, "An uncompressed PCM stream has been detected.");
-      conn->stream.type = ast_uncompressed;
-      conn->frames_per_packet = 352; // number of audio frames per packet.
-      debug(2, "Set conn->input_rate: 44100");
-      conn->input_rate = 44100;
-      conn->input_num_channels = 2;
-      conn->input_bit_depth = 16;
-      conn->input_bytes_per_frame = conn->input_num_channels * ((conn->input_bit_depth + 7) / 8);
-
-      /*
-      int y = strlen(pAudioMediaInfo);
-      if (y > 0) {
-        char obf[4096];
-        if (y > 4096)
-          y = 4096;
-        char *p = pAudioMediaInfo;
-        char *obfp = obf;
-        int obfc;
-        for (obfc = 0; obfc < y; obfc++) {
-          snprintf(obfp, 3, "%02X", (unsigned int)*p);
-          p++;
-          obfp += 2;
-        };
-        *obfp = 0;
-        debug(1, "AudioMediaInfo: \"%s\".", obf);
-      }
-      */
-    }
-
-    if (pssid) {
-      uint32_t ssid = uatoi(pssid);
-      debug(3, "Synchronisation Source Identifier: %08X,%u", ssid, ssid);
-    }
-
-    if (pminlatency) {
-      conn->minimum_latency = atoi(pminlatency);
-      debug(3, "Minimum latency %d specified", conn->minimum_latency);
-    }
-
-    if (pmaxlatency) {
-      conn->maximum_latency = atoi(pmaxlatency);
-      debug(3, "Maximum latency %d specified", conn->maximum_latency);
-    }
-
-    if ((paesiv == NULL) && (prsaaeskey == NULL)) {
-      // debug(1,"Unencrypted session requested?");
-      conn->stream.encrypted = 0;
-    } else if ((paesiv != NULL) && (prsaaeskey != NULL)) {
-      conn->stream.encrypted = 1;
-      // debug(1,"Encrypted session requested");
-    } else {
-      warn("Invalid Announce message -- missing paesiv or prsaaeskey.");
-      resp->respcode = 456; // 456 - Header Field Not Valid for Resource
-      // goto out;
-    }
-    if (conn->stream.encrypted) {
-      int len, keylen;
-      uint8_t *aesiv = base64_dec(paesiv, &len);
-      if (len == 16) {
-        memcpy(conn->stream.aesiv, aesiv, 16);
-      } else {
-        resp->respcode = 456; // 456 - Header Field Not Valid for Resource
-        warn("client announced aeskey of %d bytes, wanted 16", len);
-      }
-      free(aesiv);
-
-      uint8_t *rsaaeskey = base64_dec(prsaaeskey, &len);
-      uint8_t *aeskey = rsa_apply(rsaaeskey, len, &keylen, RSA_MODE_KEY);
-      free(rsaaeskey);
-      if (keylen == 16) {
-        memcpy(conn->stream.aeskey, aeskey, 16);
-      } else {
-        resp->respcode = 456; // 456 - Header Field Not Valid for Resource
-        warn("client announced rsaaeskey of %d bytes, wanted 16", keylen);
-      }
-      free(aeskey);
-    }
-
-    if (pfmtp) {
-      conn->stream.type = ast_apple_lossless;
-      debug(3, "An ALAC stream has been detected.");
-
-      // Set reasonable connection defaults
-      conn->stream.fmtp[0] = 96;
-      conn->stream.fmtp[1] = 352;
-      conn->stream.fmtp[2] = 0;
-      conn->stream.fmtp[3] = 16;
-      conn->stream.fmtp[4] = 40;
-      conn->stream.fmtp[5] = 10;
-      conn->stream.fmtp[6] = 14;
-      conn->stream.fmtp[7] = 2;
-      conn->stream.fmtp[8] = 255;
-      conn->stream.fmtp[9] = 0;
-      conn->stream.fmtp[10] = 0;
-      conn->stream.fmtp[11] = 44100;
-
-      unsigned int i = 0;
-      unsigned int max_param = sizeof(conn->stream.fmtp) / sizeof(conn->stream.fmtp[0]);
-      char *found;
-      while ((found = strsep(&pfmtp, " \t")) != NULL && i < max_param) {
-        conn->stream.fmtp[i++] = atoi(found);
-      }
-      // here we should check the sanity of the fmtp values
-      // for (i = 0; i < sizeof(conn->stream.fmtp) / sizeof(conn->stream.fmtp[0]); i++)
-      //  debug(1,"  fmtp[%2d] is: %10d",i,conn->stream.fmtp[i]);
-
-      // set the parameters of the player (as distinct from the parameters of the decoder -- that's
-      // done later).
-      conn->frames_per_packet = conn->stream.fmtp[1]; // number of audio frames per packet.
-      conn->input_rate = conn->stream.fmtp[11];
-      debug(2, "Set conn->input_rate: %u.", conn->input_rate);
-      conn->input_num_channels = conn->stream.fmtp[7];
-      conn->input_bit_depth = conn->stream.fmtp[3];
-      conn->input_bytes_per_frame = conn->input_num_channels * ((conn->input_bit_depth + 7) / 8);
-    }
-
-    if ((resp->respcode == 200) && (conn->stream.type != ast_unknown)) {
-      char *hdr = msg_get_header(req, "X-Apple-Client-Name");
-      if (hdr) {
-        debug(1, "Play connection from device named \"%s\" on RTSP conversation thread %d.", hdr,
-              conn->connection_number);
-      }
-      hdr = msg_get_header(req, "User-Agent");
-      if (hdr) {
-        conn->UserAgent = strdup(hdr);
-        debug(2, "Play connection from user agent \"%s\" on RTSP conversation thread %d.", hdr,
-              conn->connection_number);
-        // if the user agent is AirPlay and has a version number of 353 or less (from iOS 11.1,2)
-        // use the older way of calculating the latency
-
-        char *p = strstr(hdr, "AirPlay");
-        if (p) {
-          p = strchr(p, '/');
-          if (p) {
-            conn->AirPlayVersion = atoi(p + 1);
-            debug(2, "AirPlay version %d detected.", conn->AirPlayVersion);
-          }
-        }
-        conn->input_format_is_valid = 1;
-      }
-    } else {
-      warn("Can not process the following ANNOUNCE message:");
-      // print each line of the request content
-      // the problem is that nextline has replace all returns, newlines, etc. by
-      // NULLs
-      char *lcp = req->content;
-      int lcp_left = req->contentlength;
-      while (lcp_left > 1) {
-        if (strlen(lcp) != 0)
-          warn("    %s", lcp);
-        lcp += strlen(lcp) + 1;
-        lcp_left -= strlen(lcp) + 1;
-      }
-    }
-    debug(2, "Connection %d: ANNOUNCE has completed.", conn->connection_number);
-  } else {
-    // can't get the principal_conn
-    resp->respcode = 453;
   }
 }
 
-static struct method_handler {
-  char *method;
-  void (*ap1_handler)(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp); // for AirPlay 1
-  void (*ap2_handler)(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp); // for AirPlay 2
-} method_handlers[] = {{"OPTIONS", handle_options, handle_options_2},
-                       {"ANNOUNCE", handle_announce, handle_announce},
-                       {"FLUSH", handle_flush, handle_flush},
-                       {"TEARDOWN", handle_teardown, handle_teardown_2},
-                       {"SETUP", handle_setup, handle_setup_2},
-                       {"GET_PARAMETER", handle_get_parameter, handle_get_parameter},
-                       {"SET_PARAMETER", handle_set_parameter, handle_set_parameter},
-                       {"RECORD", handle_record, handle_record_2},
-                       {"GET", handle_get, handle_get},
-                       {"POST", handle_post, handle_post},
-                       {"SETPEERS", handle_unimplemented_ap1, handle_setpeers},
-                       {"SETPEERSX", handle_unimplemented_ap1, handle_setpeersx},
-                       {"SETRATEANCHORTI", handle_unimplemented_ap1, handle_setrateanchori},
-                       {"FLUSHBUFFERED", handle_unimplemented_ap1, handle_flushbuffered},
-                       {"SETRATE", handle_unimplemented_ap1, handle_setrate},
-                       {NULL, NULL, NULL}};
-
-static void apple_challenge(int lfd, rtsp_message *req, rtsp_message *resp) {
-  char *hdr = msg_get_header(req, "Apple-Challenge");
-  if (!hdr)
-    return;
-  SOCKADDR fdsa;
-  socklen_t sa_len = sizeof(fdsa);
-  getsockname(lfd, (struct sockaddr *)&fdsa, &sa_len);
-
-  int chall_len;
-  uint8_t *chall = base64_dec(hdr, &chall_len);
-  if (chall == NULL)
-    die("null chall in apple_challenge");
-  uint8_t buf[48], *bp = buf;
-  int i;
-  memset(buf, 0, sizeof(buf));
-
-  if (chall_len > 16) {
-    warn("oversized Apple-Challenge!");
-    free(chall);
-    return;
-  }
-  memcpy(bp, chall, chall_len);
-  free(chall);
-  bp += chall_len;
-
-#ifdef AF_INET6
-  if (fdsa.SAFAMILY == AF_INET6) {
-    struct sockaddr_in6 *sa6 = (struct sockaddr_in6 *)(&fdsa);
-    memcpy(bp, sa6->sin6_addr.s6_addr, 16);
-    bp += 16;
-  } else
-#endif
-  {
-    struct sockaddr_in *sa = (struct sockaddr_in *)(&fdsa);
-    memcpy(bp, &sa->sin_addr.s_addr, 4);
-    bp += 4;
-  }
-
-  for (i = 0; i < 6; i++)
-    *bp++ = config.ap1_prefix[i];
-
-  int buflen, resplen;
-  buflen = bp - buf;
-  if (buflen < 0x20)
-    buflen = 0x20;
-
-  uint8_t *challresp = rsa_apply(buf, buflen, &resplen, RSA_MODE_AUTH);
-  char *encoded = base64_enc(challresp, resplen);
-  if (encoded == NULL)
-    die("could not allocate memory for \"encoded\"");
-  // strip the padding.
-  char *padding = strchr(encoded, '=');
-  if (padding)
-    *padding = 0;
-
-  msg_add_header(resp, "Apple-Response", encoded); // will be freed when the response is freed.
-  free(challresp);
-  free(encoded);
-}
-
-static char *make_nonce(void) {
-  uint8_t random[8];
-  int lfd = open("/dev/urandom", O_RDONLY);
-  if (lfd < 0)
-    die("could not open /dev/urandom!");
-  // int ignore =
-  if (read(lfd, random, sizeof(random)) != sizeof(random))
-    debug(1, "Error reading /dev/urandom");
-  safe_socket_close(&lfd);
-  return base64_enc(random, 8); // returns a pointer to malloc'ed memory
-}
-
-static int rtsp_classic_airplay_auth(char **nonce, rtsp_message *req, rtsp_message *resp) {
-
-  if (!config.password)
-    return 0;
-  if (!*nonce) {
-    *nonce = make_nonce();
-    goto authenticate;
-  }
-
-  char *hdr = msg_get_header(req, "Authorization");
-  if (!hdr || strncmp(hdr, "Digest ", 7))
-    goto authenticate;
-
-  char *realm = strstr(hdr, "realm=\"");
-  char *username = strstr(hdr, "username=\"");
-  char *response = strstr(hdr, "response=\"");
-  char *uri = strstr(hdr, "uri=\"");
-
-  if (!realm || !username || !response || !uri)
-    goto authenticate;
-
-  char *quote;
-  realm = strchr(realm, '"') + 1;
-  if (!(quote = strchr(realm, '"')))
-    goto authenticate;
-  *quote = 0;
-  username = strchr(username, '"') + 1;
-  if (!(quote = strchr(username, '"')))
-    goto authenticate;
-  *quote = 0;
-  response = strchr(response, '"') + 1;
-  if (!(quote = strchr(response, '"')))
-    goto authenticate;
-  *quote = 0;
-  uri = strchr(uri, '"') + 1;
-  if (!(quote = strchr(uri, '"')))
-    goto authenticate;
-  *quote = 0;
-
-  uint8_t digest_urp[16], digest_mu[16], digest_total[16];
-
-  EVP_MD_CTX *ctx;
-  unsigned int digest_urp_len = EVP_MD_size(EVP_md5());
-  unsigned int digest_mu_len = EVP_MD_size(EVP_md5());
-  int oldState;
-  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
-  ctx = EVP_MD_CTX_new();
-  EVP_DigestInit_ex(ctx, EVP_md5(), NULL);
-
-  EVP_DigestUpdate(ctx, username, strlen(username));
-  EVP_DigestUpdate(ctx, ":", 1);
-  EVP_DigestUpdate(ctx, realm, strlen(realm));
-  EVP_DigestUpdate(ctx, ":", 1);
-  EVP_DigestUpdate(ctx, config.password, strlen(config.password));
-  EVP_DigestFinal_ex(ctx, digest_urp, &digest_urp_len);
-  EVP_MD_CTX_free(ctx);
-
-  ctx = EVP_MD_CTX_new();
-  EVP_DigestInit_ex(ctx, EVP_md5(), NULL);
-
-  EVP_DigestUpdate(ctx, req->method, strlen(req->method));
-  EVP_DigestUpdate(ctx, ":", 1);
-  EVP_DigestUpdate(ctx, uri, strlen(uri));
-
-  EVP_DigestFinal_ex(ctx, digest_mu, &digest_mu_len);
-  EVP_MD_CTX_free(ctx);
-  pthread_setcancelstate(oldState, NULL);
 
 
-
-  int i;
-  unsigned char buf[33];
-  for (i = 0; i < 16; i++)
-    snprintf((char *)buf + 2 * i, 3, "%02x", digest_urp[i]);
-
-  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
-  unsigned int digest_total_len = EVP_MD_size(EVP_md5());
-
-  ctx = EVP_MD_CTX_new();
-  EVP_DigestInit_ex(ctx, EVP_md5(), NULL);
-
-  EVP_DigestUpdate(ctx, buf, 32);
-  EVP_DigestUpdate(ctx, ":", 1);
-  EVP_DigestUpdate(ctx, *nonce, strlen(*nonce));
-  EVP_DigestUpdate(ctx, ":", 1);
-  for (i = 0; i < 16; i++)
-    snprintf((char *)buf + 2 * i, 3, "%02x", digest_mu[i]);
-  EVP_DigestUpdate(ctx, buf, 32);
-  EVP_DigestFinal_ex(ctx, digest_total, &digest_total_len);
-  EVP_MD_CTX_free(ctx);
-  pthread_setcancelstate(oldState, NULL);
-
-
-
-  for (i = 0; i < 16; i++)
-    snprintf((char *)buf + 2 * i, 3, "%02x", digest_total[i]);
-
-  if (!strcmp(response, (const char *)buf))
-    return 0;
-  warn("Password authorization failed.");
-
-authenticate:
-  resp->respcode = 401;
-  int hdrlen = strlen(*nonce) + 40;
-  char *authhdr = malloc(hdrlen);
-  snprintf(authhdr, hdrlen, "Digest realm=\"raop\", nonce=\"%s\"", *nonce);
-  msg_add_header(resp, "WWW-Authenticate", authhdr);
-  free(authhdr);
-  return 1;
-}
 
 void rtsp_conversation_thread_cleanup_function(void *arg) {
   rtsp_conn_info *conn = (rtsp_conn_info *)arg;
@@ -3829,7 +3223,6 @@ static void *rtsp_conversation_thread_func(void *pconn) {
             get_category_string(conn->airplay_stream_category), req->method);
       debug_log_rtsp_message(dl, NULL, req);
 
-      apple_challenge(conn->fd, req, resp);
       hdr = msg_get_header(req, "CSeq");
       if (hdr)
         msg_add_header(resp, "CSeq", hdr);
@@ -3838,55 +3231,7 @@ static void *rtsp_conversation_thread_func(void *pconn) {
       snprintf(server_string, sizeof(server_string), "AirTunes/%s", config.srcvers);
       msg_add_header(resp, "Server", server_string);
 
-      // we are only concerned with classic_airplay_authorized if we are running in classic AirPlay
-      // mode either because the build is for classic AirPlay only or, if the build is for AirPlay
-      // 2, we happen to be running in classic AirPlay compatibility mode
-
-      if ((conn->authorized == 1) ||
-          (conn->airplay_type != ap_1) ||
-          (rtsp_classic_airplay_auth(&conn->auth_nonce, req, resp) == 0)) {
-        conn->authorized = 1; // it must have been classic airplay and authorized or didn't need a
-                              // password, or not classic AirPlay at all
-        struct method_handler *mh;
-        int method_selected = 0;
-        for (mh = method_handlers; mh->method; mh++) {
-          if (!strcmp(mh->method, req->method)) {
-            method_selected = 1;
-            if (conn->airplay_type == ap_1)
-              mh->ap1_handler(conn, req, resp);
-            else
-              mh->ap2_handler(conn, req, resp);
-            break;
-          }
-        }
-        if (method_selected == 0) {
-          debug(1,
-                "Connection %d: (%s) unrecognised and unhandled rtsp request \"%s\". HTTP Response "
-                "Code "
-                "%d returned.",
-                conn->connection_number, get_category_string(conn->airplay_stream_category),
-                req->method, resp->respcode);
-          debug_log_rtsp_message(dl, NULL, req);
-
-          int y = req->contentlength;
-          if (y > 0) {
-            char obf[2 * 4096 + 1]; // two hex chars per input byte, plus a terminating nul
-            if (y > 4096)
-              y = 4096;
-            char *p = req->content;
-            char *obfp = obf;
-            int obfc;
-            for (obfc = 0; obfc < y; obfc++) {
-              snprintf(obfp, 3, "%02X", (unsigned int)*p);
-              p++;
-              obfp += 2;
-            };
-            *obfp = 0;
-            debug(dl, "Content: \"%s\".", obf);
-          }
-        }
-        resp->respcode = 200; // OK
-      }
+      rtsp_dispatch_request(conn, req, resp);
       debug(dl, "Connection %d: (%s) RTSP response:", conn->connection_number,
             get_category_string(conn->airplay_stream_category));
       debug_log_rtsp_message(dl, NULL, resp);
