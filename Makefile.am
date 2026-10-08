@@ -27,8 +27,9 @@ BUILT_SOURCES += gitversion-check
 endif
 man_MANS = man/shairport-sync.1
 EXTRA_DIST = scripts/shairport-sync.conf scripts/shairport-sync.user.service \
-  plists/get_info_response.xml xml_plist_codegen.sh tests/configure_test.sh
-TESTS = tests/configure_test.sh
+  plists/get_info_response.xml xml_plist_codegen.sh tests/configure_test.sh \
+  tests/nqptp_test.sh tests/nqptp_fixture.c
+TESTS = tests/configure_test.sh tests/nqptp_test.sh
 if INSTALL_CONFIG_FILES
 install-exec-hook:
 	$(MKDIR_P) $(DESTDIR)$(sysconfdir)

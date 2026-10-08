@@ -1170,80 +1170,16 @@ int parse_options(int argc, char **argv) {
       config.default_airplay_volume; // if no volume is ever set or requested, default to initial
                                      // default value if nothing else comes in first.
 
-  // let's see if we have AirPlay 2 and NQPTP is installed or not and set service_type accordingly
-  // or exit. the outcome will be APST_airplay2, APST_classic or APST_forced_classic, and APST_auto
-  // will be gone.
-
-  char service_type_string[32];
-  service_type_to_string(config.service_type, service_type_string);
-  debug(1, "config.service_type is: \"%s\".", service_type_string);
-
-  // don't bother checking for NQPTP if we are providing a classic service
-  if (config.service_type != APST_classic) {
-    ptp_send_control_message_string(
-        "T"); // send this message to get nqptp to create the named shm interface
-    int response = 0;
-    /*
-    uint64_t nqptp_start_waiting_time = get_absolute_time_in_ns();
-    int continue_waiting = 0;
-    int64_t time_spent_waiting = 0;
-    do {
-      continue_waiting = 0;
-      response = ptp_shm_interface_open();
-      if ((response == -1) && (errno == ENOENT)) {
-        time_spent_waiting = get_absolute_time_in_ns() - nqptp_start_waiting_time;
-        if (time_spent_waiting < 10000000000L) {
-          continue_waiting = 1;
-          usleep(50000);
-        }
-      }
-    } while (continue_waiting != 0);
-    */
-
-    response = ptp_shm_interface_open(); // look for NQPTP service
-
-    if ((response == -1) && (errno == ENOENT)) {
-      debug(1, "NQPTP service not found.");
-      // change auto to forced classic
-      if (config.service_type == APST_auto) {
-        config.service_type = APST_forced_classic;
-      } else if (config.service_type == APST_airplay2) {
-        die("The NQPTP service can not be found. NQPTP must be installed and running to provide "
-            "AirPlay 2 service.");
-      }
-    } else if ((response == -1) && (errno == EACCES)) {
-      die("Shairport Sync must have read access to the NQPTP shared memory file in /dev/shm/.");
-    } else if (response != 0) {
-      die("an error occurred accessing the NQPTP service.");
-    }
-
-    if (response == 0) {
-      // change "auto" to "airplay2"
-      if (config.service_type == APST_auto) {
-        config.service_type = APST_airplay2;
-      }
-      // check that the version of Shairport Sync and NQPTP match...
-      debug(1, "NQPTP service found.");
-      if (config.service_type == APST_airplay2) {
-        // now that we are using AirPlay 2, check NQPTP and SPS match...
-        int ptp_clock_version = ptp_get_clock_version();
-        if (ptp_clock_version == 0) {
-          die("The NQPTP service on this system, which is required for Shairport Sync to operate, "
-              "does "
-              "not seem to be initialised.");
-        } else if (ptp_clock_version < NQPTP_SHM_STRUCTURES_VERSION) {
-          die("The NQPTP service (SMI Version %d) on this system is too old for this version of "
-              "Shairport Sync, which requires SMI Version %d. Please update.",
-              ptp_clock_version, NQPTP_SHM_STRUCTURES_VERSION);
-        } else if (ptp_clock_version > NQPTP_SHM_STRUCTURES_VERSION) {
-          die("This version of Shairport Sync (SMI Version %d) is too old for the version of NQPTP "
-              "(SMI "
-              "Version %d) on this system. Please update.",
-              NQPTP_SHM_STRUCTURES_VERSION, ptp_clock_version);
-        }
-      }
-    }
-  }
+ptp_send_control_message_string("T");
+if (ptp_shm_interface_open() != 0) {
+  die("NQPTP is required for AirPlay 2 and must be running with readable, complete shared memory: %s.", strerror(errno));
+}
+int ptp_clock_version = ptp_get_clock_version();
+if (ptp_clock_version == 0)
+  die("NQPTP shared memory is not initialised or its clock data is inconsistent.");
+if (ptp_clock_version != NQPTP_SHM_STRUCTURES_VERSION)
+  die("NQPTP shared memory version %d is incompatible; version %d is required.",
+      ptp_clock_version, NQPTP_SHM_STRUCTURES_VERSION);
 
   config.service_name = service_name(raw_service_name);
 
@@ -1676,7 +1612,7 @@ int main(int argc, char **argv) {
   debug(1, "adding the exit function");
   atexit(exit_function);
 
-  config.service_type = APST_auto; // this may be changed by the settings...
+  config.service_type = APST_airplay2; // this may be changed by the settings...
 
   // get a device id -- the first non-local MAC address
   get_device_id((uint8_t *)&config.hw_addr, 6);

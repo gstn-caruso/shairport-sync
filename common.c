@@ -958,28 +958,9 @@ void service_type_to_string(APST_t service_type, char *string_space) {
 }
 
 APST_t string_to_service_type(const char *parameter, const char *setting_name) {
-  APST_t response = APST_auto;
-  if (parameter != NULL) {
-    if (strcasecmp(parameter, "auto") == 0) {
-      response = APST_auto;
-    } else if (strcasecmp(parameter, "classic") == 0) {
-      response = APST_classic;
-    } else if (strcasecmp(parameter, "airplay1") == 0) {
-      response = APST_classic;
-    } else if (strcasecmp(parameter, "airplay2") == 0) {
-      response = APST_airplay2;
-    } else {
-      warn("The %s \"%s\" was ignored. It must be \"auto\", \"classic\" or \"airplay2\". (You can "
-           "use \"airplay1\" instead of \"classic\".)",
-           setting_name, parameter);
-    }
-  }
-  /*
-  char service_type_string[32];
-  service_type_to_string(response, service_type_string);
-  debug(1, "config.service_type read from %s is: \"%s\".", setting_name, service_type_string);
-  */
-  return response;
+  if (parameter == NULL || strcasecmp(parameter, "airplay2") != 0)
+    die("%s: service selection has been removed; this fork supports only AirPlay 2.", setting_name);
+  return APST_airplay2;
 }
 
 void command_set_volume(double volume) {
