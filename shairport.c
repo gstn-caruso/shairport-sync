@@ -169,7 +169,6 @@ void usage(char *progname) {
     printf("Options:\n");
     printf("    -h, --help              Show this help.\n");
     printf("    -V, --version           Show version information -- the version string.\n");
-    printf("    --service-type          Select the type of AirPlay service: \"auto\", \"airplay2\" or \"classic\". (You can use \"airplay1\" in place of \"classic\".)\n");
     printf("    -X, --displayConfig     Output OS information, version string, command line, configuration file and active settings to the log.\n");
     printf("    --statistics            Print some interesting statistics. More will be printed if -v / -vv / -vvv are also chosen.\n");
     printf("    -v, --verbose           Print debug information; -v some; -vv more; -vvv lots -- generally too much.\n");
@@ -414,7 +413,7 @@ int parse_options(int argc, char **argv) {
 
       /* See if a specific service type has been requested */
       if (config_lookup_non_empty_string(config.cfg, "general.service_type", &str)) {
-        config.service_type = string_to_service_type(str, "general service_type");
+        die("general.service_type is a removed option; only AirPlay 2 is supported.");
       }
       /* Get the Service Name. */
       if (config_lookup_non_empty_string(config.cfg, "general.name", &str)) {
@@ -517,7 +516,7 @@ int parse_options(int argc, char **argv) {
               "inclusive.",
               value);
       }
-      
+
       if (config_lookup_string(config.cfg, "diagnostics.get_plist_metadata", &str)) {
         if (strcasecmp(str, "no") == 0)
           config.get_plist_metadata = 0;
@@ -635,8 +634,8 @@ int parse_options(int argc, char **argv) {
       */
         warn("the diagnostic \"log_output_to\" setting is obsolete and is ignored. All logging is to STDERR, which is directed to the system log when Shairport Sync is running as a service.");
       }
-      
-      
+
+
       /* Get the ignore_volume_control setting. */
       if (config_lookup_string(config.cfg, "general.ignore_volume_control", &str)) {
         if (strcasecmp(str, "no") == 0)
@@ -737,32 +736,8 @@ int parse_options(int argc, char **argv) {
           config.volume_range_db = value;
       }
 
-      /* Get the alac_decoder setting. */
-      if (config_lookup_string(config.cfg, "general.alac_decoder", &str)) {
-        if (strcasecmp(str, "hammerton") == 0) {
-          if ((config.decoders_supported & 1 << decoder_hammerton) != 0)
-            config.decoder_in_use = 1 << decoder_hammerton; // use David Hammerton's ALAC decoder
-          else
-            inform(
-                "Support for the Hammerton ALAC decoder has not been compiled into this version of "
-                "Shairport Sync. The default decoder will be used.");
-        } else if (strcasecmp(str, "apple") == 0) {
-          if ((config.decoders_supported & 1 << decoder_apple_alac) != 0)
-            config.decoder_in_use = 1 << decoder_apple_alac; // use the Apple ALAC decoder
-          else
-            inform("Support for the Apple ALAC decoder has not been compiled into this version of "
-                   "Shairport Sync. The default decoder will be used.");
-        } else if (strcasecmp(str, "ffmpeg") == 0) {
-          if ((config.decoders_supported & 1 << decoder_ffmpeg_alac) != 0)
-            config.decoder_in_use = 1 << decoder_ffmpeg_alac; // use the FFMPEG ALAC decoder
-          else
-            inform("Support for the FFMPEG ALAC decoder has not been compiled into this version of "
-                   "Shairport Sync. The default decoder will be used.");
-        } else
-          die("Invalid alac_decoder option choice \"%s\". It should be \"ffmpeg\", \"hammerton\" "
-              "or \"apple\"",
-              str);
-      }
+if (config_lookup(config.cfg, "general.alac_decoder") != NULL)
+  die("general.alac_decoder is a removed option; FFmpeg is required.");
 
       /* Get the resend control settings. */
       if (config_lookup_float(config.cfg, "general.resend_control_first_check_time", &dvalue)) {
@@ -1014,8 +989,7 @@ int parse_options(int argc, char **argv) {
   }
 
   if (cli_service_type_string != NULL)
-    config.service_type = string_to_service_type(cli_service_type_string,
-                                                 "command line option \"--service-type\" argument");
+    die("--service-type is a removed option; only AirPlay 2 is supported.");
 
   poptFreeContext(optCon);
 
@@ -1612,8 +1586,6 @@ int main(int argc, char **argv) {
   debug(1, "adding the exit function");
   atexit(exit_function);
 
-  config.service_type = APST_airplay2; // this may be changed by the settings...
-
   // get a device id -- the first non-local MAC address
   get_device_id((uint8_t *)&config.hw_addr, 6);
 
@@ -1710,30 +1682,26 @@ int main(int argc, char **argv) {
   }
 
 
-  if (config.service_type == APST_airplay2) {
-    config.port = 7000;
-  } else {
-    config.port = 5000;
-  }
 
-  if (config.service_type == APST_airplay2) {
+    config.port = 7000;
+
+
+
     if (has_fltp_capable_aac_decoder() == 0) {
       die("Shairport Sync can not run on this system. Run \"shairport-sync -h\" for more "
           "information.");
     }
-  }
+
   uint64_t apf = config.airplay_features;
   uint64_t apfh = config.airplay_features;
   apfh = apfh >> 32;
   uint32_t apf32 = apf;
   uint32_t apfh32 = apfh;
-  if (config.service_type == APST_airplay2) {
+
     debug(1,
           "Startup in AirPlay 2 mode, with features 0x%" PRIx32 ",0x%" PRIx32 " on device \"%s\".",
           apf32, apfh32, config.airplay_device_id);
-  } else {
-    debug(1, "Startup in Classic AirPlay (aka \"AirPlay 1\") mode. (AirPlay2 build.)");
-  }
+
 
   // control-c (SIGINT) cleanly
   struct sigaction act;
@@ -2267,21 +2235,7 @@ int main(int argc, char **argv) {
 
   // In AirPlay 1 mode, the AP1 prefix is calculated by hashing the service name.
 
-  if (config.service_type != APST_airplay2) {
-    uint8_t ap_md5[16];
-    // debug(1, "size of hw_addr is %u.", sizeof(config.hw_addr));
-    EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
-    EVP_DigestInit_ex(mdctx, EVP_md5(), NULL);
-    EVP_DigestUpdate(mdctx, config.service_name, strlen(config.service_name));
-    EVP_DigestUpdate(mdctx, config.hw_addr, sizeof(config.hw_addr));
-    unsigned int md5_digest_len = EVP_MD_size(EVP_md5());
-    EVP_DigestFinal_ex(mdctx, ap_md5, &md5_digest_len);
-    EVP_MD_CTX_free(mdctx);
 
-
-    memcpy(config.ap1_prefix, ap_md5, sizeof(config.ap1_prefix));
-
-  }
 
 
 
@@ -2295,7 +2249,7 @@ int main(int argc, char **argv) {
   // you'll see two threads named "listener" or whatever...
   named_pthread_create(&rtsp_listener_thread, NULL, &rtsp_listen_loop, NULL, "listener");
   atexit(exit_rtsp_listener);
-  
+
   // wait forever...
   while (1) {
     usleep(1000000);

@@ -169,21 +169,10 @@ char *service_name(const char *raw_service_name) {
   char *i3 = str_replace(i2, "%v", PACKAGE_VERSION);
   char *vs = get_version_string();
   char *i4 = str_replace(i3, "%V", vs); // service name complete
-  // now, we may need to add "(Classic)" and/or truncate it to MAX_AIRPLAY_SERVICE_NAME_LENGTH
-  // characters.
-#ifdef CONFIG_AIRPLAY_2
-  if ((raw_service_name == NULL) && (config.service_type == APST_forced_classic)) {
-    response = append_truncated(
-        i4, " (Classic)", MAX_AIRPLAY_SERVICE_NAME_LENGTH); // append "(Classic)" to default service
-                                                            // name if forced to Classic
-  } else {
-#endif
+  // Bonjour service names must fit the DNS-SD label length.
     response = append_truncated(
         i4, "",
         MAX_AIRPLAY_SERVICE_NAME_LENGTH); // make sure it doesn't exceed the max length: 63 - 13
-#ifdef CONFIG_AIRPLAY_2
-  }
-#endif
   free(i0);
   free(i1);
   free(i2);

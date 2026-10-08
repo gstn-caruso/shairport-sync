@@ -14,13 +14,6 @@ extern "C" {
 #include "definitions.h"
 #include "mdns.h"
 
-// service type to be offered
-typedef enum {
-  APST_auto = 0,
-  APST_classic,        // must be classic / airplay 1
-  APST_forced_classic, // must be classic / airplay 1 because no nqptp
-  APST_airplay2,       // must be airplay 2; error if no NQPTP
-} APST_t;              // AirPlay Service Type
 
 // struct sockaddr_in6 is bigger than struct sockaddr. derp
 #ifdef AF_INET6
@@ -70,8 +63,6 @@ typedef enum {
 } volume_control_profile_type;
 
 typedef enum {
-  decoder_hammerton = 0,
-  decoder_apple_alac,
   decoder_ffmpeg_alac,
 } decoders_supported_type;
 
@@ -168,7 +159,7 @@ typedef struct {
   double resend_control_check_interval_time; // wait this long between making requests
   double resend_control_last_check_time; // if the packet is missing this close to the time of use,
                                          // give up
-                                         
+
   int get_plist_metadata; // set to non-zero to get richer plist metadata
   pthread_mutex_t lock;
   config_t *cfg;
@@ -291,7 +282,6 @@ typedef struct {
   double diagnostic_drop_packet_fraction; // pseudo randomly drop this fraction of packets, for
                                           // debugging. Currently audio packets only...
 
-  void *gradients; // a linked list of the clock gradients discovered for all DACP IDs
                    // can't use IP numbers as they might be given to different devices
                    // can't get hold of MAC addresses.
                    // can't define the null linked list struct here
@@ -313,7 +303,6 @@ typedef struct {
   char *nqptp_shared_memory_interface_name; // client name for nqptp service
   int enable_HK_Access_Control;             // true if the device is part of an Apple Home
 
-  APST_t service_type; // APST_auto, APST_classic, APST_forced_classic, APST_airplay2
 
   int unfixable_error_reported; // only report once.
 
@@ -379,7 +368,6 @@ char *base64_encode_so(const unsigned char *data, size_t input_length, char *enc
 
 #define RSA_MODE_AUTH (0)
 #define RSA_MODE_KEY (1)
-uint8_t *rsa_apply(uint8_t *input, int inlen, int *outlen, int mode);
 
 // given a volume (0 to -30) and high and low attenuations in dB*100 (e.g. 0 to -6000 for 0 to -60
 // dB), return an attenuation depending on a linear interpolation along the range
@@ -424,8 +412,6 @@ unsigned int config_get_string_settings_as_string_array(config_setting_t *settin
                                                         const char ***result);
 unsigned int config_get_int_settings_as_int_array(config_setting_t *setting, int **result);
 
-APST_t string_to_service_type(const char *parameter, const char *setting_name);
-void service_type_to_string(APST_t service_type, char *string_space);
 
 void command_start(void);
 void command_stop(void);

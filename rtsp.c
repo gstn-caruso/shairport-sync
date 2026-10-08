@@ -266,9 +266,9 @@ void stop_play() {
       principal_conn->airplay_gid = NULL; // stop using the client's GID as our GID.
     }
     build_bonjour_strings(principal_conn);
-    if (config.service_type == APST_airplay2) {
+
       mdns_update(NULL, secondary_txt_records);
-    }
+
     principal_conn = NULL; // let it go
     debug(1, "Connection successfully closed.");
   }
@@ -286,9 +286,9 @@ void release_play_lock(rtsp_conn_info *conn) {
         principal_conn->airplay_gid = NULL; // stop using the client's GID as our GID.
       }
       build_bonjour_strings(principal_conn);
-      if (config.service_type == APST_airplay2) {
+
         mdns_update(NULL, secondary_txt_records);
-      }
+
       debug(2, "Connection %d: %s released principal_conn.", conn->connection_number,
             get_category_string(conn->airplay_stream_category));
     }
@@ -373,9 +373,9 @@ play_lock_r get_play_lock(rtsp_conn_info *conn, int allow_session_interruption) 
           conn->airplay_gid = NULL; // stop using the client's GID as our GID.
         }
         build_bonjour_strings(conn);
-        if (config.service_type == APST_airplay2) {
+
           mdns_update(NULL, secondary_txt_records);
-        }
+
         response = play_lock_released;
       } else {
         config.airplay_statusflags |= (1 << 11); // DeviceSupportsRelay
@@ -1883,9 +1883,9 @@ void handle_configure(rtsp_conn_info *conn __attribute__((unused)),
 
   if (config.enable_HK_Access_Control != existingEnable_HK_Access_Control) {
     build_bonjour_strings(principal_conn);
-    if (config.service_type == APST_airplay2) {
+
       mdns_update(NULL, secondary_txt_records);
-    }
+
   }
   plist_to_bin(response_plist, &resp->content, &resp->contentlength);
   plist_free(response_plist);
@@ -2128,7 +2128,7 @@ void handle_teardown_2(rtsp_conn_info *conn, __attribute__((unused)) rtsp_messag
   debug(4, "Connection %d from \"%s\": TEARDOWN (AP2 %s) %s Content-Length %d", conn->connection_number, conn->ap2_client_name, get_category_string(conn->airplay_stream_category), req->path, req->contentlength);
   debug_log_rtsp_message_conn(conn, 4, "TEARDOWN (AP2)", req);
   // look for a configuration dictionary
-  
+
   plist_t messagePlist = plist_from_rtsp_content(req);
   if (messagePlist != NULL) {
     plist_t streams = plist_dict_get_item(messagePlist, "streams");
@@ -2144,7 +2144,7 @@ void handle_teardown_2(rtsp_conn_info *conn, __attribute__((unused)) rtsp_messag
         debug(1, "Connection %d from \"%s\": TEARDOWN (AP2 %s) %s Content-Length %d plist is non-empty but contains no \"streams\" item.", conn->connection_number, conn->ap2_client_name, get_category_string(conn->airplay_stream_category), req->path, req->contentlength);
         debug_log_rtsp_message_conn(conn, 4, "Contents follow:", req);
       }
-      msg_add_header(resp, "Connection", "close");  
+      msg_add_header(resp, "Connection", "close");
       debug(4, "Connection %d from \"%s\": TEARDOWN (AP2 %s) %s Content-Length %d is asking to terminate the connection.", conn->connection_number, conn->ap2_client_name, get_category_string(conn->airplay_stream_category), req->path, req->contentlength);
       conn->stop = 1;
     }
@@ -2189,7 +2189,7 @@ void handle_flush(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
 
 void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
   int err;
-  
+
   debug(4, "Connection %d from \"%s\": SETUP (AP2) %s Content-Length %d", conn->connection_number, conn->ap2_client_name, req->path, req->contentlength);
   debug_log_rtsp_message_conn(conn, 4, "SETUP (AP2)", req);
 
@@ -2233,18 +2233,17 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
                 conn->connection_number, conn->client_ip_string, conn->client_rtsp_port,
                 conn->ap2_client_name, conn->self_ip_string, conn->self_rtsp_port);
           conn->airplay_stream_category = ptp_stream;
-          conn->timing_type = ts_ptp;
 
           do_pthread_setname(&conn->thread, "ap2_ptp_%d", conn->connection_number);
 
         } else if (strcmp(timingProtocolString, "NTP") == 0) {
-          debug(1, "Connection %d: SETUP: NTP setup from %s:%u (\"%s\") to self at %s:%u.",
-                conn->connection_number, conn->client_ip_string, conn->client_rtsp_port,
-                conn->ap2_client_name, conn->self_ip_string, conn->self_rtsp_port);
-          conn->airplay_stream_category = ntp_stream;
-          conn->timing_type = ts_ntp;
-          do_pthread_setname(&conn->thread, "ap2_ntp_%d", conn->connection_number);
-        } else if (strcmp(timingProtocolString, "None") == 0) {
+  free(timingProtocolString);
+  plist_free(setupResponsePlist);
+  plist_free(messagePlist);
+  conn->sessionPlist = NULL;
+  resp->respcode = 400;
+  return;
+} else if (strcmp(timingProtocolString, "None") == 0) {
           debug(3,
                 "Connection %d: SETUP: a \"None\" setup detected from %s:%u (\"%s\") to self at "
                 "%s:%u.",
@@ -2466,9 +2465,9 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
             build_bonjour_strings(conn);
             debug(2, "Connection %d: SETUP mdns_update on %s.", conn->connection_number,
                   get_category_string(conn->airplay_stream_category));
-            if (config.service_type == APST_airplay2) {
+
               mdns_update(NULL, secondary_txt_records);
-            }
+
 
           } else {
             // this should never happen!
@@ -2476,10 +2475,6 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
                   conn->connection_number);
             resp->respcode = 453;
           }
-        } else if (conn->airplay_stream_category == ntp_stream) {
-          debug(1, "SETUP on Connection %d: ntp stream handling is not implemented!",
-                conn->connection_number);
-          warn("Shairport Sync can not handle NTP streams.");
         } else if (conn->airplay_stream_category == remote_control_stream) {
 
           debug_log_rtsp_message(3, "SETUP (no stream) \"isRemoteControlOnly\" message", req);
@@ -2661,7 +2656,6 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
         debug(4, "Connection %d. AP2 Realtime Audio Stream SETUP.", conn->connection_number);
         debug_log_rtsp_message(4, "AP2 Realtime Audio Stream SETUP incoming message:", req);
 
-        conn->stream.type = ast_apple_lossless;
         conn->airplay_stream_type = realtime_stream;
         // get the sample rate
         item = plist_dict_get_item(stream0, "sr"); // sample rate
@@ -3059,25 +3053,6 @@ void rtsp_conversation_thread_cleanup_function(void *arg) {
 
     debug(3, "Connection %d: terminating  -- closing timing, control and audio sockets...",
           conn->connection_number);
-    if (conn->control_socket) {
-      debug(3, "Connection %d: terminating  -- closing control_socket %d.", conn->connection_number,
-            conn->control_socket);
-      safe_socket_close(&conn->control_socket);
-    }
-    if (conn->timing_socket) {
-      debug(3, "Connection %d: terminating  -- closing timing_socket %d.", conn->connection_number,
-            conn->timing_socket);
-      safe_socket_close(&conn->timing_socket);
-    }
-    if (conn->audio_socket) {
-      debug(3, "Connection %d: terminating -- closing audio_socket %d.", conn->connection_number,
-            conn->audio_socket);
-      safe_socket_close(&conn->audio_socket);
-    }
-    if (conn->auth_nonce) {
-      free(conn->auth_nonce);
-      conn->auth_nonce = NULL;
-    }
 
     buf_drain(&conn->ap2_pairing_context.control_cipher_bundle.plaintext_read_buffer, -1);
     buf_drain(&conn->ap2_pairing_context.control_cipher_bundle.encrypted_read_buffer, -1);
@@ -3428,10 +3403,10 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
 
     char **t1 = txt_records; // ap1 text records
     char **t2 = NULL;        // possibly two text records
-    if (config.service_type == APST_airplay2) {
+
       // make up a secondary set of text records
       t2 = secondary_txt_records; // second set of text records in AirPlay 2 only
-    }
+
     build_bonjour_strings(NULL); // no conn yet
     // if a thread is created, e.g. Avahi, it'll inherit the name from this thread
     mdns_register(t1, t2); // note that the dacp thread could still be using the mdns stuff after
@@ -3482,8 +3457,6 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
       debug(2, "Connection %d is at: 0x%" PRIxPTR ".", conn->connection_number, (uintptr_t)conn);
 
       // this means that the OPTIONS string we send before getting an ANNOUNCE is for AirPlay 2
-      conn->airplay_type = ap_2;  // changed if an ANNOUNCE is received
-      conn->timing_type = ts_ptp; // changed if an ANNOUNCE is received
 
       socklen_t size_of_reply = sizeof(SOCKADDR);
       conn->fd = eintr_checked_accept(acceptfd, (struct sockaddr *)&conn->remote, &size_of_reply);

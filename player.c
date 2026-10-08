@@ -140,29 +140,6 @@ void reset_input_flow_metrics(rtsp_conn_info *conn) {
   conn->initial_reference_timestamp = 0;
 }
 
-void unencrypted_packet_decode(rtsp_conn_info *conn, unsigned char *packet, int length,
-                               short *dest) {
-  if (conn->stream.type == ast_apple_lossless) {
-    {
-      die("No ALAC decoder included!");
-    }
-  } else if (conn->stream.type == ast_uncompressed) {
-    int i;
-    short *source = (short *)packet;
-    // dest (abuf->data) is allocated for exactly one packet:
-    // conn->frames_per_packet * conn->input_bytes_per_frame bytes. Never copy more
-    // than that, regardless of the received packet length, to avoid a heap overflow.
-    int max_bytes = conn->frames_per_packet * conn->input_bytes_per_frame;
-    if (length > max_bytes)
-      length = max_bytes;
-    for (i = 0; i < length / 2; i++) {
-      // assuming each input sample is 16 bits.
-      *dest = ntohs(*source);
-      dest++;
-      source++;
-    }
-  }
-}
 
 
 static void init_buffer(rtsp_conn_info *conn) {
@@ -219,14 +196,8 @@ const char *get_category_string(airplay_stream_c cat) {
   case ptp_stream:
     category = "PTP stream";
     break;
-  case ntp_stream:
-    category = "NTP stream";
-    break;
   case remote_control_stream:
     category = "Remote Control stream";
-    break;
-  case classic_airplay_stream:
-    category = "Classic AirPlay stream";
     break;
   default:
     category = "Unexpected stream code";
@@ -1207,35 +1178,6 @@ size_t avflush(rtsp_conn_info *conn) {
 // https://stackoverflow.com/questions/27558625/how-do-i-use-aes-cbc-encrypt-128-openssl-properly-in-ubuntu
 // for inspiration. Changed to a 128-bit key and no padding.
 
-int openssl_aes_decrypt_cbc(unsigned char *ciphertext, int ciphertext_len, unsigned char *key,
-                            unsigned char *iv, unsigned char *plaintext) {
-  EVP_CIPHER_CTX *ctx;
-  int len;
-  int plaintext_len = 0;
-  ctx = EVP_CIPHER_CTX_new();
-  if (ctx != NULL) {
-    if (EVP_DecryptInit_ex(ctx, EVP_aes_128_cbc(), NULL, key, iv) == 1) {
-      EVP_CIPHER_CTX_set_padding(ctx, 0); // no padding -- always returns 1
-      // no need to allow space for padding in the output, as padding is disabled
-      if (EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len) == 1) {
-        plaintext_len = len;
-        if (EVP_DecryptFinal_ex(ctx, plaintext + len, &len) == 1) {
-          plaintext_len += len;
-        } else {
-          debug(1, "EVP_DecryptFinal_ex error \"%s\".", ERR_error_string(ERR_get_error(), NULL));
-        }
-      } else {
-        debug(1, "EVP_DecryptUpdate error \"%s\".", ERR_error_string(ERR_get_error(), NULL));
-      }
-    } else {
-      debug(1, "EVP_DecryptInit_ex error \"%s\".", ERR_error_string(ERR_get_error(), NULL));
-    }
-    EVP_CIPHER_CTX_free(ctx);
-  } else {
-    debug(1, "EVP_CIPHER_CTX_new error \"%s\".", ERR_error_string(ERR_get_error(), NULL));
-  }
-  return plaintext_len;
-}
 
 
 // This is a big dirty hack to try to accommodate packets that come in in sequence but are timed to
@@ -1282,7 +1224,7 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
                            size_t len, int mute, int32_t timestamp_gap, rtsp_conn_info *conn) {
 
   // clang-format off
-  
+
   // The timestamp_gap is the difference between the timestamp and the expected timestamp.
   // It should normally be zero.
 
@@ -1384,37 +1326,9 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
       abuf->length = 0; // may not be needed
 
       if (ssrc == ALAC_44100_S16_2) {
-        // This could be a Classic AirPlay or an AirPlay 2 Realtime packet.
-        // It always has a length of 352 frames per packet.
-        // And it's always 16-bit interleaved stereo.
-        uint8_t *data_to_use = data;
-        uint8_t *intermediate_buffer = malloc(len); // encryption is not compression...
-
-        // decrypt it if necessary
-        if (conn->stream.encrypted) {
-          unsigned char iv[16];
-          int aeslen = len & ~0xf;
-          memcpy(iv, conn->stream.aesiv, sizeof(iv));
-          openssl_aes_decrypt_cbc(data, aeslen, conn->stream.aeskey, iv, intermediate_buffer);
-          // AES_cbc_encrypt(data, intermediate_buffer, aeslen, &conn->aes, iv, AES_DECRYPT);
-          memcpy(intermediate_buffer + aeslen, data + aeslen, len - aeslen);
-          data_to_use = intermediate_buffer;
-        }
-
-        // Use the selected decoder
-        if ((config.decoder_in_use == 1 << decoder_hammerton) ||
-            (config.decoder_in_use == 1 << decoder_apple_alac)) {
-          abuf->data = malloc(conn->frames_per_packet * conn->input_bytes_per_frame);
-          if (abuf->data != NULL) {
-            unencrypted_packet_decode(conn, data_to_use, len, abuf->data);
-            input_packets_used = conn->frames_per_packet; // return this to the caller
-            abuf->length = conn->frames_per_packet;       // these decoders don't transcode
-          } else {
-            debug(1, "audio block not allocated!");
-          }
-        } else if (config.decoder_in_use == 1 << decoder_ffmpeg_alac) {
+        // AirPlay 2 realtime ALAC uses 352 frames of 16-bit stereo per packet.
           prepare_decoding_chain(conn, ALAC_44100_S16_2);
-          abuf->avframe = block_to_avframe(conn, data_to_use, len);
+          abuf->avframe = block_to_avframe(conn, data, len);
           abuf->ssrc = ALAC_44100_S16_2;
           if (abuf->avframe) {
             input_packets_used = abuf->avframe->nb_samples;
@@ -1422,7 +1336,7 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
           if (mute) {
             // it's important to have already run it through the decoder before dropping it
             // especially if it an AAC decoder
-            debug(2, "ap1 muting frame %u.", actual_timestamp);
+            debug(2, "Realtime ALAC muting frame %u.", actual_timestamp);
             abuf->length = abuf->avframe->nb_samples;
             av_frame_free(&abuf->avframe);
             abuf->avframe = NULL;
@@ -1435,15 +1349,6 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
                   conn->connection_number, seqno, actual_timestamp, len);
             debug_print_buffer(2, data, len);
           }
-        } else {
-          debug(1, "Unknown decoder!");
-        }
-
-        // may be used during decryption
-        if (intermediate_buffer != NULL) {
-          free(intermediate_buffer);
-          intermediate_buffer = NULL;
-        }
 
         abuf->ready = 1;
         abuf->status = 0; // signifying that it was received
@@ -1921,13 +1826,13 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
 
                 // clang-format off
                 // Now we have to work out if the flush frame is in the buffer.
-                
+
                 // If it is later than the end of the buffer, flush everything and keep the
                 // request active.
-                
+
                 // If it is in the buffer, we need to flush part of the buffer.
                 // (Actually we flush the entire buffer and drop the request.)
-                
+
                 // If it is before the buffer, no flush is needed. Drop the request.
                 // clang-format on
 
@@ -2530,7 +2435,7 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
   // debug(1, "Release frame %u.", curframe->timestamp);
 
     // clang-format off
-    // If we're using the Hammerton or ALAC decoder, then curframe->data will 
+    // If we're using the Hammerton or ALAC decoder, then curframe->data will
     // point to a malloced buffer of the stereo interleaved LPCM/44100/S16/2 audio
     // But here, we must be using the FFMPEG decoder.
     // With the FFmpeg decoder we have an AVFrame in curframe->avframe.
@@ -2935,7 +2840,7 @@ void player_thread_cleanup_handler(void *arg) {
   // 3 -- AirPlay 2 in Buffered Audio Mode
   // 4 -- AirPlay 3 in Realtime Audio Mode.
 
-  if (conn->airplay_type == ap_2) {
+
     debug(2, "Cancelling AP2 timing, control and audio threads...");
     if (conn->airplay_stream_type == realtime_stream) {
       debug(2, "Connection %d: Delete Realtime Audio Stream thread", conn->connection_number);
@@ -2959,25 +2864,7 @@ void player_thread_cleanup_handler(void *arg) {
     debug(2, "Connection %d: Delete AirPlay 2 Control thread", conn->connection_number);
     pthread_cancel(conn->rtp_ap2_control_thread);
     pthread_join(conn->rtp_ap2_control_thread, NULL);
-  } else {
-    debug(2, "Cancelling AP1-compatible timing, control and audio threads...");
-    debug(3, "Cancel timing thread.");
-    pthread_cancel(conn->rtp_timing_thread);
-    debug(3, "Join timing thread.");
-    pthread_join(conn->rtp_timing_thread, NULL);
-    debug(3, "Timing thread terminated.");
-    debug(3, "Cancel control thread.");
-    pthread_cancel(conn->rtp_control_thread);
-    debug(3, "Join control thread.");
-    pthread_join(conn->rtp_control_thread, NULL);
-    debug(3, "Control thread terminated.");
-    debug(3, "Cancel audio thread.");
-    pthread_cancel(conn->rtp_audio_thread);
-    debug(3, "Join audio thread.");
-    pthread_join(conn->rtp_audio_thread, NULL);
-    debug(3, "Audio thread terminated.");
 
-  }
   ptp_send_control_message_string("E");
 
   if (config.decoder_in_use == 1 << decoder_ffmpeg_alac) {
@@ -2997,9 +2884,6 @@ void player_thread_cleanup_handler(void *arg) {
   }
 
   free_audio_buffers(conn);
-  if (conn->stream.type == ast_apple_lossless) {
-
-  }
 
   conn->rtp_running = 0;
 
@@ -3056,15 +2940,10 @@ void *player_thread_func(void *arg) {
   conn->sync_samples_index = 0;
   conn->sync_samples_count = 0;
 
-  if (conn->stream.type == ast_apple_lossless) {
-  }
   // This must be after init_alac_decoder
   init_buffer(conn); // will need a corresponding deallocation. No cancellation points in here
   ab_resync(conn);
 
-  if (conn->stream.encrypted) {
-
-  }
 
   conn->session_corrections = 0;
   // conn->connection_state_to_output = get_requested_connection_state_to_output();
@@ -3135,7 +3014,7 @@ void *player_thread_func(void *arg) {
                       // values. Set to 0 the first time out.
 
   // decide on what statistics profile to use, if requested
-  if (conn->airplay_type == ap_2) {
+
     if (conn->airplay_stream_type == realtime_stream) {
       if (config.output->delay) {
         // if (config.no_sync == 0)
@@ -3155,29 +3034,9 @@ void *player_thread_func(void *arg) {
         statistics_print_profile = ap2_buffered_nodelay_stream_statistics_print_profile;
       }
     }
-  } else {
-    if (config.output->delay) {
-      // if (config.no_sync == 0)
-      statistics_print_profile = ap1_synced_statistics_print_profile;
-      // else
-      //   statistics_print_profile = ap1_nosync_statistics_print_profile;
-    } else {
-      statistics_print_profile = ap1_nodelay_statistics_print_profile;
-    }
-// airplay 1 stuff here
-  }
 
-  if (conn->timing_type == ts_ntp) {
 
-    // create and start the timing, control and audio receiver threads
-    named_pthread_create(&conn->rtp_audio_thread, NULL, &rtp_audio_receiver, (void *)conn,
-                         "ap1_audio_%d", conn->connection_number);
-    named_pthread_create(&conn->rtp_control_thread, NULL, &rtp_control_receiver, (void *)conn,
-                         "ap1_control_%d", conn->connection_number);
-    named_pthread_create(&conn->rtp_timing_thread, NULL, &rtp_timing_receiver, (void *)conn,
-                         "ap1_tim_rcv_%d", conn->connection_number);
 
-  }
 
   pthread_cleanup_push(player_thread_cleanup_handler, arg); // undo what's been done so far
 
@@ -3583,7 +3442,7 @@ void *player_thread_func(void *arg) {
                     statistics_item("Too Late", "%*" PRIu64 "", 8, conn->too_late_packets);
                     statistics_item("Resend Reqs", "%*" PRIu64 "", 11, conn->resend_requests);
                     if (minimum_dac_queue_size == UINT64_MAX) {
-                      statistics_item("Min DAC Queue", "          n/a"); // same size as below, right justified                 
+                      statistics_item("Min DAC Queue", "          n/a"); // same size as below, right justified
                     } else {
                       statistics_item("Min DAC Queue", "%*" PRIu64 "", 13, minimum_dac_queue_size);
                     }
@@ -3643,13 +3502,7 @@ void *player_thread_func(void *arg) {
                        CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration));
               // since this is the first frame of audio, inform the user if requested...
               if (conn->airplay_stream_type == realtime_stream) {
-                if (conn->airplay_type == ap_1) {
-                  if (config.statistics_requested)
-                    inform("Connection %d: Classic AirPlay (\"AirPlay 1\") playback. "
-                           "Input format: %s. Output format: %s.",
-                           conn->connection_number, get_ssrc_name(conn->incoming_ssrc),
-                           short_description);
-                } else {
+
                   if (config.statistics_requested) {
                     if (conn->ap2_client_name == NULL)
                       inform("Connection %d: AirPlay 2 Realtime playback. "
@@ -3661,7 +3514,7 @@ void *player_thread_func(void *arg) {
                              conn->connection_number, conn->ap2_client_name,
                              get_ssrc_name(conn->incoming_ssrc), short_description);
                   }
-                }
+
               } else {
 
                 if (config.statistics_requested) {

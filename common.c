@@ -619,113 +619,7 @@ uint8_t *base64_dec(char *input, int *outlen) {
   return buf;
 }
 
-static char super_secret_key[] =
-    "-----BEGIN RSA PRIVATE KEY-----\n"
-    "MIIEpQIBAAKCAQEA59dE8qLieItsH1WgjrcFRKj6eUWqi+bGLOX1HL3U3GhC/j0Qg90u3sG/1CUt\n"
-    "wC5vOYvfDmFI6oSFXi5ELabWJmT2dKHzBJKa3k9ok+8t9ucRqMd6DZHJ2YCCLlDRKSKv6kDqnw4U\n"
-    "wPdpOMXziC/AMj3Z/lUVX1G7WSHCAWKf1zNS1eLvqr+boEjXuBOitnZ/bDzPHrTOZz0Dew0uowxf\n"
-    "/+sG+NCK3eQJVxqcaJ/vEHKIVd2M+5qL71yJQ+87X6oV3eaYvt3zWZYD6z5vYTcrtij2VZ9Zmni/\n"
-    "UAaHqn9JdsBWLUEpVviYnhimNVvYFZeCXg/IdTQ+x4IRdiXNv5hEewIDAQABAoIBAQDl8Axy9XfW\n"
-    "BLmkzkEiqoSwF0PsmVrPzH9KsnwLGH+QZlvjWd8SWYGN7u1507HvhF5N3drJoVU3O14nDY4TFQAa\n"
-    "LlJ9VM35AApXaLyY1ERrN7u9ALKd2LUwYhM7Km539O4yUFYikE2nIPscEsA5ltpxOgUGCY7b7ez5\n"
-    "NtD6nL1ZKauw7aNXmVAvmJTcuPxWmoktF3gDJKK2wxZuNGcJE0uFQEG4Z3BrWP7yoNuSK3dii2jm\n"
-    "lpPHr0O/KnPQtzI3eguhe0TwUem/eYSdyzMyVx/YpwkzwtYL3sR5k0o9rKQLtvLzfAqdBxBurciz\n"
-    "aaA/L0HIgAmOit1GJA2saMxTVPNhAoGBAPfgv1oeZxgxmotiCcMXFEQEWflzhWYTsXrhUIuz5jFu\n"
-    "a39GLS99ZEErhLdrwj8rDDViRVJ5skOp9zFvlYAHs0xh92ji1E7V/ysnKBfsMrPkk5KSKPrnjndM\n"
-    "oPdevWnVkgJ5jxFuNgxkOLMuG9i53B4yMvDTCRiIPMQ++N2iLDaRAoGBAO9v//mU8eVkQaoANf0Z\n"
-    "oMjW8CN4xwWA2cSEIHkd9AfFkftuv8oyLDCG3ZAf0vrhrrtkrfa7ef+AUb69DNggq4mHQAYBp7L+\n"
-    "k5DKzJrKuO0r+R0YbY9pZD1+/g9dVt91d6LQNepUE/yY2PP5CNoFmjedpLHMOPFdVgqDzDFxU8hL\n"
-    "AoGBANDrr7xAJbqBjHVwIzQ4To9pb4BNeqDndk5Qe7fT3+/H1njGaC0/rXE0Qb7q5ySgnsCb3DvA\n"
-    "cJyRM9SJ7OKlGt0FMSdJD5KG0XPIpAVNwgpXXH5MDJg09KHeh0kXo+QA6viFBi21y340NonnEfdf\n"
-    "54PX4ZGS/Xac1UK+pLkBB+zRAoGAf0AY3H3qKS2lMEI4bzEFoHeK3G895pDaK3TFBVmD7fV0Zhov\n"
-    "17fegFPMwOII8MisYm9ZfT2Z0s5Ro3s5rkt+nvLAdfC/PYPKzTLalpGSwomSNYJcB9HNMlmhkGzc\n"
-    "1JnLYT4iyUyx6pcZBmCd8bD0iwY/FzcgNDaUmbX9+XDvRA0CgYEAkE7pIPlE71qvfJQgoA9em0gI\n"
-    "LAuE4Pu13aKiJnfft7hIjbK+5kyb3TysZvoyDnb3HOKvInK7vXbKuU4ISgxB2bB3HcYzQMGsz1qJ\n"
-    "2gG0N5hvJpzwwhbhXqFKA4zaaSrw622wDniAK5MlIE0tIAKKP4yxNGjoD2QYjhBGuhvkWKY=\n"
-    "-----END RSA PRIVATE KEY-----\0";
 
-uint8_t *rsa_apply(uint8_t *input, int inlen, int *outlen, int mode) {
-  int oldState;
-  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
-  uint8_t *out = NULL;
-  BIO *bmem = BIO_new_mem_buf(super_secret_key, -1);                  // 1.0.2
-  EVP_PKEY *rsaKey = PEM_read_bio_PrivateKey(bmem, NULL, NULL, NULL); // 1.0.2
-  BIO_free(bmem);
-  size_t ol = 0;
-  if (rsaKey != NULL) {
-    EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(rsaKey, NULL); // 1.0.2
-    if (ctx != NULL) {
-
-      switch (mode) {
-      case RSA_MODE_AUTH: {
-        if (EVP_PKEY_sign_init(ctx) > 0) {                                                // 1.0.2
-          if (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING) > 0) {                 // 1.0.2
-            if (EVP_PKEY_sign(ctx, NULL, &ol, (const unsigned char *)input, inlen) > 0) { // 1.0.2
-              out = (unsigned char *)malloc(ol);
-              if (EVP_PKEY_sign(ctx, out, &ol, (const unsigned char *)input, inlen) > 0) { // 1.0.2
-                debug(3, "success with output length of %zu.", ol);
-              } else {
-                debug(1, "error 2 \"%s\" with EVP_PKEY_sign:",
-                      ERR_error_string(ERR_get_error(), NULL));
-              }
-            } else {
-              debug(1,
-                    "error 1 \"%s\" with EVP_PKEY_sign:", ERR_error_string(ERR_get_error(), NULL));
-            }
-          } else {
-            debug(1, "error \"%s\" with EVP_PKEY_CTX_set_rsa_padding:",
-                  ERR_error_string(ERR_get_error(), NULL));
-          }
-        } else {
-          debug(1,
-                "error \"%s\" with EVP_PKEY_sign_init:", ERR_error_string(ERR_get_error(), NULL));
-        }
-      } break;
-      case RSA_MODE_KEY: {
-        if (EVP_PKEY_decrypt_init(ctx) > 0) {
-          if (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_OAEP_PADDING) > 0) {
-            /* Determine buffer length */
-            if (EVP_PKEY_decrypt(ctx, NULL, &ol, (const unsigned char *)input, inlen) > 0) {
-              out = OPENSSL_malloc(ol);
-              if (out != NULL) {
-                if (EVP_PKEY_decrypt(ctx, out, &ol, (const unsigned char *)input, inlen) > 0) {
-                  debug(3, "decrypt success");
-                } else {
-                  debug(1, "error \"%s\" with EVP_PKEY_decrypt:",
-                        ERR_error_string(ERR_get_error(), NULL));
-                }
-              } else {
-                debug(1, "OPENSSL_malloc failed");
-              }
-            } else {
-              debug(1,
-                    "error \"%s\" with EVP_PKEY_decrypt:", ERR_error_string(ERR_get_error(), NULL));
-            }
-          } else {
-            debug(1, "error \"%s\" with EVP_PKEY_CTX_set_rsa_padding:",
-                  ERR_error_string(ERR_get_error(), NULL));
-          }
-        } else {
-          debug(1, "error \"%s\" with EVP_PKEY_decrypt_init:",
-                ERR_error_string(ERR_get_error(), NULL));
-        }
-      } break;
-      default:
-        debug(1, "Unknown mode");
-        break;
-      }
-      EVP_PKEY_CTX_free(ctx); // 1.0.2
-    } else {
-      printf("error \"%s\" with EVP_PKEY_CTX_new:\n", ERR_error_string(ERR_get_error(), NULL));
-    }
-    EVP_PKEY_free(rsaKey); // 1.0.2
-  } else {
-    printf("error \"%s\" with EVP_PKEY_new:\n", ERR_error_string(ERR_get_error(), NULL));
-  }
-  *outlen = ol;
-  pthread_setcancelstate(oldState, NULL);
-  return out;
-}
 
 
 
@@ -937,31 +831,7 @@ int check_int_or_list_setting(config_setting_t *setting, const int item) {
   return result;
 }
 
-void service_type_to_string(APST_t service_type, char *string_space) {
-  if (string_space != NULL) {
-    string_space[0] = '\0';
-    switch (service_type) {
-    case APST_auto:
-      strcpy(string_space, "auto");
-      break;
-    case APST_classic:
-      strcpy(string_space, "classic");
-      break;
-    case APST_forced_classic:
-      strcpy(string_space, "forced_classic");
-      break;
-    case APST_airplay2:
-      strcpy(string_space, "airplay2");
-      break;
-    }
-  }
-}
 
-APST_t string_to_service_type(const char *parameter, const char *setting_name) {
-  if (parameter == NULL || strcasecmp(parameter, "airplay2") != 0)
-    die("%s: service selection has been removed; this fork supports only AirPlay 2.", setting_name);
-  return APST_airplay2;
-}
 
 void command_set_volume(double volume) {
   // this has a cancellation point if waiting is enabled
