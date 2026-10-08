@@ -33,35 +33,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef CONFIG_AVAHI
 extern mdns_backend mdns_avahi;
-#endif
-#ifdef CONFIG_DNS_SD
-extern mdns_backend mdns_dns_sd;
-#endif
-#ifdef CONFIG_TINYSVCMDNS
-extern mdns_backend mdns_tinysvcmdns;
-#endif
 
-#ifdef CONFIG_EXTERNAL_MDNS
-extern mdns_backend mdns_external_avahi;
-extern mdns_backend mdns_external_dns_sd;
-#endif
 
 static mdns_backend *mdns_backends[] = {
-#ifdef CONFIG_AVAHI
     &mdns_avahi,
-#endif
-#ifdef CONFIG_DNS_SD
-    &mdns_dns_sd,
-#endif
-#ifdef CONFIG_TINYSVCMDNS
-    &mdns_tinysvcmdns,
-#endif
-#ifdef CONFIG_EXTERNAL_MDNS
-    &mdns_external_avahi,
-    &mdns_external_dns_sd,
-#endif
     NULL};
 
 void mdns_register(char **txt_records, char **secondary_txt_records) {

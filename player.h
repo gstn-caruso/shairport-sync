@@ -7,28 +7,17 @@
 #include "config.h"
 #include "definitions.h"
 
-#ifdef CONFIG_MBEDTLS
-#include <mbedtls/aes.h>
-#endif
 
-#ifdef CONFIG_POLARSSL
-#include <polarssl/aes.h>
-#include <polarssl/havege.h>
-#endif
 
-#ifdef CONFIG_AIRPLAY_2
 #define MAX_DEFERRED_FLUSH_REQUESTS 10
 #include "pair_ap/pair.h"
 #include <plist/plist.h>
-#endif
 
-#ifdef CONFIG_FFMPEG
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/opt.h>
 #include <libswresample/swresample.h>
-#endif
 
 #include "alac.h"
 #include "audio.h"
@@ -163,11 +152,9 @@ typedef struct audio_buffer_entry { // decoded audio packets
   uint32_t timestamp;           // for timing
   int32_t timestamp_gap;        // the difference between the timestamp and the expected timestamp.
   size_t length; // the length of the decoded data (or silence requested) in input frames
-#ifdef CONFIG_FFMPEG
   ssrc_t ssrc;      // this is the type of this specific frame.
   AVFrame *avframe; // In AP2 and optionally in AP1, an AVFrame will be
   // used to carry audio rather than just a malloced memory space.
-#endif
 } abuf_t;
 
 typedef struct stats { // statistics for running averages
@@ -215,7 +202,6 @@ typedef enum {
   classic_airplay_stream
 } airplay_stream_c; // "c" for category
 
-#ifdef CONFIG_AIRPLAY_2
 typedef enum { ts_ntp, ts_ptp } timing_t;
 typedef enum { ap_1, ap_2 } airplay_t;
 typedef enum { realtime_stream, buffered_stream } airplay_stream_t;
@@ -252,7 +238,6 @@ typedef struct {
   uint32_t flushUntilSeq;
 } ap2_flush_request_t;
 
-#endif
 
 typedef struct {
   int connection_number;           // for debug ID purposes, nothing else...
@@ -349,13 +334,7 @@ typedef struct {
 
   int do_loudness; // if loudness is requested and there is no external mixer
 
-#ifdef CONFIG_MBEDTLS
-  mbedtls_aes_context dctx;
-#endif
 
-#ifdef CONFIG_POLARSSL
-  aes_context dctx;
-#endif
 
   int32_t framesProcessedInThisEpoch;
   int32_t framesGeneratedInThisEpoch;
@@ -413,7 +392,6 @@ typedef struct {
       airplay_stream_category; // is it a remote control stream or a normal "full service" stream?
                                // (will be unspecified if not build for AirPlay 2)
 
-#ifdef CONFIG_AIRPLAY_2
   plist_t sessionPlist;
   char *airplay_gid; // UUID in the Bonjour advertisement -- if NULL, the group UUID is the same as
                      // the pi UUID
@@ -475,9 +453,7 @@ typedef struct {
   uint64_t networkTimeTimelineID; // the clock ID used by the player
   uint8_t groupContainsGroupLeader; // information coming from the SETUP
   uint64_t compressionType;
-#endif
 
-#ifdef CONFIG_FFMPEG
   ssrc_t incoming_ssrc;  // The SSRC of incoming packets. In AirPlay 2, the RTP SSRC seems to encode
                          // something about the contents of the packet -- Atmos/etc. We use it also
                          // even in AP1 as a code
@@ -533,7 +509,6 @@ typedef struct {
   // swrconvert so we need to compensate for their absence in sync timing
   unsigned int output_channel_to_resampler_channel_map[8];
   unsigned int output_channel_map_size;
-#endif
 
   // used as the initials values for calculating the rate at which the source thinks it's sending
   // frames

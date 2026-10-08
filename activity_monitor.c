@@ -41,13 +41,7 @@
 #include "activity_monitor.h"
 #include "common.h"
 
-#ifdef CONFIG_METADATA
-#include "metadata/core.h"
-#endif
 
-#ifdef CONFIG_DBUS_INTERFACE
-#include "dbus-service.h"
-#endif
 
 enum am_state state;
 enum ps_state { ps_inactive, ps_active } player_state;
@@ -63,15 +57,7 @@ void going_active(int block) {
   // "out");
   if (config.cmd_active_start)
     command_execute(config.cmd_active_start, "", block);
-#ifdef CONFIG_METADATA
-  debug(2, "abeg");                       // active mode begin
-  send_ssnc_metadata('abeg', NULL, 0, 1); // contains cancellation points
-#endif
 
-#ifdef CONFIG_DBUS_INTERFACE
-  if (dbus_service_is_running())
-    shairport_sync_set_active(SHAIRPORT_SYNC(shairportSyncSkeleton), TRUE);
-#endif
 
   if (config.disable_standby_mode == disable_standby_auto) {
     config.keep_dac_busy = 1;
@@ -83,15 +69,7 @@ void going_inactive(int block) {
   // "out");
   if (config.cmd_active_stop)
     command_execute(config.cmd_active_stop, "", block);
-#ifdef CONFIG_METADATA
-  debug(2, "aend");                       // active mode end
-  send_ssnc_metadata('aend', NULL, 0, 1); // contains cancellation points
-#endif
 
-#ifdef CONFIG_DBUS_INTERFACE
-  if (dbus_service_is_running())
-    shairport_sync_set_active(SHAIRPORT_SYNC(shairportSyncSkeleton), FALSE);
-#endif
 
   if (config.disable_standby_mode == disable_standby_auto) {
     config.keep_dac_busy = 0;
@@ -180,33 +158,19 @@ void *activity_monitor_thread_code(void *arg) {
 
         uint64_t time_to_wait_for_wakeup_ns = (uint64_t)(config.active_state_timeout * 1000000000);
 
-#ifdef COMPILE_FOR_LINUX_AND_FREEBSD_AND_CYGWIN_AND_OPENBSD
         uint64_t time_of_wakeup_ns = get_realtime_in_ns() + time_to_wait_for_wakeup_ns;
         sec = time_of_wakeup_ns / 1000000000;
         nsec = time_of_wakeup_ns % 1000000000;
         time_for_wait.tv_sec = sec;
         time_for_wait.tv_nsec = nsec;
-#endif
 
-#ifdef COMPILE_FOR_OSX
-        sec = time_to_wait_for_wakeup_ns / 1000000000;
-        nsec = time_to_wait_for_wakeup_ns % 1000000000;
-        time_for_wait.tv_sec = sec;
-        time_for_wait.tv_nsec = nsec;
-#endif
       }
       break;
     case am_timing_out:
       rc = 0;
       while ((player_state != ps_active) && (rc != ETIMEDOUT)) {
-#ifdef COMPILE_FOR_LINUX_AND_FREEBSD_AND_CYGWIN_AND_OPENBSD
         rc = pthread_cond_timedwait(&activity_monitor_cv, &activity_monitor_mutex,
                                     &time_for_wait); // this is a pthread cancellation point
-#endif
-#ifdef COMPILE_FOR_OSX
-        rc = pthread_cond_timedwait_relative_np(&activity_monitor_cv, &activity_monitor_mutex,
-                                                &time_for_wait);
-#endif
       }
       if (player_state == ps_active)
         state = am_active; // player has gone active -- do nothing, because it's still active

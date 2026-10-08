@@ -47,7 +47,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#ifdef CONFIG_AIRPLAY_2
 // #include "plist_xml_strings.h"
 #include "ptp-utilities.h"
 #include "utilities/structured_buffer.h"
@@ -57,11 +56,7 @@
 #include <libavutil/opt.h>
 #include <libswresample/swresample.h>
 #include <sodium.h>
-#endif
 
-#ifdef CONFIG_CONVOLUTION
-#include "FFTConvolver/convolver.h"
-#endif
 
 struct Nvll {
   char *name;
@@ -1190,7 +1185,6 @@ void rtp_request_resend(seq_t first, uint32_t count, rtsp_conn_info *conn) {
 
     char req[8]; // *not* a standard RTCP NACK
     req[0] = 0x80;
-#ifdef CONFIG_AIRPLAY_2
     if (conn->airplay_type == ap_2) {
       if (conn->ap2_remote_control_socket_addr_length == 0) {
         debug(2, "No remote socket -- skipping the resend");
@@ -1198,11 +1192,8 @@ void rtp_request_resend(seq_t first, uint32_t count, rtsp_conn_info *conn) {
       }
       req[1] = 0xD5; // Airplay 2 'resend'
     } else {
-#endif
       req[1] = (char)0x55 | (char)0x80; // Apple 'resend'
-#ifdef CONFIG_AIRPLAY_2
     }
-#endif
     *(unsigned short *)(req + 2) = htons(1);     // our sequence number
     *(unsigned short *)(req + 4) = htons(first); // missed seqnum
     *(unsigned short *)(req + 6) = htons(count); // count
@@ -1220,7 +1211,6 @@ void rtp_request_resend(seq_t first, uint32_t count, rtsp_conn_info *conn) {
         timeout.tv_sec = 0;
         timeout.tv_usec = 100000;
         int response;
-#ifdef CONFIG_AIRPLAY_2
         if (conn->airplay_type == ap_2) {
           if (setsockopt(conn->ap2_control_socket, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout,
                          sizeof(timeout)) < 0)
@@ -1229,7 +1219,6 @@ void rtp_request_resend(seq_t first, uint32_t count, rtsp_conn_info *conn) {
                             (struct sockaddr *)&conn->ap2_remote_control_socket_addr,
                             conn->ap2_remote_control_socket_addr_length);
         } else {
-#endif
           if (setsockopt(conn->control_socket, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout,
                          sizeof(timeout)) < 0)
             debug(1, "Can't set timeout on resend request socket.");
@@ -1242,9 +1231,7 @@ void rtp_request_resend(seq_t first, uint32_t count, rtsp_conn_info *conn) {
           response = sendto(conn->control_socket, req, sizeof(req), 0,
                             (struct sockaddr *)&conn->rtp_client_control_socket, msgsize);
 
-#ifdef CONFIG_AIRPLAY_2
         }
-#endif
         if (response == -1) {
           char em[1024];
           strerror_r(errno, em, sizeof(em));
@@ -1271,7 +1258,6 @@ void rtp_request_resend(seq_t first, uint32_t count, rtsp_conn_info *conn) {
   }
 }
 
-#ifdef CONFIG_AIRPLAY_2
 
 void set_ptp_anchor_info(rtsp_conn_info *conn, uint64_t clock_id, uint32_t rtptime,
                          uint64_t networktime) {
@@ -1879,19 +1865,3 @@ int have_timestamp_timing_information(rtsp_conn_info *conn) {
     return have_ntp_timing_information(conn);
 }
 
-#else
-
-int frame_to_local_time(uint32_t timestamp, uint64_t *time, rtsp_conn_info *conn) {
-  return frame_to_ntp_local_time(timestamp, time, conn);
-}
-
-int local_time_to_frame(uint64_t time, uint32_t *frame, rtsp_conn_info *conn) {
-  return local_ntp_time_to_frame(time, frame, conn);
-}
-
-void reset_anchor_info(rtsp_conn_info *conn) { reset_ntp_anchor_info(conn); }
-
-int have_timestamp_timing_information(rtsp_conn_info *conn) {
-  return have_ntp_timing_information(conn);
-}
-#endif

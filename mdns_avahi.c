@@ -33,13 +33,7 @@
 #include "common.h"
 #include "mdns.h"
 
-#ifdef CONFIG_METADATA
-#include "metadata/core.h"
-#endif
 
-#ifdef CONFIG_DACP_CLIENT
-#include "dacp.h"
-#endif
 #include <string.h>
 
 #include <avahi-client/client.h>
@@ -90,12 +84,8 @@ static void resolve_callback(AvahiServiceResolver *r, AVAHI_GCC_UNUSED AvahiIfIn
                              AVAHI_GCC_UNUSED AvahiProtocol protocol, AvahiResolverEvent event,
                              const char *name, const char *type, const char *domain,
                              __attribute__((unused)) const char *host_name,
-#if defined(CONFIG_METADATA) || defined(CONFIG_DACP_CLIENT)
-                             __attribute__((unused)) const AvahiAddress *address, uint16_t lport,
-#else
                              __attribute__((unused)) const AvahiAddress *address,
                              __attribute__((unused)) uint16_t lport,
-#endif
                              __attribute__((unused)) AvahiStringList *txt,
                              __attribute__((unused)) AvahiLookupResultFlags flags, void *userdata) {
   // debug(1,"resolve_callback, event %d.", event);
@@ -120,14 +110,6 @@ static void resolve_callback(AvahiServiceResolver *r, AVAHI_GCC_UNUSED AvahiIfIn
           dacpid++; // skip any leading zeroes
         if (strcmp(dacpid, dbs->dacp_id) == 0) {
           debug(4, "resolve_callback: client dacp_id \"%s\" dacp port: %u.", dbs->dacp_id, lport);
-#ifdef CONFIG_DACP_CLIENT
-          dacp_monitor_port_update_callback(dacpid, lport);
-#endif
-#ifdef CONFIG_METADATA
-          char port_in_chars[16];
-          snprintf(port_in_chars, 7, "%u", lport);
-          send_ssnc_metadata('dapo', port_in_chars, strlen(port_in_chars), 0);
-#endif
         }
       } else {
         debug(1, "Resolve callback: Can't see a DACP string in a DACP Record!");
@@ -173,12 +155,6 @@ static void browse_callback(AvahiServiceBrowser *b, AvahiIfIndex interface, Avah
       while (*dacpid == '0')
         dacpid++; // skip any leading zeroes
       if ((dbs->dacp_id) && (strcmp(dacpid, dbs->dacp_id) == 0)) {
-#ifdef CONFIG_DACP_CLIENT
-        dacp_monitor_port_update_callback(dbs->dacp_id, 0); // say the port is withdrawn
-#endif
-#ifdef CONFIG_METADATA
-        send_ssnc_metadata('dapo', "0", strlen("0"), 0);
-#endif
       }
     } else {
       debug(1, "Browse callback: Can't see a DACP string in a DACP Record!");

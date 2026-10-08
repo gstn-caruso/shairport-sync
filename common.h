@@ -31,26 +31,7 @@ typedef enum {
 #define SAFAMILY sa_family
 #endif
 
-#if defined(CONFIG_CONVOLUTION)
-// impulse response filter file status
-typedef enum { ev_unchecked, ev_okay, ev_invalid } ir_file_evaluation;
 
-// impulse response filter file record
-typedef struct {
-  unsigned int samplerate; // initialized to 0, will be filter frame rate
-  unsigned int channels;
-  char *filename; // the parsed filename
-} ir_file_info_t;
-#endif
-
-#if defined(CONFIG_DBUS_INTERFACE) || defined(CONFIG_MPRIS_INTERFACE)
-#include <glib.h>
-typedef enum {
-  DBT_default = 0,
-  DBT_system,  // use the system bus
-  DBT_session, // use the session bus
-} dbus_message_bus_t;
-#endif
 
 #define sps_extra_code_output_stalled 32768
 #define sps_extra_code_output_state_cannot_make_ready 32769
@@ -160,12 +141,6 @@ typedef enum {
 // #define SPS_CHANNEL_SET (((1 << (SPS_GREATEST_CHANNEL_COUNT + 1)) - 1) - (1 << 0)) // channels 1
 // to 31, not 0-based!
 
-#ifndef CONFIG_AIRPLAY_2
-#define SPS_FORMAT_NON_FFMPEG_SET SPS_FORMAT_SET
-#define SPS_RATE_NON_FFMPEG_SET                                                                    \
-  ((1 << SPS_RATE_44100) | (1 << SPS_RATE_88200) | (1 << SPS_RATE_176400) | (1 << SPS_RATE_352800))
-#define SPS_CHANNNEL_NON_FFMPEG_SET (1 << 2)
-#endif
 
 // up to 1048576 fps, but must be an even number
 #define RATE_FROM_ENCODED_FORMAT(encoded_format) (((encoded_format >> 6) & 0x7FFFF) * 2)
@@ -205,54 +180,15 @@ typedef struct {
   char *service_name; // the name for the shairport service, e.g. "Shairport Sync Version %v running
                       // on host %h"
 
-#ifdef CONFIG_PULSEAUDIO
   char *pa_server;           // the pulseaudio server address that Shairport Sync will play on.
   char *pa_application_name; // the name under which Shairport Sync shows up as an "Application" in
                              // the Sound Preferences in most desktop Linuxes.
   // Defaults to "Shairport Sync". Shairport Sync must be playing to see it.
 
   char *pa_sink; // the name (or id) of the sink that Shairport Sync will play on.
-#endif
 
-#ifdef CONFIG_PIPEWIRE
-  char *pw_application_name; // the name under which Shairport Sync shows up as an "Application" in
-                             // the Sound Preferences in most desktop Linuxes.
-                             // Defaults to "Shairport Sync".
 
-  char *pw_node_name;   // defaults to the application's name, usually "shairport-sync".
-  char *pw_sink_target; // leave this unset if you don't want to change the sink_target.
-#endif
 
-#ifdef CONFIG_METADATA
-  int metadata_enabled;
-  char *metadata_pipename;
-  char *metadata_sockaddr;
-  int metadata_sockport;
-  size_t metadata_sockmsglength;
-  int get_coverart;
-  double metadata_progress_interval; // 0 means no progress reports
-#endif
-
-#ifdef CONFIG_MQTT
-  int mqtt_enabled;
-  char *mqtt_hostname;
-  int mqtt_port;
-  char *mqtt_username;
-  char *mqtt_password;
-  char *mqtt_capath;
-  char *mqtt_cafile;
-  char *mqtt_certfile;
-  char *mqtt_keyfile;
-  char *mqtt_topic;
-  int mqtt_publish_raw;
-  int mqtt_publish_parsed;
-  int mqtt_publish_cover;
-  int mqtt_publish_retain;
-  int mqtt_enable_remote;
-  int mqtt_enable_autodiscovery;
-  char *mqtt_autodiscovery_prefix;
-  char *mqtt_empty_payload_substitute;
-#endif
 
   uint8_t ap1_prefix[6];
   uint8_t hw_addr[8]; // only needs 6 but 8 is handy when converting this to a number
@@ -280,13 +216,6 @@ typedef struct {
   uint32_t fixedLatencyOffset;  // add this to all automatic latencies supplied to get the actual
                                 // total latency
 // the total latency will be limited to the min and max-latency values, if supplied
-#ifdef CONFIG_LIBDAEMON
-  int daemonise;
-  int daemonise_store_pid; // don't try to save a PID file
-  char *piddir;
-  char *computed_piddir; // the actual pid directory to create, if any
-  char *pidfile;
-#endif
 
   int log_fd;                      // file descriptor of the file or pipe to log stuff to.
   char *log_file_path;             // path to file or pipe to log to, if any
@@ -348,17 +277,6 @@ typedef struct {
   uint32_t rate_set;
   uint32_t channel_set;
 
-#ifdef CONFIG_CONVOLUTION
-  int convolution_enabled;
-  unsigned int convolution_ir_file_count;
-  ir_file_info_t *convolution_ir_files; // NULL or an array of information about all the impulse
-                                        // response files loaded
-  int convolution_ir_files_updated; // set to true if the convolution_ir_files are changed. Cleared
-                                    // when the convolver has been initialised
-  unsigned int convolution_threads; // number of threads in the convolver thread pool
-  float convolution_gain;
-  double convolution_max_length_in_seconds;
-#endif
 
   int loudness_enabled;
   float loudness_reference_volume_db;
@@ -368,30 +286,10 @@ typedef struct {
   volatile int keep_dac_busy;
   yna_type use_precision_timing; // defaults to no
 
-#ifdef CONFIG_METADATA_HUB
-  char *cover_art_cache_dir;
-  int retain_coverart;
-
-  int scan_interval_when_active;   // number of seconds between DACP server scans when playing
-                                   // something (1)
-  int scan_interval_when_inactive; // number of seconds between DACP server scans playing nothing
-                                   // (3)
-  int scan_max_bad_response_count; // number of successive bad results to ignore before giving up
-                                   // (10)
-  int scan_max_inactive_count;     // number of scans to do before stopping if not made active again
-                                   // (about 15 minutes worth)
-#endif
 
   int disable_resend_requests; // set this to stop resend request being made for missing packets
   double diagnostic_drop_packet_fraction; // pseudo randomly drop this fraction of packets, for
                                           // debugging. Currently audio packets only...
-#ifdef CONFIG_JACK
-  char *jack_client_name;
-  char *jack_autoconnect_pattern;
-#ifdef CONFIG_SOXR
-  int jack_soxr_resample_quality;
-#endif
-#endif
 
   void *gradients; // a linked list of the clock gradients discovered for all DACP IDs
                    // can't use IP numbers as they might be given to different devices
@@ -403,7 +301,6 @@ typedef struct {
   char *srcvers;
   char *osvers;
 
-#ifdef CONFIG_AIRPLAY_2
   uint64_t airplay_features;
   uint32_t airplay_statusflags;
   char *airplay_fex;       // a base64-encoded version of the airplay_features in little-endian form
@@ -415,7 +312,6 @@ typedef struct {
   char *pk_string;
   char *nqptp_shared_memory_interface_name; // client name for nqptp service
   int enable_HK_Access_Control;             // true if the device is part of an Apple Home
-#endif
 
   APST_t service_type; // APST_auto, APST_classic, APST_forced_classic, APST_airplay2
 
@@ -432,18 +328,6 @@ typedef struct {
   const char *output_channel_map[8]; // names of the output channels
   unsigned int output_channel_map_size; // number of output channels
 
-#if defined(CONFIG_DBUS_INTERFACE) || defined(CONFIG_MPRIS_INTERFACE)
-  dbus_message_bus_t dbus_default_message_bus;
-
-#if defined(CONFIG_DBUS_INTERFACE)
-  dbus_message_bus_t dbus_service_bus_type;
-#endif
-
-#if defined(CONFIG_MPRIS_INTERFACE)
-  dbus_message_bus_t mpris_service_bus_type;
-#endif
-
-#endif
 
 } shairport_cfg;
 
@@ -514,10 +398,8 @@ double dasl_tapered_vol2attn(double vol, long max_db, long min_db);
 double vol2attn(double vol, long max_db, long min_db);
 
 // return a time in nanoseconds
-#ifdef COMPILE_FOR_LINUX_AND_FREEBSD_AND_CYGWIN_AND_OPENBSD
 // Not defined for macOS
 uint64_t get_realtime_in_ns(void);
-#endif
 uint64_t get_absolute_time_in_ns(void);  // monotonic_raw or monotonic
 uint64_t get_monotonic_time_in_ns(void); // NTP-disciplined
 
@@ -599,9 +481,7 @@ void mutex_cleanup(void *arg);
 void rwlock_unlock(void *arg);
 void cv_cleanup(void *arg);
 void thread_cleanup(void *arg);
-#ifdef CONFIG_AIRPLAY_2
 void plist_cleanup(void *arg);
-#endif
 
 char *debug_malloc_hex_cstring(void *packet, size_t nread);
 
@@ -614,23 +494,6 @@ int get_device_id(uint8_t *id, int int_length);
 
 char *bnprintf(char *buffer, ssize_t max_bytes, const char *format, ...);
 
-#ifdef CONFIG_CONVOLUTION
-
-/* Parse comma-separated filenames with optional quotes from the input string
- * Returns array of ir_file_info_t structs (caller must free both array and filenames)
- * count is set to number of filenames found
- * Returns NULL on error
- */
-ir_file_info_t *parse_ir_filenames(const char *input, unsigned int *file_count);
-// Access: files[i].filename, files[i].rate, files[i].evaluation
-
-/* Do a quick sanity check on the files -- see if they can be opened as sound files */
-void sanity_check_ir_files(const int option_print_level, ir_file_info_t *files, unsigned int count);
-
-/* Free the array returned by parse_filenames */
-void free_ir_filenames(ir_file_info_t *files, unsigned int file_count);
-
-#endif
 
 #ifdef CONFIG_USE_GIT_VERSION_STRING
 extern char git_version_string[];

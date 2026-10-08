@@ -32,68 +32,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef CONFIG_JACK
-extern audio_output audio_jack;
-#endif
-#ifdef CONFIG_SNDIO
-extern audio_output audio_sndio;
-#endif
-#ifdef CONFIG_AO
-extern audio_output audio_ao;
-#endif
-#ifdef CONFIG_SOUNDIO
-extern audio_output audio_soundio;
-#endif
-#ifdef CONFIG_PIPEWIRE
-extern audio_output audio_pw;
-#endif
-#ifdef CONFIG_PULSEAUDIO
 extern audio_output audio_pa;
-#endif
-#ifdef CONFIG_ALSA
-extern audio_output audio_alsa;
-#endif
-#ifdef CONFIG_DUMMY
-extern audio_output audio_dummy;
-#endif
-#ifdef CONFIG_PIPE
-extern audio_output audio_pipe;
-#endif
-#ifdef CONFIG_STDOUT
-extern audio_output audio_stdout;
-#endif
 
 static audio_output *outputs[] = {
-#ifdef CONFIG_ALSA
-    &audio_alsa,
-#endif
-#ifdef CONFIG_SNDIO
-    &audio_sndio,
-#endif
-#ifdef CONFIG_PIPEWIRE
-    &audio_pw,
-#endif
-#ifdef CONFIG_PULSEAUDIO
     &audio_pa,
-#endif
-#ifdef CONFIG_JACK
-    &audio_jack,
-#endif
-#ifdef CONFIG_AO
-    &audio_ao,
-#endif
-#ifdef CONFIG_SOUNDIO
-    &audio_soundio,
-#endif
-#ifdef CONFIG_PIPE
-    &audio_pipe,
-#endif
-#ifdef CONFIG_STDOUT
-    &audio_stdout,
-#endif
-#ifdef CONFIG_DUMMY
-    &audio_dummy,
-#endif
     NULL};
 
 audio_output *audio_get_output(const char *name) {
@@ -343,11 +285,7 @@ uint32_t get_rate_settings(const char *stanza_name, const char *setting_name) {
       if (config_setting_type(rate_setting) == CONFIG_TYPE_STRING) {
         // see if it is "auto"
         if (strcmp(config_setting_get_string(rate_setting), "auto") == 0) {
-#ifdef CONFIG_FFMPEG
           rate_set = SPS_RATE_SET; // all valid rates
-#else
-          rate_set = SPS_RATE_NON_FFMPEG_SET;
-#endif
         } else {
           warn("In the \"%s\" setting in the \"%s\" section of the configuration file, an invalid "
                "character string -- \"%s\" -- has been detected. (Note that numbers must not be "
@@ -368,18 +306,7 @@ uint32_t get_rate_settings(const char *stanza_name, const char *setting_name) {
               if ((unsigned int)rates[i] == sps_rate_actual_rate(r)) {
                 valid = 1;
 
-#ifdef CONFIG_FFMPEG
                 rate_set |= (1 << r);
-#else
-                if (((1 << r) & SPS_RATE_NON_FFMPEG_SET) != 0) {
-                  rate_set |= (1 << r);
-                } else {
-                  warn("In the \"%s\" setting in the \"%s\" section of the configuration file, "
-                       "the rate selected -- %d -- can not be used because Shairport Sync has been "
-                       "built without FFmpeg support.",
-                       setting_name, stanza_name, rates[i]);
-                }
-#endif
               }
             }
             if (valid == 0) {
@@ -438,11 +365,7 @@ uint32_t get_channel_settings(const char *stanza_name, const char *setting_name)
       if (config_setting_type(channels_setting) == CONFIG_TYPE_STRING) {
         // see if it is "auto"
         if (strcmp(config_setting_get_string(channels_setting), "auto") == 0) {
-#ifdef CONFIG_FFMPEG
           channel_set = SPS_CHANNEL_SET; // all valid channels
-#else
-          channel_set = SPS_CHANNNEL_NON_FFMPEG_SET; // just two channels
-#endif
         } else {
           warn("in the \"%s\" setting in the \"%s\" section of the configuration file, an invalid "
                "setting: \"%s\" has been detected.",
@@ -459,18 +382,7 @@ uint32_t get_channel_settings(const char *stanza_name, const char *setting_name)
             debug(3, "channel count setting %d: %d.", i, channel_counts[i]);
 
             if ((channel_counts[i] >= 1) && (channel_counts[i] <= SPS_GREATEST_CHANNEL_COUNT)) {
-#ifdef CONFIG_FFMPEG
               channel_set |= (1 << channel_counts[i]);
-#else
-              if (((1 << channel_counts[i]) & SPS_CHANNNEL_NON_FFMPEG_SET) != 0) {
-                channel_set |= (1 << channel_counts[i]);
-              } else {
-                warn("in the \"%s\" setting in the \"%s\" section of the configuration file, "
-                     "the channel count selected -- %d -- can not be used because Shairport Sync "
-                     "has been built without FFmpeg support.",
-                     setting_name, stanza_name, channel_counts[i]);
-              }
-#endif
             } else {
               warn("in the \"%s\" setting in the \"%s\" section of the configuration file, an "
                    "invalid channel count: %d has been detected.",
@@ -933,14 +845,9 @@ int32_t search_for_suitable_configuration(unsigned int channels, unsigned int ra
   if (reply == 0) { // no luck with the last response generated, if any...
     // check for native number of channels or more... and then, if not successful, with fewer
     // channels
-#ifdef CONFIG_FFMPEG
     unsigned int channel_count_check_sequence[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 7, 6, 5, 4, 3, 2, 1};
     unsigned int rates[] = {44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000,
                             64000, 32000, 22050, 16000, 11025,  8000,   5512};
-#else
-    unsigned int channel_count_check_sequence[] = {0, 1, 2};
-//    unsigned int rates[] = {44100};
-#endif
 
     unsigned int channel_count_index = channels;
     // start looking with the required number of channels
@@ -967,9 +874,6 @@ int32_t search_for_suitable_configuration(unsigned int channels, unsigned int ra
             // check for the exact format only under these conditions, otherwise look for the best
             (config.ignore_volume_control != 0) &&
             (config.volume_max_db_set == 0) &&
-#ifdef CONFIG_CONVOLUTION
-            (config.convolution_enabled == 0) &&
-#endif
             (config.loudness_enabled == 0) &&
             (local_rate == rate) &&
             (local_channels >= channels) &&
@@ -992,7 +896,6 @@ int32_t search_for_suitable_configuration(unsigned int channels, unsigned int ra
             rate_multiplier = rate_multiplier * 2;
           }
         }
-#ifdef CONFIG_FFMPEG
         if (local_format == SPS_FORMAT_UNKNOWN) {
           debug(3, "check for the next highest rate above %u with %u channels and the best format.", rate,
                 local_channels);
@@ -1025,7 +928,6 @@ int32_t search_for_suitable_configuration(unsigned int channels, unsigned int ra
             }
           }
         }
-#endif
       }
       // if unsuccessful, try with, firstly, more channels, and then, later, with fewer channels
       if (local_format == SPS_FORMAT_UNKNOWN)

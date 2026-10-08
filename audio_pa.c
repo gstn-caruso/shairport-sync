@@ -488,12 +488,7 @@ static int init(__attribute__((unused)) int argc, __attribute__((unused)) char *
 
   // get settings from settings file, passing in defaults for format_set, rate_set and channel_set
   // Note, these options may be in the "general" stanza or the named stanza
-#ifdef CONFIG_FFMPEG
   parse_audio_options("pulseaudio", SPS_FORMAT_SET, SPS_RATE_SET, SPS_CHANNEL_SET);
-#else
-  parse_audio_options("pulseaudio", SPS_FORMAT_NON_FFMPEG_SET, SPS_RATE_NON_FFMPEG_SET,
-                      SPS_CHANNNEL_NON_FFMPEG_SET);
-#endif
 
   // now the specific options
   if (config.cfg != NULL) {
