@@ -64,6 +64,24 @@ installed executable `--version`, and installed manual/configuration byte
 comparisons passed. No production behavior, native wrappers or sanitizer
 object paths changed; sanitizers and device playback were not rerun.
 
+The PCM isolation cycle puts the collaborating encoder and playback-sample
+sources in `receiver-pcm`, retaining production compile settings and the C++26
+source guard. PCM, playback-sample and inline ConvertedAudio ownership tests
+link this target and GoogleTest directly. The public allocation dependency is
+only `PkgConfig::AVUTIL`; `nm -u` confirms ConvertedAudio's actual `av_mallocz`
+and `av_free` symbols. Before editing, a settled build and `touch audio.cpp`
+scheduled all three test links; the actual selected-target build compiled
+`audio.cpp`, archived the receiver and linked three tests (0.60s). Afterwards,
+the same selected targets did no work (0.01s); the subsequent full build
+compiled `audio.cpp`, archived the receiver and linked 31 executables (3.24s),
+leaving these tests untouched. Single measurements and native logs in ignored
+`build/redesign-release/pcm-*.log` establish isolation, not overall speedup.
+All 27 named cases and 231 Release CTest entries passed (15.09s), including
+native linkage/configuration contracts. Staged installation, installed binary
+`--version`, and installed manual/configuration byte comparisons passed.
+Production behavior and native wrapper/object paths are unchanged; sanitizer
+builds and device playback were not rerun.
+
 The first discovery acceptance check was
 `ctest --test-dir build/cmake -R '^VolumePolicy\.' --no-tests=error`.
 It failed with no tests on the baseline. GoogleTest now registers six named
