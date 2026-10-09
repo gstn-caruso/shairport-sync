@@ -11,6 +11,7 @@
 #include "playback_sync.hpp"
 #include "playback_statistics.hpp"
 #include "volume_control.hpp"
+#include "playback_timing.hpp"
 #include <cstdlib>
 #include <atomic>
 
@@ -46,9 +47,7 @@ struct SessionState {
   AudioPacketBuffer packetBuffer;
   unsigned int frames_per_packet, input_rate;
   // int connection_state_to_output;
-  uint64_t first_packet_time_to_play;
-  int64_t time_since_play_started; // nanoseconds
-                                   // stats
+  PlaybackTiming playbackTiming;
   // debug variables
   int last_seqno_valid;
   seq_t last_seqno_read;
@@ -56,8 +55,6 @@ struct SessionState {
   pthread_mutex_t flush_mutex, player_create_delete_mutex;
   VolumeControl volumeControl;
 
-  int ab_buffering;
-  uint32_t first_packet_timestamp;
   int flush_output_flushed; // true if the output device has been flushed.
 
 

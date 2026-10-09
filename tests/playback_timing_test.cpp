@@ -60,4 +60,15 @@ int main() {
     timing.planPreroll(*start, {1000000000, 1200000000, true}, {48000, false, 0});
   }
   arrival.join();
+  timing.resetForPlay();
+  first = timing.startWithReadyPacket(600);
+  auto held = timing.planPreroll(*first, {1000000000, 1100000001, true}, {48000, false, 100000000});
+  assert(held.silenceFrames == 0);
+  auto exactLead = timing.planPreroll(*first, {1000000000, 1100000000, true}, {48000, false, 100000000});
+  assert(exactLead.silenceFrames == 4800);
+  target = timing.releaseTargetFrame(600, 0);
+  assert(!timing.shouldRelease(target, {1100000000, 1100000000, 0, 0}));
+  auto complete = timing.planPreroll(*first, {1100000000, 1100000000, true}, {48000, true, 0});
+  assert(complete.silenceFrames == 0);
+  assert(timing.shouldRelease(target, {1100000000, 1100000000, 0, 0}));
 }

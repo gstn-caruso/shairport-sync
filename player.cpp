@@ -84,7 +84,7 @@ size_t avflush(rtsp_conn_info *conn);
 void ab_resync(rtsp_conn_info *conn) {
   conn->packetBuffer.reset();
   conn->last_seqno_valid = 0;
-  conn->ab_buffering = 1;
+  conn->playbackTiming.onBufferReset();
 }
 
 void reset_input_flow_metrics(rtsp_conn_info *conn) {
@@ -321,12 +321,11 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t timestamp, uint8
     return packet;
   }, policy);
   if (admission.kind == ArrivalKind::first || admission.kind == ArrivalKind::overflow) {
-    conn->first_packet_timestamp = 0;
     if (admission.kind == ArrivalKind::overflow) {
-      conn->ab_buffering = 1;
       conn->last_seqno_valid = 0;
     }
   }
+  conn->playbackTiming.onArrival(admission.kind);
   conn->statistics.recordArrival(now, timestamp, admission.kind);
   pthread_setcancelstate(previousState, nullptr);
   for (const auto range : admission.resendRanges) {
@@ -350,20 +349,13 @@ int32_t rand_in_range(int32_t exclusive_range_limit) {
 
 static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
                                                         int resync_requested) {
-  AudioPacketMetadata snapshot{};
-  AudioPacketMetadata *curframe = nullptr;
   std::optional<AudioPacketBuffer::Front> front;
   std::optional<QueuedAudioPacket> result;
-  int notified_buffer_empty = 0;
-  int wait;
-  long dac_delay = 0; // long because alsa returns a long
-
-  int output_device_has_been_primed =
-      0; // set to true when we have sent at least one silent frame to the DAC
+  bool wait;
+  conn->playbackTiming.beginPacketWait();
 
   do {
     const auto observedRevision = conn->packetBuffer.revision();
-    curframe = nullptr;
     // debug(3, "buffer_get_frame is iterating");
     // we must have timing information before we can do anything here
     if ((have_timestamp_timing_information(conn)) && (conn->input_format_is_valid != 0)) {
@@ -378,12 +370,7 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
       }
       if (flushed.resetTiming) {
         conn->last_seqno_valid = 0;
-        conn->ab_buffering = 1;
-        conn->first_packet_timestamp = 0;
-        conn->first_packet_time_to_play = 0;
-        conn->time_since_play_started = 0;
-        output_device_has_been_primed = 0;
-        dac_delay = 0;
+        conn->playbackTiming.onFlush();
       }
 
       uint32_t should_be_frame;
@@ -393,294 +380,73 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
       }
       front = conn->packetBuffer.front();
       if (front) {
-        snapshot = front->packet;
-        curframe = &snapshot;
-        if (resync_requested != 0) {
-          debug(2, "Connection %d: reset first_packet_timestamp resync_requested.",
-                conn->connection_number);
-          conn->ab_buffering = 1;
-          conn->first_packet_timestamp = 0;
-          conn->first_packet_time_to_play = 0;
-          output_device_has_been_primed = 1; // so that it can rely on the delay provided by it
-        }
-
-        if (front.has_value()) {
-
-          if (curframe != NULL) {
-            uint64_t should_be_time;
-            if (frame_to_local_time(curframe->timestamp, &should_be_time, conn) == 0) {
-            int64_t time_difference = should_be_time - get_absolute_time_in_ns();
-            debug(4, "Check packet from buffer %u, timestamp %u, %f seconds ahead.", snapshot.sequence,
-                  curframe->timestamp, 0.000000001 * time_difference);
+        if (resync_requested) conn->playbackTiming.onResync();
+        if (front->packet.ready) {
+          if (const auto start = conn->playbackTiming.startWithReadyPacket(front->packet.timestamp)) {
+            if (start->configureOutput)
+              setupSoftwareResampler(conn, front->packet.encoding, front->sampleFormat);
+            PrerollObservation observation{get_absolute_time_in_ns(), {}, config.output->delay != nullptr};
+            if (start->configureOutput || observation.hasDelay) {
+              uint64_t time;
+              if (frame_to_local_time(start->timestamp, &time, conn) == 0)
+                observation.firstFrameTime = time;
             }
-          } else {
-            debug(3, "Check packet from buffer %u, empty.", snapshot.sequence);
-          }
-
-          if ((curframe) && (curframe->ready)) {
-            notified_buffer_empty = 0; // at least one buffer now -- diagnostic only.
-            if (conn->ab_buffering) {  // if we are getting packets but not yet forwarding them to
-                                       // the player
-              if (conn->first_packet_timestamp == 0) { // if this is the very first packet
-                conn->first_packet_timestamp =
-                    curframe->timestamp; // we will keep buffering until we are
-                                         // supposed to start playing this
-                debug(2, "Connection %d: first packet timestamp is %u.", conn->connection_number,
-                      conn->first_packet_timestamp);
-
-                // Even though it'll be some time before the first frame will be output
-                // (and thus some time before the resampling chain is needed),
-                // we need to set up the output device to correspond to
-                // the input format w.r.t. rate, depth and channels
-                // because we'll be sending silence before the first real frame.
-                // Set up the output chain, including the software resampler.
-                debug(2, "set up the output chain to %s for FFmpeg.",
-                      get_ssrc_name(curframe->encoding));
-                setupSoftwareResampler(conn, curframe->encoding, front->sampleFormat);
-                uint64_t should_be_time;
-                if (frame_to_local_time(conn->first_packet_timestamp, &should_be_time, conn) == 0)
-                  conn->first_packet_time_to_play = should_be_time;
-                else {
-                  conn->first_packet_time_to_play = 0;
-                  conn->first_packet_timestamp = 0;
-                }
-
-                int64_t lt = conn->first_packet_time_to_play - get_absolute_time_in_ns();
-
-                // can't be too late because we skipped late packets already, FLW.
-                debug(2, "Connection %d: lead time for first frame %u: %f seconds.",
-                      conn->connection_number, conn->first_packet_timestamp, lt * 0.000000001);
+            observation.now = get_absolute_time_in_ns();
+            const PrerollPolicy policy{
+                RATE_FROM_ENCODED_FORMAT(config.current_output_configuration),
+                config.audio_backend_silent_lead_in_time_auto != 0,
+                static_cast<int64_t>(config.audio_backend_silent_lead_in_time * 1000000000)};
+            auto action = conn->playbackTiming.planPreroll(*start, observation, policy);
+            if (action.queryDelay) {
+              long delay = 0;
+              observation.delayStatus = config.output->delay(&delay);
+              observation.delayFrames = delay;
+              observation.delayMeasured = true;
+              observation.now = get_absolute_time_in_ns();
+              if (observation.delayStatus == sps_extra_code_output_stalled &&
+                  !config.unfixable_error_reported) {
+                config.unfixable_error_reported = 1;
+                if (config.cmd_unfixable)
+                  command_execute(config.cmd_unfixable, "output_device_stalled", 1);
+                else
+                  die("an unrecoverable error, \"output_device_stalled\", has been detected.");
               }
-
-              if (conn->first_packet_time_to_play != 0) {
-                // Now that we know the timing of the first packet...
-                if (config.output->delay) {
-                  // and that the output device is capable of synchronization...
-
-                  // We may send packets of
-                  // silence from now until the time the first audio packet should be sent
-                  // and then we will send the first packet, which will be followed by
-                  // the subsequent packets.
-                  // here, we figure out whether and what silence to send.
-
-                  uint64_t should_be_time;
-
-                  // readjust first packet time to play
-                  if (frame_to_local_time(conn->first_packet_timestamp, &should_be_time, conn) == 0) {
-
-                  int64_t change_in_should_be_time =
-                      (int64_t)(should_be_time - conn->first_packet_time_to_play);
-
-                  if (fabs(0.000001 * change_in_should_be_time) >
-                      0.001) // ignore this unless if's more than a microsecond
-                    debug(
-                        2,
-                        "Change in estimated first_packet_time: %f milliseconds for first_packet.",
-                        0.000001 * change_in_should_be_time);
-
-                  conn->first_packet_time_to_play = should_be_time;
-
-                  int64_t lead_time = conn->first_packet_time_to_play -
-                                      get_absolute_time_in_ns(); // negative means late
-                  if (lead_time < 0) {
-                    debug(2, "Gone past starting time for %u by %" PRId64 " nanoseconds.",
-                          conn->first_packet_timestamp, -lead_time);
-                    conn->ab_buffering = 0;
-                  } else {
-                    // do some calculations
-                    if ((config.audio_backend_silent_lead_in_time_auto == 1) ||
-                        (lead_time <= (int64_t)(config.audio_backend_silent_lead_in_time *
-                                                (int64_t)1000000000))) {
-                      debug(3, "Lead time: %" PRId64 " nanoseconds.", lead_time);
-                      int resp = 0;
-                      dac_delay = 0;
-                      if (output_device_has_been_primed != 0)
-                        resp = config.output->delay(
-                            &dac_delay); // we know the output device must have a delay function
-                      if (resp == 0) {
-                        int64_t gross_frame_gap =
-                            ((conn->first_packet_time_to_play - get_absolute_time_in_ns()) *
-                             RATE_FROM_ENCODED_FORMAT(config.current_output_configuration)) /
-                            1000000000;
-                        int64_t exact_frame_gap = gross_frame_gap - dac_delay;
-
-                        debug(4,
-                              "Exact frame gap: %" PRId64 ". DAC delay: %ld. Total: %" PRId64
-                              ". First packet timestamp: %u. ",
-                              exact_frame_gap, dac_delay, gross_frame_gap,
-                              conn->first_packet_timestamp);
-                        // int64_t frames_needed_to_maintain_desired_buffer =
-                        //     (int64_t)(config.audio_backend_buffer_desired_length *
-                        //               config.current_output_configuration->rate) -
-                        //     dac_delay;
-                        // below, remember that exact_frame_gap and
-                        // frames_needed_to_maintain_desired_buffer could both be negative
-                        int64_t fs =
-                            (RATE_FROM_ENCODED_FORMAT(config.current_output_configuration) * 100) /
-                            1000; // 100 milliseconds
-                        // if there isn't enough time to have the desired buffer size
-                        // if (exact_frame_gap <= fs) {
-                        //  fs = conn->frames_per_packet * 2;
-                        // }
-                        // if we are close to the end of buffering,
-                        // just add the remaining silence needed and end buffering
-                        if (exact_frame_gap < fs) {
-                          debug(3, "exact frame below fs of %" PRId64 " frames.", fs);
-                          fs = exact_frame_gap;
-                          conn->ab_buffering = 0;
-                        }
-                        if (fs > 0) {
-                          auto silence = conn->pcmEncoder.silence(fs);
-                          config.output->play(silence.bytes().data(), silence.frames(),
-                                              play_samples_are_untimed, 0, 0);
-                          output_device_has_been_primed = 1;
-                        }
-                      } else {
-                        if ((resp == -EAGAIN) || (resp == -EIO) || (resp == -ENODEV)) {
-                          debug(2, "delay() information not (yet, hopefully!) available.");
-                        } else {
-                          debug(1, "delay() error %d: \"%s\".", -resp, strerror(-resp));
-                        }
-                        if (resp == sps_extra_code_output_stalled) {
-                          if (config.unfixable_error_reported == 0) {
-                            config.unfixable_error_reported = 1;
-                            if (config.cmd_unfixable) {
-                              command_execute(config.cmd_unfixable, "output_device_stalled", 1);
-                            } else {
-                              die("an unrecoverable error, \"output_device_stalled\", has been "
-                                  "detected.");
-                            }
-                          }
-                        } else {
-                          debug(3, "Unexpected response to getting dac delay: %d.", resp);
-                        }
-                      }
-                    }
-                  }
-                  }
-                } else {
-                  // if the output device doesn't have a delay, we simply send the lead-in
-                  int64_t lead_time = conn->first_packet_time_to_play -
-                                      get_absolute_time_in_ns(); // negative if we are late
-                  int64_t frame_gap =
-                      (lead_time * RATE_FROM_ENCODED_FORMAT(config.current_output_configuration)) /
-                      1000000000;
-                  // debug(1,"%d frames needed.",frame_gap);
-                  while (frame_gap > 0) {
-                    int64_t fs = RATE_FROM_ENCODED_FORMAT(config.current_output_configuration) / 10;
-
-                    if (fs > frame_gap)
-                      fs = frame_gap;
-
-                    auto silence = conn->pcmEncoder.silence(fs);
-                    config.output->play(silence.bytes().data(), silence.frames(),
-                                        play_samples_are_untimed, 0, 0);
-                    frame_gap -= fs;
-                  }
-                  conn->ab_buffering = 0;
-                }
-              }
+              action = conn->playbackTiming.planPreroll(*start, observation, policy);
             }
-          }
-        }
-      } else {
-        // if (front.has_value())
-        // debug(1, "no buffers available at seqno %u.", snapshot.sequence);
-      }
-
-      // Here, we work out whether to release a packet or wait
-      // We release a packet when the time is right.
-
-      // To work out when the time is right, we need to take account of (1) the actual time the
-      // packet should be released, (2) the latency requested, (3) the audio backend latency offset
-      // and (4) the desired length of the audio backend's buffer
-
-      // The time is right if the current time is later or the same as
-      // The packet time + (latency + latency offset - backend_buffer_length).
-      // Note: the last three items are expressed in frames and must be converted to time.
-
-      int do_wait = 0; // don't wait unless we can really prove we must
-      if ((front.has_value()) && (curframe) && (curframe->ready) && (curframe->timestamp)) {
-        do_wait = 1; // if the current frame exists and is ready, then wait unless it's time to let
-                     // it go...
-
-        // here, get the time to play the current frame.
-
-        if (have_timestamp_timing_information(conn)) { // if we have a reference time
-
-          uint64_t time_to_play;
-
-          // we must enable packets to be released early enough for the
-          // audio buffer to be filled to the desired length
-
-          uint32_t desired_buffer_latency =
-              (uint32_t)(config.audio_backend_buffer_desired_length * conn->input_rate);
-          if (frame_to_local_time(curframe->timestamp - desired_buffer_latency, &time_to_play, conn) == 0) {
-          uint64_t current_buffer_delay = 0;
-          int resp = -1;
-          if (config.output->delay) {
-            long l_delay;
-            resp = config.output->delay(&l_delay);
-            if (resp == 0) { // no error
-              if (l_delay >= 0)
-                current_buffer_delay = l_delay;
-              else {
-                debug(2, "Underrun of %ld frames reported, but ignored.", l_delay);
-                current_buffer_delay =
-                    0; // could get a negative value if there was underrun, but ignore it.
-              }
-            }
-          }
-          // If it's the first packet, or we don't have a working delay() function in the backend,
-          // then wait until it's time to play it
-          if ((((conn->first_packet_timestamp == curframe->timestamp) || (resp != 0)) &&
-               (get_absolute_time_in_ns() >= time_to_play)) ||
-              // Otherwise, if it isn't the first packet and we have a valid delay from the backend,
-              // ensure the buffer stays nearly full
-              ((conn->first_packet_timestamp != curframe->timestamp) && (resp == 0) &&
-               (current_buffer_delay < desired_buffer_latency))) {
-            do_wait = 0;
-          }
-          // here, do a sanity check. if the time_to_play is not within a few seconds of the
-          // time now, the frame is probably not meant to be there, so let it go.
-          if (do_wait != 0) {
-            // this is a hack.
-            // we subtract two 2^n unsigned numbers and get a signed 2^n result.
-            // If we think of the calculation as occurring in modulo 2^n arithmetic
-            // then the signed result's magnitude represents the shorter distance around
-            // the modulo wheel of values from one number to the other.
-            // The sign indicates the direction: positive means clockwise (upwards) from the
-            // second number to the first (i.e. the first number comes "after" the second).
-
-            int64_t time_difference = get_absolute_time_in_ns() - time_to_play;
-            if ((time_difference > 10000000000) || (time_difference < -10000000000)) {
-              debug(2,
-                    "crazy time interval of %f seconds between time now: 0x%" PRIx64
-                    " and time of packet: %" PRIx64 ".",
-                    0.000000001 * time_difference, get_absolute_time_in_ns(), time_to_play);
-              debug(2, "packet rtptime: %u, reference_timestamp: %u", curframe->timestamp,
-                    conn->clock.referenceFrame());
-
-              do_wait = 0; // let it go
+            auto remaining = action.silenceFrames;
+            while (remaining != 0 && conn->playbackTiming.mayApply(action)) {
+              const auto frames = std::min(remaining, action.maximumChunkFrames);
+              auto silence = conn->pcmEncoder.silence(frames);
+              config.output->play(silence.bytes().data(), silence.frames(),
+                                  play_samples_are_untimed, 0, 0);
+              remaining -= frames;
+              conn->playbackTiming.markSilenceSubmitted(action);
             }
           }
         }
       }
+
+      wait = true;
+      if (front) {
+        const auto desiredFrames = static_cast<uint32_t>(
+            config.audio_backend_buffer_desired_length * conn->input_rate);
+        const auto target = conn->playbackTiming.releaseTargetFrame(
+            front->packet.ready ? front->packet.timestamp : 0, desiredFrames);
+        ReleaseObservation observation{get_absolute_time_in_ns(), {}};
+        if (target.timestamp != 0 && have_timestamp_timing_information(conn)) {
+          uint64_t time;
+          if (frame_to_local_time(target.frame, &time, conn) == 0) {
+            observation.targetTime = time;
+            if (config.output->delay) {
+              long delay = 0;
+              observation.delayStatus = config.output->delay(&delay);
+              observation.delayFrames = delay;
+            }
+            observation.now = get_absolute_time_in_ns();
           }
-      if (do_wait == 0)
-        // wait if the buffer is empty
-        if (!front) { // the buffer is empty!
-          if (notified_buffer_empty == 0) {
-            debug(4, "Connection %d: Buffer Empty", conn->connection_number);
-            notified_buffer_empty = 1;
-            // reset_input_flow_metrics(conn); // don't do a full flush parameters reset
-            // conn->initial_reference_time = 0;
-            // conn->initial_reference_timestamp = 0;
-            // conn->first_packet_timestamp = 0; // make sure the first packet isn't late
-          }
-          do_wait = 1;
         }
-      wait = (conn->ab_buffering || (do_wait != 0) || (!front.has_value()));
+        wait = !conn->playbackTiming.shouldRelease(target, observation);
+      }
     } else {
       wait = 1; // keep waiting until the timing information becomes available
     }
@@ -848,8 +614,7 @@ void *player_thread_func(void *arg) {
   conn->statistics.resetForPlay();
   conn->pcmEncoder.reset();
   conn->playbackSync.resetForPlay();
-  conn->ab_buffering = 1;
-  conn->first_packet_timestamp = 0;
+  conn->playbackTiming.resetForPlay();
   conn->flush_output_flushed = 0; // only send a flush command to the output device once
   conn->volumeControl.resetGainForPlay();
   conn->frames_per_packet = 352; // for ALAC -- will be changed if necessary
@@ -890,7 +655,6 @@ void *player_thread_func(void *arg) {
   if (config.output->start != NULL)
     config.output->start(44100, SPS_FORMAT_S16_LE);
 
-  conn->first_packet_timestamp = 0;
   pthread_cleanup_push(player_thread_cleanup_handler, arg); // undo what's been done so far
 
   // stop looking elsewhere for DACP stuff
@@ -1119,7 +883,7 @@ void *player_thread_func(void *arg) {
               observation.retainedFrames = nativeAudio.retainedFrames();
               observation.timestamp = playback.timestamp;
               observation.timestampGap = playback.timestampGap;
-              observation.firstFrame = conn->first_packet_timestamp == playback.timestamp;
+              observation.firstFrame = conn->playbackTiming.isFirstFrame(playback.timestamp);
               observation.measured = true;
               observation.inputRate = conn->input_rate;
               observation.outputRate = RATE_FROM_ENCODED_FORMAT(config.current_output_configuration);
