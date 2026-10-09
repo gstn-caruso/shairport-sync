@@ -112,6 +112,16 @@ Staged installation, installed binary `--version`, and manual/configuration
 byte comparisons passed. Criterion #77 puts release beside owned state;
 sanitizers/device playback and later repeat/empty/integration cases were not
 run in this cycle.
+The next coverage acceptance used
+`ctest --test-dir build/redesign-release -R '^PairCipherBundle.ReleaseIsSafeAfterOwnershipIsEmpty$' --no-tests=error`:
+it failed with no named test before editing. This is discovery red for already
+implemented behavior, not a runtime failure. The new case observes four frees
+on first release, none on repeated release or a fresh empty bundle, cleared
+owned state and unchanged encryption flags. The exact case, both bundle cases,
+ten shuffled repetitions and all 237 Release CTest entries passed (14.84s).
+Only test/documentation changed; installation was not repeated. Native logs
+are in ignored `build/redesign-release/pair-cipher-bundle-empty-*.log`;
+sanitizers/device playback and RTSP cleanup integration remain unverified here.
 
 The first AudioInputState contract gives packet-shape coherence to a private
 leaf owner (Feature Envy, criterion #77). Its new named test first failed to
