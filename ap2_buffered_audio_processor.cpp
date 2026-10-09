@@ -100,8 +100,8 @@ void *rtp_buffered_audio_processor(void *arg) {
   // #include <syscall.h>
   // debug(1, "Connection %d: rtp_buffered_audio_processor PID %d start", conn->connection_number,
   //         syscall(SYS_gettid));
-  conn->incoming_ssrc = 0; // reset
-  conn->resampler_ssrc = 0;
+  conn->incoming_ssrc = SSRC_NONE;
+  conn->resampler_ssrc = SSRC_NONE;
 
   // turn off all flush requests that might have been pending in the connection. Not sure if this is
   // right...
@@ -114,13 +114,13 @@ void *rtp_buffered_audio_processor(void *arg) {
 
   pthread_cleanup_push(rtp_buffered_audio_cleanup_handler, arg);
 
-  pthread_t *buffered_reader_thread = malloc(sizeof(pthread_t));
+  pthread_t *buffered_reader_thread = static_cast<pthread_t *>(malloc(sizeof(pthread_t)));
   if (buffered_reader_thread == NULL)
     debug(1, "cannot allocate a buffered_reader_thread!");
   memset(buffered_reader_thread, 0, sizeof(pthread_t));
   pthread_cleanup_push(malloc_cleanup, &buffered_reader_thread);
 
-  buffered_tcp_desc *buffered_audio = malloc(sizeof(buffered_tcp_desc));
+  buffered_tcp_desc *buffered_audio = static_cast<buffered_tcp_desc *>(malloc(sizeof(buffered_tcp_desc)));
   if (buffered_audio == NULL)
     debug(1, "cannot allocate a buffered_tcp_desc!");
   // initialise the
@@ -143,7 +143,7 @@ void *rtp_buffered_audio_processor(void *arg) {
 
   // initialise the buffer data structure
   buffered_audio->buffer_max_size = conn->ap2_audio_buffer_size;
-  buffered_audio->buffer = malloc(conn->ap2_audio_buffer_size);
+  buffered_audio->buffer = static_cast<char *>(malloc(conn->ap2_audio_buffer_size));
   if (buffered_audio->buffer == NULL)
     debug(1, "cannot allocate an audio buffer of %zu bytes!", buffered_audio->buffer_max_size);
   pthread_cleanup_push(malloc_cleanup, &buffered_audio->buffer);
@@ -158,7 +158,7 @@ void *rtp_buffered_audio_processor(void *arg) {
   pthread_cleanup_push(thread_cleanup, buffered_reader_thread);
 
   const size_t buffer_packet_size = 16 * 1024; // it looks as if 4096 is the largest size (?)
-  uint8_t *packet = malloc(buffer_packet_size);
+  uint8_t *packet = static_cast<uint8_t *>(malloc(buffer_packet_size));
   if (packet == NULL)
     debug(1, "cannot allocate an audio packet buffer of %zu bytes!", buffer_packet_size);
   pthread_cleanup_push(malloc_cleanup, &packet);
@@ -166,7 +166,7 @@ void *rtp_buffered_audio_processor(void *arg) {
   const size_t leading_free_space_length =
       256; // leave this many bytes free to make room for prefixes that might be added later
 
-  unsigned char *m = malloc(buffer_packet_size + leading_free_space_length);
+  unsigned char *m = static_cast<unsigned char *>(malloc(buffer_packet_size + leading_free_space_length));
   if (m == NULL)
     debug(1, "cannot allocate an audio m buffer of %zu bytes!",
           buffer_packet_size + leading_free_space_length);
@@ -175,9 +175,9 @@ void *rtp_buffered_audio_processor(void *arg) {
 
   unsigned char *payload_pointer = NULL;
   unsigned long long payload_length = 0;
-  uint32_t payload_ssrc =
+  ssrc_t payload_ssrc =
       SSRC_NONE; // this is the SSRC of the payload, needed to decide if it should be muted
-  uint32_t previous_ssrc = SSRC_NONE;
+  ssrc_t previous_ssrc = SSRC_NONE;
 
   uint32_t seq_no =
       0; // audio packet number. Initialised to avoid a "possibly uninitialised" warning.
@@ -276,7 +276,7 @@ void *rtp_buffered_audio_processor(void *arg) {
 
           if (payload_ssrc != SSRC_NONE)
             previous_ssrc = payload_ssrc;
-          payload_ssrc = nctohl(&packet[8]);
+          payload_ssrc = static_cast<ssrc_t>(nctohl(&packet[8]));
 
           if ((payload_ssrc != previous_ssrc) && (payload_ssrc != SSRC_NONE)) {
             if (ssrc_is_recognised(payload_ssrc) == 0) {
