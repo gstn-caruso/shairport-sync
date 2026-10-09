@@ -2926,7 +2926,7 @@ void rtsp_listen_loop_cleanup_handler(__attribute__((unused)) void *arg) {
   int oldState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
   debug(2, "rtsp_listen_loop_cleanup_handler called.");
-  cancel_all_RTSP_threads(unspecified_stream_category, 0);
+  sessions.shutdown();
   int *sockfd = (int *)arg;
   if (sockfd) {
     int i;

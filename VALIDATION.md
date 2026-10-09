@@ -7,6 +7,7 @@ CTest covers:
 
 | Test | Contract |
 | --- | --- |
+| `session-shutdown` | Destruction cancels/joins before closing sockets; stack and unique_ptr ownership support pending deferred cancellation, exception unwind and pthread cancellation unwind; explicit shutdown is idempotent and rejects new sessions |
 | `session-replacement` | A displaced session cannot reacquire selection and form a mutual join while cancellation is disabled; the previous implementation timed out with the same condition-variable interleaving |
 | `session-registry` | Failed thread creation closes its socket, immediate completion is retained for one join, replacement preserves the new principal, retirement owns until join despite caller cancellation, and batch cancellation precedes joins |
 | `rtp-clock` | Anchor validity, mastership windows, fallback, wraparound, latency and frame/time conversions |
@@ -38,6 +39,14 @@ checked in code; complete network replacement and Bonjour publication still
 require the device checks below. The new APIs had compile-time Red/Green tests;
 the cancellation regression was added after its implementation, so it does not
 provide evidence of a failing test against the previous implementation.
+
+Review follow-ups reproduced mutual replacement as a five-second timeout and
+premature registry destruction as a failed cleanup assertion before implementing
+the fixes. Compile-time access tests prevent ownership extraction outside the
+registry. Destructor cancellation tests verify the Linux deferred-cancellation
+runtime used by this project: pending cancellation is delivered at a later
+explicit cancellation point, after noexcept destruction has returned. Async
+pthread cancellation is outside that contract.
 
 ## Device checks
 

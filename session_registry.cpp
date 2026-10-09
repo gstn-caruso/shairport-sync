@@ -1,11 +1,21 @@
 #include "session_registry.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <exception>
 #include <unistd.h>
 
 SessionState::~SessionState() {
   if (fd >= 0)
     close(fd);
+}
+
+SessionRegistry::~SessionRegistry() noexcept {
+  int previousState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+  joinSessions(takeAllForShutdown(), true);
+  // Runtime threads use deferred cancellation. Destruction leaves its pending delivery for the
+  // caller's next cancellation point rather than introducing one inside a noexcept destructor.
+  pthread_setcancelstate(previousState, nullptr);
 }
 
 int SessionRegistry::createThread(pthread_t *thread, void *(*routine)(void *), void *argument) {
@@ -19,6 +29,8 @@ int SessionRegistry::start(std::unique_ptr<SessionState> session, void *(*routin
   int result;
   {
     std::lock_guard lock(mutex_);
+    if (closed_)
+      return ECANCELED;
     finished_.reserve(sessions_.size() + 1);
     sessions_.push_back(std::move(session));
     auto &starting = sessions_.back();
@@ -125,6 +137,21 @@ void SessionRegistry::joinFinished() {
   int previousState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
   joinSessions(takeFinished(), false);
+  pthread_setcancelstate(previousState, nullptr);
+  pthread_testcancel();
+}
+
+std::vector<std::unique_ptr<SessionState>> SessionRegistry::takeAllForShutdown() {
+  std::lock_guard lock(mutex_);
+  closed_ = true;
+  finished_.clear();
+  return std::move(sessions_);
+}
+
+void SessionRegistry::shutdown() {
+  int previousState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+  joinSessions(takeAllForShutdown(), true);
   pthread_setcancelstate(previousState, nullptr);
   pthread_testcancel();
 }
