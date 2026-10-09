@@ -284,6 +284,16 @@ Fresh callback state passed group/exact selection (0.02s), two in-process repeti
 and Release 209/209 (15.55s); timeout is 5. C ABI/cancellation/shell checks remain;
 production is unchanged and sanitizers/devices were not rerun.
 
+Session-shutdown discovery (`ctest --test-dir build/redesign-release -R '^SessionShutdown\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Nine named cases preserve every original `checkDestructor` invocation, stack/
+unique ownership, pending cancellation, exception/pthread unwind and idempotent
+shutdown checks. Group (0.16s), exact unique-owner pthread-unwind case, two shuffled
+repetitions and Release 217/217 (15.69s) passed; each entry has timeout 5. Fresh
+helper flags retain native mutex/condition ordering; callback pointer restores
+after join. Native assertions/C ABI/shell checks remain; production is unchanged
+and sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
