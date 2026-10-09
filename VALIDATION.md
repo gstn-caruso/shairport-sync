@@ -96,6 +96,14 @@ static assertions remain. Group (0.05s), exact unknown-SSRC case and full Releas
 C ABI and shell checks are preserved. Production is unchanged; sanitizers/devices
 were not rerun.
 
+String-utilities discovery (`ctest --test-dir build/redesign-release -R '^StringUtilities\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Twenty-five independent cases preserve formatter/replacement strings, explicit
+limit errors and all UTF-8 byte boundaries. Group (0.04s), exact two-byte boundary
+case and full Release 116/116 (13.99s) passed; each entry has timeout 5. The test
+still links `receiver-text`; C adapter/null, cancellation and shell checks remain
+green. Production is unchanged; sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
