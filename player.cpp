@@ -30,6 +30,7 @@
 
 #include "session_state.hpp"
 #include "audio_format.hpp"
+#include "audio_player_adapter.hpp"
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -207,17 +208,11 @@ static void swr_alloc_cleanup_handler(void *arg) {
   swr_free(swr);
 }
 
-static void av_packet_alloc_cleanup_handler(void *arg) {
-  debug(4, "av_packet_alloc_cleanup_handler");
-  AVPacket **pkt = static_cast<AVPacket **>(arg);
-  av_packet_free(pkt);
-}
-
 void clear_decoding_chain(rtsp_conn_info *conn) {
-  if (conn->incoming_ssrc != 0) {
-    avcodec_free_context(&conn->codec_context);
-    conn->incoming_ssrc = SSRC_NONE;
-  }
+  int previousState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+  conn->decoder.reset();
+  pthread_setcancelstate(previousState, nullptr);
 }
 
 void clear_software_resampler(rtsp_conn_info *conn) {
@@ -245,11 +240,6 @@ const char *get_ssrc_name(ssrc_t ssrc) {
   thread_local char unknown[64];
   snprintf(unknown, sizeof(unknown), "<unknown ssrc> (0x%" PRIx32 ")", ssrc);
   return unknown;
-}
-
-uint32_t get_ssrc_rate(ssrc_t ssrc) {
-  auto format = AudioFormat::fromSsrc(ssrc);
-  return format ? format->sampleRate() : 0;
 }
 
 size_t get_ssrc_block_length(ssrc_t ssrc) {
@@ -333,7 +323,7 @@ int setup_software_resampler(rtsp_conn_info *conn, ssrc_t ssrc) {
     int64_t output_layout = AV_CH_LAYOUT_STEREO;           // default
 
     if (format && !format->isAac())
-      input_format = conn->codec_context->sample_fmt;
+      input_format = conn->decoder.decodedSampleFormat().value_or(AV_SAMPLE_FMT_FLTP);
     if (channels == 6) {
       input_layout = config.six_channel_layout;
       output_layout = config.six_channel_layout;
@@ -721,119 +711,30 @@ int setup_software_resampler(rtsp_conn_info *conn, ssrc_t ssrc) {
   }
   return response; // 0 if everything is okay
 }
-void prepare_decoding_chain(rtsp_conn_info *conn, ssrc_t ssrc) {
-  if ((ssrc != SSRC_NONE) && (ssrc != conn->incoming_ssrc) && (ssrc_is_recognised(ssrc) != 0)) {
-    // conn->incoming_ssrc will be SSRC_NONE only before the first valid encoding is found
-    if ((config.statistics_requested) && (conn->incoming_ssrc != SSRC_NONE))
+void prepareIncomingAudio(SessionState &session, ssrc_t ssrc) {
+  auto format = AudioFormat::fromSsrc(ssrc);
+  if (!format)
+    return;
+  int previousState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+  auto previousFormat = session.decoder.currentFormat();
+  auto prepared = session.decoder.prepare(*format);
+  if (!prepared)
+    die("Connection %d: could not prepare decoder: %d.", session.connection_number,
+        prepared.error().nativeCode);
+  else if (*prepared == Preparation::changed) {
+    if (config.statistics_requested && previousFormat)
       inform("Connection %d: Incoming Audio Encoding is switching to: \"%s\".",
-             conn->connection_number, get_ssrc_name(ssrc));
-    // conn->incoming_ssrc = payload_ssrc;
+             session.connection_number, format->name().data());
+    session.input_rate = format->sampleRate();
+    session.frames_per_packet = format->framesPerPacket();
+    session.input_format_is_valid = 1;
   }
+  pthread_setcancelstate(previousState, nullptr);
+}
 
-  if ((ssrc_is_recognised(ssrc)) && (ssrc != conn->incoming_ssrc)) {
-
-    /*
-        if ((config.statistics_requested != 0) && (ssrc != SSRC_NONE) &&
-            (conn->incoming_ssrc != SSRC_NONE)) {
-          debug(2, "Connection %d: incoming audio switching to \"%s\".", conn->connection_number,
-                get_ssrc_name(ssrc));
-        }
-    */
-    // the ssrc of the incoming packet is different to the ssrc of the decoding chain
-    // so the decoding chain must be rebuilt
-
-    clear_decoding_chain(conn);
-    // create the new decoding chain
-    conn->incoming_ssrc = ssrc;
-    if (conn->incoming_ssrc != SSRC_NONE) {
-
-      // get a codec
-      // ideas and some code from https://rodic.fr/blog/libavcodec-tutorial-decode-audio-file/
-      // with thanks
-
-      // Set up the decoder depending on the ssrc code.
-      switch (ssrc) {
-      case ALAC_44100_S16_2:
-      case ALAC_48000_S24_2:
-        conn->codec = avcodec_find_decoder(AV_CODEC_ID_ALAC);
-        break;
-      case AAC_44100_F24_2:
-      case AAC_48000_F24_2:
-      case AAC_48000_F24_5P1:
-      case AAC_48000_F24_7P1:
-        conn->codec = avcodec_find_decoder(AV_CODEC_ID_AAC);
-        break;
-      default:
-        die("Connection %d: can't find a suitable codec for SSRC: %s", conn->connection_number,
-            get_ssrc_name(ssrc));
-        break;
-      }
-
-      int oldState;
-      pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
-
-      // Get a decoder-dependent codec context
-      conn->codec_context = avcodec_alloc_context3(conn->codec);
-      if (conn->codec_context != NULL) {
-        // push a deallocator -- av_free(codec_context)
-        // pthread_cleanup_push(avcodec_alloc_context3_cleanup_handler, &conn->codec_context);
-
-        // prepare to open the codec context with that codec
-        // but first, if it's the ALAC decoder, prepare a magic cookie
-        if ((ssrc == ALAC_48000_S24_2) || (ssrc == ALAC_44100_S16_2)) {
-          alac_ffmpeg_magic_cookie *extradata =
-              static_cast<alac_ffmpeg_magic_cookie *>(
-                  av_mallocz(sizeof(alac_ffmpeg_magic_cookie) + AV_INPUT_BUFFER_PADDING_SIZE));
-          if (extradata == NULL)
-            die("connection %d: could not allocate memory for a magic cookie.",
-                conn->connection_number);
-          // creata a magic cookie preceded by the 12-byte "atom" (?) expected by FFMPEG (?)
-          memset(extradata, 0, sizeof(alac_ffmpeg_magic_cookie));
-          extradata->cookie_size = htonl(sizeof(alac_ffmpeg_magic_cookie));
-          extradata->cookie_tag = htonl('alac');
-          extradata->alac_config.frameLength = htonl(352);
-          if (ssrc == ALAC_48000_S24_2) {
-            extradata->alac_config.bitDepth = 24; // Seems to be S24
-            extradata->alac_config.sampleRate = htonl(48000);
-          } else {
-            extradata->alac_config.bitDepth = 16; // Seems to be S16
-            extradata->alac_config.sampleRate = htonl(44100);
-          }
-          extradata->alac_config.pb = 40;
-          extradata->alac_config.mb = 10;
-          extradata->alac_config.kb = 14;
-          extradata->alac_config.numChannels = 2;
-          extradata->alac_config.maxRun = htons(255);
-          conn->codec_context->extradata = (uint8_t *)extradata;
-          conn->codec_context->extradata_size = sizeof(alac_ffmpeg_magic_cookie);
-        } else {
-          conn->codec_context->extradata = NULL;
-        }
-        // pthread_cleanup_push(malloc_cleanup, &conn->codec_context->extradata);
-        // avcodec_free_context() will free extradata
-
-        if (avcodec_open2(conn->codec_context, conn->codec, NULL) < 0) {
-          pthread_setcancelstate(oldState, NULL);
-          die("connection %d: could not initialise the codec context", conn->connection_number);
-        }
-      } else {
-        die("connection %d: could not allocate a codec context!", conn->connection_number);
-      }
-      pthread_setcancelstate(oldState, NULL);
-
-      conn->input_rate = get_ssrc_rate(ssrc);
-      debug(2, "Connection %d: set conn->input_rate: %u.", conn->connection_number,
-            conn->input_rate);
-      if ((ssrc == ALAC_48000_S24_2) || (ssrc == ALAC_44100_S16_2)) {
-        conn->frames_per_packet = 352;
-      } else {
-        conn->frames_per_packet = 1024;
-      }
-      conn->codec_context->sample_rate = conn->input_rate;
-      conn->ffmpeg_decoding_chain_initialised = 1;
-      conn->input_format_is_valid = 1;
-    }
-  }
+void prepare_decoding_chain(rtsp_conn_info *conn, ssrc_t ssrc) {
+  prepareIncomingAudio(*conn, ssrc);
 }
 
 // take an AV Frame, run it through the swr resampler and map the output to the
@@ -958,81 +859,23 @@ int64_t avframe_to_audio(rtsp_conn_info *conn, AVFrame *decoded_frame, uint8_t *
   return response;
 }
 
-// take a block of incoming data and decode it.
-// it might get decoded into fltp ot lpcm or something -- it'll be
-// transcoded and maybe resampled later
-AVFrame *block_to_avframe(rtsp_conn_info *conn, uint8_t *incoming_data,
-                          size_t incoming_data_length) {
+OwnedAudioFrame decodeIncomingAudio(SessionState &session, std::span<const uint8_t> bytes) {
+  int previousState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+  auto decoded = session.decoder.decode(bytes);
+  if (!decoded && decoded.error().kind != DecoderFailure::Kind::packetTooShort)
+    debug(1, "error %d during decoding. Data size: %zu", decoded.error().nativeCode, bytes.size());
+  pthread_setcancelstate(previousState, nullptr);
+  return decoded ? std::move(*decoded) : OwnedAudioFrame{};
+}
 
-  AVFrame *decoded_frame = NULL;
-  if (incoming_data_length > 8) {
-    int oldState;
-    pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState); // make this un-cancellable
-    AVPacket *pkt = av_packet_alloc();
-    if (pkt) {
-      // push a deallocator -- av_packet_free(pkt);
-      pthread_cleanup_push(av_packet_alloc_cleanup_handler, &pkt);
-      int ret = incoming_data_length <= INT_MAX
-                    ? av_new_packet(pkt, static_cast<int>(incoming_data_length))
-                    : AVERROR(EINVAL);
-      if (ret == 0) {
-        memcpy(pkt->data, incoming_data, incoming_data_length);
-        ret = avcodec_send_packet(conn->codec_context, pkt);
-      }
-      if (ret == 0) {
-        decoded_frame = av_frame_alloc();
-        if (decoded_frame == NULL) {
-          debug(1, "Can't allocate an AVFrame!");
-        } else {
-          ret = avcodec_receive_frame(conn->codec_context, decoded_frame);
+AVFrame *block_to_avframe(rtsp_conn_info *conn, uint8_t *data, size_t length) {
+  return decodeIncomingAudio(*conn, {data, length}).release();
+}
 
-          if (ret < 0) {
-            av_frame_free(&decoded_frame);
-            decoded_frame = NULL;
-            debug(1, "error %d during decoding. Data size: %zd", ret, incoming_data_length);
-            /*
-                      char *obf = malloc(incoming_data_length * 3);
-                      char *obfp = obf;
-                      unsigned int obfc;
-                      for (obfc = 0; obfc < incoming_data_length; obfc++) {
-                        snprintf(obfp, 3, "%02X", incoming_data[obfc]);
-                        obfp += 2;
-                        if ((obfc & 7) == 7) {
-                          snprintf(obfp, 2, " ");
-                          obfp += 1;
-                        }
-                      };
-                      *obfp = 0;
-                      debug(1, "%s...", obf);
-                      free(obf);
-            */
-          }
-        }
-      } else {
-        debug(1, "error %d during decoding. Gross data size: %zd", ret, incoming_data_length);
-        /*
-              char obf[128];
-              char *obfp = obf;
-              int obfc;
-              for (obfc = 0; obfc < 32; obfc++) {
-                snprintf(obfp, 3, "%02X", incoming_data[obfc]);
-                obfp += 2;
-                if ((obfc & 7) == 7) {
-                  snprintf(obfp, 2, " ");
-                  obfp += 1;
-                }
-              }
-              *obfp = 0;
-              debug(1, "%s", obf);
-        */
-      }
-      pthread_cleanup_pop(1); // deallocate the AVPacket;
-    } else {
-      debug(1, "Can't allocate an AVPacket!");
-    }
-    pthread_setcancelstate(oldState, NULL);
-  }
-  return decoded_frame;
+static const char *incomingAudioName(const SessionState &session) {
+  auto format = session.decoder.currentFormat();
+  return format ? format->name().data() : "None (0)";
 }
 
 size_t avflush(rtsp_conn_info *conn) {
@@ -1200,8 +1043,8 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
 
       if (ssrc == ALAC_44100_S16_2) {
         // AirPlay 2 realtime ALAC uses 352 frames of 16-bit stereo per packet.
-          prepare_decoding_chain(conn, ALAC_44100_S16_2);
-          abuf->avframe = block_to_avframe(conn, data, len);
+          prepareIncomingAudio(*conn, ALAC_44100_S16_2);
+          abuf->avframe = decodeIncomingAudio(*conn, {data, len}).release();
           abuf->ssrc = ALAC_44100_S16_2;
           if (abuf->avframe) {
             input_packets_used = abuf->avframe->nb_samples;
@@ -1237,9 +1080,9 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
         // deferred to the player thread, to be sure all the blocks
         // of data are present
 
-        prepare_decoding_chain(conn, static_cast<ssrc_t>(ssrc));
+        prepareIncomingAudio(*conn, static_cast<ssrc_t>(ssrc));
 
-        abuf->avframe = block_to_avframe(conn, data, len);
+        abuf->avframe = decodeIncomingAudio(*conn, {data, len}).release();
         abuf->ssrc = static_cast<ssrc_t>(ssrc);
         if (abuf->avframe) {
           input_packets_used = abuf->avframe->nb_samples;
@@ -2725,7 +2568,7 @@ void player_thread_cleanup_handler(void *arg) {
   if (config.decoder_in_use == 1 << decoder_ffmpeg_alac) {
     // debug(1, "FFmpeg clearup");
     clear_software_resampler(conn);
-    clear_decoding_chain(conn);
+    conn->decoder.reset();
     // debug(1, "FFmpeg clearup done");
   }
 
@@ -3360,12 +3203,12 @@ void *player_thread_func(void *arg) {
                     if (conn->ap2_client_name == NULL)
                       inform("Connection %d: AirPlay 2 Realtime playback. "
                              "Input format: %s. Output format: %s.",
-                             conn->connection_number, get_ssrc_name(conn->incoming_ssrc), "");
+                             conn->connection_number, incomingAudioName(*conn), "");
                     else
                       inform("Connection %d: AirPlay 2 Realtime playback. "
                              "Source: \"%s\". Input format: %s. Output format: %s.",
                              conn->connection_number, conn->ap2_client_name,
-                             get_ssrc_name(conn->incoming_ssrc), short_description);
+                             incomingAudioName(*conn), short_description);
                   }
 
               } else {
@@ -3375,13 +3218,13 @@ void *player_thread_func(void *arg) {
                   if (conn->ap2_client_name == NULL)
                     inform("Connection %d: AirPlay 2 Buffered playback. "
                            "Input format: %s. Output format: %s.",
-                           conn->connection_number, get_ssrc_name(conn->incoming_ssrc),
+                           conn->connection_number, incomingAudioName(*conn),
                            short_description);
                   else
                     inform("Connection %d: AirPlay 2 Buffered playback. "
                            "Source: \"%s\". Input format: %s. Output format: %s.",
                            conn->connection_number, conn->ap2_client_name,
-                           get_ssrc_name(conn->incoming_ssrc), short_description);
+                           incomingAudioName(*conn), short_description);
                 }
               }
 

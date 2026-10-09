@@ -22,6 +22,8 @@ int main() {
     assert(actual->ssrc() == format.ssrc);
     assert(actual->channels() == (format.ssrc == AAC_48000_F24_5P1 ? 6 :
                                   format.ssrc == AAC_48000_F24_7P1 ? 8 : 2));
+    assert(actual->aacChannelConfiguration() == (format.ssrc == AAC_48000_F24_7P1 ? 7 :
+                                                 actual->channels()));
     assert(actual->suggestedSampleFormat() == (format.ssrc == ALAC_44100_S16_2 ? SPS_FORMAT_S16 :
                                                format.ssrc == ALAC_48000_S24_2 ? SPS_FORMAT_S24 :
                                                                                  SPS_FORMAT_S32));

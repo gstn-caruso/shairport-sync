@@ -11,6 +11,7 @@ public:
   bool isAac() const { return aac_; }
   unsigned sampleRate() const { return rate_; }
   unsigned channels() const { return channels_; }
+  unsigned aacChannelConfiguration() const { return channels_ == 8 ? 7 : channels_; }
   unsigned framesPerPacket() const { return aac_ ? 1024 : 352; }
   unsigned sampleBits() const { return sampleFormat_ == SPS_FORMAT_S16 ? 16 : 24; }
   sps_format_t suggestedSampleFormat() const { return sampleFormat_; }

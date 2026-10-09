@@ -25,6 +25,7 @@
  */
 
 #include "session_state.hpp"
+#include "audio_player_adapter.hpp"
 #include "ap2_buffered_audio_processor.h"
 #include "common.h"
 #include "player.h"
@@ -101,7 +102,10 @@ void *rtp_buffered_audio_processor(void *arg) {
   // #include <syscall.h>
   // debug(1, "Connection %d: rtp_buffered_audio_processor PID %d start", conn->connection_number,
   //         syscall(SYS_gettid));
-  conn->incoming_ssrc = SSRC_NONE;
+  int previousDecoderCancellationState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousDecoderCancellationState);
+  conn->decoder.reset();
+  pthread_setcancelstate(previousDecoderCancellationState, nullptr);
   conn->resampler_ssrc = SSRC_NONE;
 
   // turn off all flush requests that might have been pending in the connection. Not sure if this is
@@ -179,6 +183,7 @@ void *rtp_buffered_audio_processor(void *arg) {
   ssrc_t payload_ssrc =
       SSRC_NONE; // this is the SSRC of the payload, needed to decide if it should be muted
   ssrc_t previous_ssrc = SSRC_NONE;
+  std::optional<AudioFormat> payloadFormat;
 
   uint32_t seq_no =
       0; // audio packet number. Initialised to avoid a "possibly uninitialised" warning.
@@ -278,9 +283,10 @@ void *rtp_buffered_audio_processor(void *arg) {
           if (payload_ssrc != SSRC_NONE)
             previous_ssrc = payload_ssrc;
           payload_ssrc = static_cast<ssrc_t>(nctohl(&packet[8]));
+          payloadFormat = AudioFormat::fromSsrc(payload_ssrc);
 
           if ((payload_ssrc != previous_ssrc) && (payload_ssrc != SSRC_NONE)) {
-            if (ssrc_is_recognised(payload_ssrc) == 0) {
+            if (!payloadFormat) {
               debug(2, "Unrecognised SSRC: %u.", payload_ssrc);
             } else {
               debug(2, "Connection %d: incoming audio encoding is%s \"%s\".",
@@ -289,12 +295,12 @@ void *rtp_buffered_audio_processor(void *arg) {
             }
           }
 
-          if ((ssrc_is_recognised(payload_ssrc) != 0) && (payload_ssrc != SSRC_NONE)) {
+          if (payloadFormat) {
             new_audio_block_needed = 0; // a valid block has been read.
             // if necessary, set the input rate...
             if (conn->input_rate == 0) {
               debug(2, "Preparing initial decoding chain for %s.", get_ssrc_name(payload_ssrc));
-              prepare_decoding_chain(conn, payload_ssrc); // needed to set the input rate...
+              prepareIncomingAudio(*conn, payload_ssrc);
               sequence_number_for_player =
                   seq_no & 0xffff; // this is arbitrary -- the sequence_number_for_player numbers will
                                    // be sequential irrespective of seq_no jumps...
@@ -306,8 +312,9 @@ void *rtp_buffered_audio_processor(void *arg) {
                       "number %u. The previous sequence number was %u",
                       seq_no, t_expected_seqno, previous_seqno);
               }
-              uint32_t t_expected_timestamp =
-                  previous_timestamp + get_ssrc_block_length(previous_ssrc);
+              auto previousFormat = AudioFormat::fromSsrc(previous_ssrc);
+              uint32_t t_expected_timestamp = previous_timestamp +
+                  (previousFormat ? previousFormat->framesPerPacket() : 0);
               int32_t diff = timestamp - t_expected_timestamp;
               if (diff != 0) {
                 debug(2, "reading block %u, the timestamp %u differs from expected_timestamp %u.",
@@ -509,8 +516,7 @@ void *rtp_buffered_audio_processor(void *arg) {
             if ((packets_played_in_this_sequence == 0) || (time_from_last_buffer_time > 0)) {
 
               payload_length = 0;
-              if (ssrc_is_recognised(payload_ssrc) != 0) {
-                // prepare_decoding_chain(conn, payload_ssrc);
+              if (payloadFormat) {
                 unsigned long long new_payload_length = 0;
                 payload_pointer = m + leading_free_space_length;
                 if (lead_time >= 0) { // only decipher the packet if it's not too late
@@ -551,7 +557,7 @@ void *rtp_buffered_audio_processor(void *arg) {
                     // now we have the deciphered block, so send it to the player if we can
                     payload_length = new_payload_length;
 
-                    if (ssrc_is_aac(payload_ssrc)) {
+                    if (payloadFormat->isAac()) {
                       payload_pointer =
                           payload_pointer - 7; // including the 7-byte leader for the ADTS
                       payload_length = payload_length + 7;
@@ -559,19 +565,11 @@ void *rtp_buffered_audio_processor(void *arg) {
                       // now, fill in the 7-byte ADTS information, which seems to be needed by the
                       // decoder we made room for it in the front of the buffer by filling from m
                       // + 7.
-                      int channelConfiguration = 2; // 2: 2 channels: front-left, front-right
-                      if (payload_ssrc == AAC_48000_F24_5P1)
-                        channelConfiguration = 6; // 6: 6 channels: front-center, front-left,
-                                                  // front-right, back-left, back-right, LFE-channel
-                      else if (payload_ssrc == AAC_48000_F24_7P1)
-                        channelConfiguration =
-                            7; // 7: 8 channels: front-center, front-left, front-right,
-                               // side-left, side-right, back-left, back-right, LFE-channel
                       addADTStoPacket(payload_pointer, payload_length, conn->input_rate,
-                                      channelConfiguration);
+                                      payloadFormat->aacChannelConfiguration());
                     }
                     int mute =
-                        ((packets_played_in_this_sequence == 0) && (ssrc_is_aac(payload_ssrc)));
+                        ((packets_played_in_this_sequence == 0) && payloadFormat->isAac());
                     if (mute) {
                       debug(2, "Connection %d: muting first AAC block -- block %u -- timestamp %u.",
                             conn->connection_number, seq_no, timestamp);
@@ -599,7 +597,7 @@ void *rtp_buffered_audio_processor(void *arg) {
                               1000.0 * timestamp_difference / conn->input_rate,
                               first_timestamp_in_this_sequence, get_ssrc_name(payload_ssrc));
                         // mute the first packet after a discontinuity
-                        if (ssrc_is_aac(payload_ssrc)) {
+                        if (payloadFormat->isAac()) {
                           debug(2,
                                 "Connection %d: muting first AAC block -- block %u -- following a "
                                 "timestamp discontinuity, timestamp %u.",
@@ -633,12 +631,13 @@ void *rtp_buffered_audio_processor(void *arg) {
                       // (?)
 
                       int32_t abs_timestamp_difference = -timestamp_difference;
-                      if ((size_t)abs_timestamp_difference > get_ssrc_block_length(payload_ssrc)) {
+                      if ((size_t)abs_timestamp_difference > payloadFormat->framesPerPacket()) {
                         skip_this_block = 1;
                         debug(2,
                               "skipping block %u because it is too old. Timestamp "
                               "difference: %d, length of block: %zu.",
-                              seq_no, timestamp_difference, get_ssrc_block_length(payload_ssrc));
+                              seq_no, timestamp_difference,
+                              static_cast<size_t>(payloadFormat->framesPerPacket()));
                       }
                     }
                     if (skip_this_block == 0) {

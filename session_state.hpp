@@ -3,6 +3,7 @@
 #include "common.h"
 #include "player.h"
 #include "rtp_clock.hpp"
+#include "audio_decoder.hpp"
 #include <atomic>
 
 struct SessionState {
@@ -184,15 +185,11 @@ struct SessionState {
   uint8_t groupContainsGroupLeader; // information coming from the SETUP
   uint64_t compressionType;
 
-  ssrc_t incoming_ssrc;  // The SSRC of incoming packets. In AirPlay 2, the RTP SSRC seems to encode
-                         // something about the contents of the packet -- Atmos/etc. We use it also
-                         // even in AP1 as a code
+  AudioDecoder decoder;
   ssrc_t resampler_ssrc; // the SSRC of packets for which the software resampler has been set up.
   // normally it's the same as that of incoming packets, but if the encoding of incoming packets
   // changes dynamically and the decoding chain hasn't been reset, the resampler will have to deal
   // with queued AVFrames encoded according to the previous SSRC.
-  const AVCodec *codec;
-  AVCodecContext *codec_context;
   // the swr can't be used just after the incoming packet has been decoded as explained below
 
   // The reasons that resampling can not occur when the packet initially arrives are twofold.
@@ -231,7 +228,6 @@ struct SessionState {
   // DAC buffer delay to exactly compensate for the
 
   SwrContext *swr; // this will do transcoding anf resampling, if necessary, just prior to output
-  int ffmpeg_decoding_chain_initialised;
   int64_t resampler_output_channels;
   int resampler_output_bytes_per_sample;
   int64_t frames_retained_in_the_resampler; // swr will retain frames it hasn't finished processing
