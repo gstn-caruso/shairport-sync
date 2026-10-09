@@ -7,6 +7,27 @@
 #include <libavcodec/avcodec.h>
 #include <stdio.h>
 #include <string.h>
+#include <malloc.h>
+
+extern "C" int __real_avcodec_open2(AVCodecContext *, const AVCodec *, AVDictionary **);
+extern "C" int __real_avcodec_send_packet(AVCodecContext *, const AVPacket *);
+extern "C" int __wrap_avcodec_open2(AVCodecContext *context, const AVCodec *codec,
+                                   AVDictionary **options) {
+  if (context->extradata_size > 0) {
+    assert(malloc_usable_size(context->extradata) >=
+           context->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
+    for (int index = 0; index < AV_INPUT_BUFFER_PADDING_SIZE; ++index)
+      assert(context->extradata[context->extradata_size + index] == 0);
+  }
+  return __real_avcodec_open2(context, codec, options);
+}
+extern "C" int __wrap_avcodec_send_packet(AVCodecContext *context, const AVPacket *packet) {
+  assert(packet->buf != nullptr);
+  assert(packet->buf->size >= packet->size + AV_INPUT_BUFFER_PADDING_SIZE);
+  for (int index = 0; index < AV_INPUT_BUFFER_PADDING_SIZE; ++index)
+    assert(packet->data[packet->size + index] == 0);
+  return __real_avcodec_send_packet(context, packet);
+}
 
 static void check_audio_formats(void) {
   rtsp_conn_info conn{};

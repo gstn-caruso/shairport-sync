@@ -898,7 +898,8 @@ void prepare_decoding_chain(rtsp_conn_info *conn, ssrc_t ssrc) {
         // but first, if it's the ALAC decoder, prepare a magic cookie
         if ((ssrc == ALAC_48000_S24_2) || (ssrc == ALAC_44100_S16_2)) {
           alac_ffmpeg_magic_cookie *extradata =
-              static_cast<alac_ffmpeg_magic_cookie *>(malloc(sizeof(alac_ffmpeg_magic_cookie)));
+              static_cast<alac_ffmpeg_magic_cookie *>(
+                  av_mallocz(sizeof(alac_ffmpeg_magic_cookie) + AV_INPUT_BUFFER_PADDING_SIZE));
           if (extradata == NULL)
             die("connection %d: could not allocate memory for a magic cookie.",
                 conn->connection_number);
@@ -1087,9 +1088,13 @@ AVFrame *block_to_avframe(rtsp_conn_info *conn, uint8_t *incoming_data,
     if (pkt) {
       // push a deallocator -- av_packet_free(pkt);
       pthread_cleanup_push(av_packet_alloc_cleanup_handler, &pkt);
-      pkt->data = incoming_data;
-      pkt->size = incoming_data_length;
-      int ret = avcodec_send_packet(conn->codec_context, pkt);
+      int ret = incoming_data_length <= INT_MAX
+                    ? av_new_packet(pkt, static_cast<int>(incoming_data_length))
+                    : AVERROR(EINVAL);
+      if (ret == 0) {
+        memcpy(pkt->data, incoming_data, incoming_data_length);
+        ret = avcodec_send_packet(conn->codec_context, pkt);
+      }
       if (ret == 0) {
         decoded_frame = av_frame_alloc();
         if (decoded_frame == NULL) {
