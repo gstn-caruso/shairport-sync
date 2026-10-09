@@ -256,3 +256,62 @@ Autotools. Each uses the same pinned bootstrap and runs contracts and staged
 install checks; Autotools also checks an in-tree build. `build/tools/actionlint`
 accepted the workflow, including shellcheck. Remote execution and device tests
 of the resulting binaries remain pending independent review and publication.
+
+## Pure C++ service-name and text core
+
+Expectation: service-name decisions depend only on owned hostname/package/detailed
+version values, while C adapters own OS/build lookup and malloc/free translation.
+The core must preserve ordered `%h`, `%H`, `%v`, `%V` expansion (including tokens
+introduced by hostnames), remove only the last domain, capitalize only an ASCII
+first character, and truncate at the existing 50-byte UTF-8 boundary. Insufficient
+append limits must be explicit `expected` errors. Legacy callers retain ownership,
+NULL results and exception containment. Empty replacement tokens must terminate
+as a no-op, matching NULL-token behavior.
+
+The reference for this slice is `fb0ffa0e`. The legacy C string test passed before
+changing the adapters. A new C++ test first failed to compile because
+`utilities/string_utilities.hpp` did not exist; the default `Receiver` case then
+passed while linking only `receiver-text`. Expanded ownership, repeated-token,
+ordering, 50-byte, UTF-8 and insufficient-limit cases failed compilation against
+the initial zero-argument formatter, then passed with the complete API.
+The C adapter characterization also passed before and after delegation, including
+NULL source/suffix results and caller-owned copies for NULL tokens/replacements.
+The exception boundary remains explicit `catch (...)` in each C adapter; allocation
+exhaustion was not fault-injected.
+
+Empty-token regression tests timed out after two seconds in both the C and C++
+APIs (CTest exit 8, 0/2). The shared implementation now returns an owning unchanged
+string before searching an empty token; both tests passed. CMake sets a five-second
+timeout on these text tests to catch recurrence. This bug fix has its own `fix`
+commit; the preceding extraction commits are `refactor`.
+
+Final CMake suites passed 8/8 in Release (11.54 seconds), Debug (11.56 seconds),
+ASan+UBSan with non-recovering flags (13.45 seconds), and TSan (61.87 seconds).
+Logs are `/tmp/service-name-{release,debug,asan,tsan}-check.log`; build directories
+are `build/service-name-{release,debug,asan,tsan}`. `nm -u` on the sanitizer
+`receiver-text` objects confirms ASan/UBSan and TSan instrumentation in the new
+core. No sanitizer diagnostics were accepted or suppressed.
+
+`receiver-text` source/header include no config, receiver, OS or provider API.
+`nm -u build/service-name-release/libreceiver-text.a` lists only standard-library
+and libc symbols, and the CMake core test's dynamic dependencies are only those
+runtime libraries. Autotools originally supplied provider libraries globally;
+they now come from configure's `@LIBS@` only in receiver consumers' LDADD, keeping
+the pure test's link restricted to its core archive without custom link recipes.
+Autotools `make check -j2` passed 8/8 after that link-scope change; `readelf -d`
+shows only C++/C runtime dependencies for the pure test in both build systems.
+Its logs and artifacts are in `build/service-name-autotools`. Error assertions
+check `has_value()` before inspecting `error()`; the final focused C++ test passed.
+
+`make dist` included the new C++ header, source and test plus `.tool-versions` and
+the shared C++26 probe. Building the extracted archive exposed a pre-existing
+missing manual (`No rule to make target man/shairport-sync.1`); using
+`dist_man_MANS` includes that required install file. Distribution configure
+uses the packaged source directory to resolve asdf and compile/run the probe.
+The extracted distribution built and passed 8/8 with logs in
+`build/service-name-dist-build`; the archive is
+`build/service-name-autotools/shairport-sync-5.5.1.tar.gz`.
+Release and Autotools staging kept the binary/manual/sample destinations; `cmp`
+matched both data files to source. The running service, user configuration and
+StructuredBuffer were untouched. Hardware validation of these binaries remains
+pending; the earlier reference's user confirmation does not validate them.

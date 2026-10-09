@@ -10,6 +10,19 @@ library support by compiling, linking and running an expected/span/format/jthrea
 Both build systems require Clang 23.1.3 for C and C++, pinned in `.tool-versions`,
 with libstdc++ 15 and C++26 without GNU extensions. They compile, link and run
 the same `cmake/cpp26_probe.cpp` before building the receiver.
+
+Service-name formatting and replacement/truncation now live in the internal
+`receiver-text` C++ library. `utilities/string_utilities.hpp` accepts borrowed
+`string_view` inputs and returns owning `string` values; `appendWithLimit` returns
+`expected` with `TruncationError::limitTooSmall` when the suffix/ellipsis cannot
+fit. `ServiceNameFormatter` owns hostname and version values and preserves the
+ordered `%h`, `%H`, `%v`, `%V` expansion, last-domain removal, first-character
+ASCII capitalization and 50-byte UTF-8 truncation boundary. An empty replacement
+token is a no-op. C adapters obtain host/build information and contain exceptions
+while preserving caller-owned `malloc` results and `NULL` failure results.
+The C++ text test links only `receiver-text` in both build systems, without receiver providers;
+the legacy C test continues to exercise the public adapters.
+
 Use CMake 4.2 or newer and Ninja. The compiler does not supply the C++ library:
 install GCC 15 development headers and libstdc++ 15 on the host first.
 
