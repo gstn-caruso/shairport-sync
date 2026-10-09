@@ -1,11 +1,11 @@
 #pragma once
+#include "audio_arrival.hpp"
 #include "queued_audio_packet.hpp"
 #include "retransmission_planner.hpp"
 #include <array>
 #include <pthread.h>
 #include <variant>
 
-enum class ArrivalKind { first, inOrder, ahead, late, duplicate, tooLate, overflow };
 struct MissingAudioPacket { uint16_t sequence; };
 using BufferedAudioPacket = std::variant<QueuedAudioPacket, MissingAudioPacket>;
 
