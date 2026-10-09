@@ -1249,19 +1249,19 @@ void applySessionVolume(double level, SessionState &session) {
   applySessionVolumeEffects(level, session);
 }
 
-void applySessionVolumeEffects(double level, SessionState &session) {
+void applySessionVolumeEffects(double level, SessionState &session,
+                               const std::function<void()> &publish) {
   int previousState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
-  applyVolumePlan(level, &session);
+  session.volumeControl.performEffects([&] {
+    applyVolumePlan(level, &session);
+    if (publish) publish();
+  });
   pthread_setcancelstate(previousState, nullptr);
 }
 
 void player_volume_without_notification(double level, rtsp_conn_info *conn) {
-  int previousState;
-  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
-  applyVolumePlan(level, conn);
-  sharedVolumeLevel.remember(level);
-  pthread_setcancelstate(previousState, nullptr);
+  applySessionVolumeEffects(level, *conn, [&] { sharedVolumeLevel.remember(level); });
 }
 
 void player_volume(double level, rtsp_conn_info *conn) {

@@ -2567,11 +2567,9 @@ void handle_set_parameter_parameter(rtsp_conn_info *conn, RtspMessage *req,
       conn->volumeControl.rememberLevel(volume);
       if (const auto ticket = principalSession.ticketFor(conn->connection_number)) {
         command_set_volume(volume);
-        int previousState;
-        pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
-        applySessionVolumeEffects(volume, *conn);
-        principalSession.commitIfSelected(*ticket, [&] { sharedVolumeLevel.remember(volume); });
-        pthread_setcancelstate(previousState, nullptr);
+        applySessionVolumeEffects(volume, *conn, [&] {
+          principalSession.commitIfSelected(*ticket, [&] { sharedVolumeLevel.remember(volume); });
+        });
       }
     } else if (strncmp(cp, "progress: ", strlen("progress: ")) ==
                0) { // this can be sent even when metadata is not solicited

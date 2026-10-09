@@ -15,6 +15,10 @@ private:
 struct PcmVolumeSnapshot { int gainFixed16 = 65536; bool softwareMuted = false; };
 class VolumeControl {
 public:
+  template <typename Action> void performEffects(Action action) {
+    std::lock_guard lock(effectsMutex_);
+    action();
+  }
   void rememberLevel(double level) { std::lock_guard lock(mutex_); ownLevel_ = level; }
   double suggestedLevel(const SharedVolumeLevel &shared) const {
     std::optional<double> own;
@@ -30,6 +34,7 @@ public:
   void resetGainForPlay() { std::lock_guard lock(mutex_); pcm_.gainFixed16 = 65536; }
   PcmVolumeSnapshot pcmSnapshot() const { std::lock_guard lock(mutex_); return pcm_; }
 private:
+  std::mutex effectsMutex_;
   mutable std::mutex mutex_;
   std::optional<double> ownLevel_;
   PcmVolumeSnapshot pcm_;
