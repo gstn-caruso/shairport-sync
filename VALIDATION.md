@@ -164,6 +164,15 @@ Release 148/148 (14.54s) passed; each entry has timeout 5. C ABI, native cancell
 and shell checks remain green; production is unchanged and sanitizers/devices
 were not rerun.
 
+PCM-encoder discovery (`ctest --test-dir build/redesign-release -R '^PcmEncoder\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Seventeen independent cases preserve every byte/value check across ten wire and
+three native formats, silence, clipping, seeded dither continuity/policy and fixed
+gain, replaying preceding format configurations. Group (0.29s), exact dither-policy
+case and Release 164/164 (14.82s) passed; each entry has timeout 5. C ABI, native
+cancellation and shell checks remain green; production is unchanged and
+sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
