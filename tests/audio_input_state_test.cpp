@@ -33,3 +33,23 @@ TEST(AudioInputState, DecodedFormatRecordsShapeAndValidity) {
   EXPECT_EQ(input.framesPerPacket(), 1024);
   EXPECT_TRUE(input.isDecodedFormatValid());
 }
+
+TEST(AudioInputState, SetupOverridesPreserveOtherShapeAndValidity) {
+  AudioInputState input;
+  const auto decodedFormat = AudioFormat::fromSsrc(AAC_48000_F24_2);
+  ASSERT_TRUE(decodedFormat);
+  input.recordDecodedFormat(*decodedFormat);
+  EXPECT_EQ(input.sampleRate(), 48000);
+  EXPECT_EQ(input.framesPerPacket(), 1024);
+  EXPECT_TRUE(input.isDecodedFormatValid());
+
+  input.setSetupSampleRate(44100);
+  EXPECT_EQ(input.sampleRate(), 44100);
+  EXPECT_EQ(input.framesPerPacket(), 1024);
+  EXPECT_TRUE(input.isDecodedFormatValid());
+
+  input.setSetupPacketFrames(352);
+  EXPECT_EQ(input.sampleRate(), 44100);
+  EXPECT_EQ(input.framesPerPacket(), 352);
+  EXPECT_TRUE(input.isDecodedFormatValid());
+}

@@ -114,6 +114,13 @@ It replaces an invalid ALAC 44100/352 packet shape with the decoded AAC
 CTest entries passed (14.84s); session integration, sanitizers and device
 playback remain outside this cycle. Criterion #77 keeps this transition with
 the state it owns.
+The SETUP override contract first failed compilation on both missing methods
+(`audio-input-state-setup-red.log`). Starting from valid AAC 48000/1024,
+overriding rate to 44100 preserves frames/validity; subsequently overriding
+frames to 352 preserves rate/validity. Each unsigned assignment owns only its
+field, without normalization or validation. The eleven relevant cases and all
+234 Release CTest entries passed (14.84s). Session integration, sanitizers and
+device playback were not exercised in this criterion #77 cycle.
 
 The first discovery acceptance check was
 `ctest --test-dir build/cmake -R '^VolumePolicy\.' --no-tests=error`.

@@ -18,6 +18,9 @@ public:
     decodedFormatValid_ = true;
   }
 
+  void setSetupSampleRate(unsigned rate) { sampleRate_ = rate; }
+  void setSetupPacketFrames(unsigned frames) { framesPerPacket_ = frames; }
+
 private:
   unsigned sampleRate_ = 0;
   unsigned framesPerPacket_ = 0;
