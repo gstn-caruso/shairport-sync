@@ -531,7 +531,9 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
             // it's important to have already run it through the decoder before dropping it
             // especially if it an AAC decoder
             debug(2, "Realtime ALAC muting frame %u.", actual_timestamp);
-            abuf->length = abuf->avframe->nb_samples;
+            const auto format = AudioFormat::fromSsrc(abuf->ssrc);
+            abuf->length = abuf->avframe ? abuf->avframe->nb_samples :
+                            format ? format->framesPerPacket() : 0;
             av_frame_free(&abuf->avframe);
             abuf->avframe = NULL;
           }
@@ -568,7 +570,9 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
         if (mute) {
           // it's important to have already run it through the decoder before dropping it
           debug(2, "ap2 muting frame %u.", actual_timestamp);
-          abuf->length = abuf->avframe->nb_samples;
+          const auto format = AudioFormat::fromSsrc(abuf->ssrc);
+          abuf->length = abuf->avframe ? abuf->avframe->nb_samples :
+                          format ? format->framesPerPacket() : 0;
           av_frame_free(&abuf->avframe);
           abuf->avframe = NULL;
         }
