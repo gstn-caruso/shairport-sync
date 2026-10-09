@@ -152,7 +152,12 @@ static void reject_removed_settings(config_t *settings) {
   const char *removed[] = {"alsa", "jack", "sndio", "ao", "soundio", "pipewire", "pipe",
                            "stdout", "dummy", "dsp", "metadata", "dbus", "mpris", "mqtt",
                            "general.service_type", "general.output_backend", "general.mdns_backend",
-                           "general.alac_decoder", "diagnostics.get_plist_metadata"};
+                           "general.alac_decoder", "diagnostics.get_plist_metadata",
+                           "sessioncontrol.daemonize_with_pid_file",
+                           "sessioncontrol.daemonize_without_pid_file",
+                           "sessioncontrol.daemon_pid_dir", "general.soxr_delay_threshold",
+                           "general.dbus_service_bus", "general.mpris_service_bus",
+                           "diagnostics.retain_cover_art"};
   for (size_t index = 0; index < sizeof(removed) / sizeof(removed[0]); index++) {
     if (config_lookup(settings, removed[index]) != NULL)
       die("%s is a removed option in this AirPlay 2 Linux PulseAudio fork.", removed[index]);

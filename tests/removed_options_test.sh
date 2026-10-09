@@ -12,6 +12,24 @@ for group in alsa jack sndio ao soundio pipewire pipe stdout dummy dsp metadata 
   fi
   grep -q 'removed option' "$test_dir/output" || { cat "$test_dir/output" >&2; exit 1; }
 done
+for setting in sessioncontrol.daemonize_with_pid_file sessioncontrol.daemonize_without_pid_file sessioncontrol.daemon_pid_dir general.soxr_delay_threshold general.dbus_service_bus general.mpris_service_bus diagnostics.retain_cover_art; do
+  case "$setting" in
+    *.daemonize_*|*.retain_cover_art) values='false true' ;;
+    *.soxr_delay_threshold) values='0 30' ;;
+    *) values='"" "session"' ;;
+  esac
+  for value in $values; do
+    printf '%s = { %s = %s; };\n' "${setting%%.*}" "${setting#*.}" "$value" > "$test_dir/receiver.conf"
+    if NQPTP_TEST_VERSION=missing LD_PRELOAD="$test_dir/fixture.so" "$binary" -c "$test_dir/receiver.conf" > "$test_dir/output" 2>&1; then
+      echo "Accepted removed setting $setting=$value" >&2; exit 1
+    fi
+    if ! grep -q 'removed option' "$test_dir/output"; then
+      cat "$test_dir/output" >&2
+      echo "Missing removed-option error for $setting=$value" >&2
+      exit 1
+    fi
+  done
+done
 for setting in service_type output_backend mdns_backend alac_decoder; do
   printf 'general = { %s = "auto"; };\n' "$setting" > "$test_dir/receiver.conf"
   if NQPTP_TEST_VERSION=missing LD_PRELOAD="$test_dir/fixture.so" "$binary" -c "$test_dir/receiver.conf" > "$test_dir/output" 2>&1; then

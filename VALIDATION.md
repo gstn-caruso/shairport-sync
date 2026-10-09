@@ -27,3 +27,5 @@ Final verification: both in-tree and out-of-tree `make check` passed all four te
 ## Criterio — intention-revealing-selector (#4) · references/004-intention-revealing-selector.md
 
 `reject_removed_settings` and `protocol_metadata_is_complete` state the boundary decision they own.
+
+Review correction: seven legacy settings were still ignored inside supported groups. The added runtime test first failed because `sessioncontrol.daemonize_with_pid_file=false` reached the NQPTP check instead of reporting a removed option. Boundary validation now rejects both daemonization keys, the PID directory, SoX threshold, DBus/MPRIS bus selection and retained cover art. Tests cover false/true booleans, empty/nonempty strings and zero/nonzero thresholds; `make -C build/ap2-only check -j4` passed all four programs after the correction.
