@@ -1,7 +1,19 @@
 #pragma once
 #include "converted_audio.hpp"
+#include <cstring>
 
 struct audio_buffer_entry { // decoded audio packets
+  void trimBefore(uint32_t target, unsigned bytesPerFrame) {
+    const int32_t remove = target - timestamp;
+    if (remove <= 0)
+      return;
+    void *destination = data.bytes().data();
+    auto *source = static_cast<char *>(destination) + bytesPerFrame * remove;
+    const auto remaining = length - remove;
+    std::memmove(destination, source, remaining * bytesPerFrame);
+    timestamp = target;
+    length = remaining;
+  }
   uint8_t ready;
   uint8_t status; // flags
   uint16_t resend_request_number;

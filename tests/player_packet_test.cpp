@@ -20,4 +20,14 @@ int main() {
   assert(pthread_cond_destroy(&session.flowcontrol) == 0);
   assert(pthread_mutex_destroy(&session.ab_mutex) == 0);
   assert(pthread_mutex_destroy(&session.flush_mutex) == 0);
+  abuf_t pcm{};
+  pcm.timestamp = 100;
+  pcm.length = 4;
+  pcm.data = *ConvertedAudio::allocate(16, 4, 0);
+  auto *samples = reinterpret_cast<int16_t *>(pcm.data.bytes().data());
+  for (int index = 0; index < 8; ++index)
+    samples[index] = index + 1;
+  pcm.trimBefore(102, 4);
+  assert(pcm.timestamp == 102 && pcm.length == 2);
+  assert(samples[0] == 5 && samples[3] == 8);
 }

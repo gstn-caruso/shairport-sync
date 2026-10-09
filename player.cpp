@@ -1071,12 +1071,8 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
                         conn->flush_rtp_timestamp - current_packet->timestamp;
                     if (frames_to_remove > 0) {
                       debug(2, "%u frames to remove from current buffer", frames_to_remove);
-                      void *dest = current_packet->data.bytes().data();
-                      void *source = static_cast<char *>(dest) + conn->input_bytes_per_frame * frames_to_remove;
-                      size_t frames_remaining = (current_packet->length - frames_to_remove);
-                      memmove(dest, source, frames_remaining * conn->input_bytes_per_frame);
-                      current_packet->timestamp = conn->flush_rtp_timestamp;
-                      current_packet->length = frames_remaining;
+                      current_packet->trimBefore(conn->flush_rtp_timestamp,
+                                                conn->input_bytes_per_frame);
                     }
                     debug(
                         2,
