@@ -1,4 +1,5 @@
 #include "session_state.hpp"
+#include "volume_runtime.hpp"
 #include <cassert>
 #include <condition_variable>
 #include <cstring>
@@ -90,14 +91,14 @@ static std::vector<uint8_t> encodedConstant() {
   avcodec_free_context(&encoder);
   return bytes;
 }
-static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames, bool submit) {
+static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames, bool submit,
+                          bool mute = false) {
   waiting = played = waitingAfterPacket = false;
   expectedFrameTime = frameTime;
   outputFrames = 0;
   auto packet = encodedConstant();
   SessionState session{};
   activeSession = &session;
-  assert(pthread_mutex_init(&session.volume_control_mutex, nullptr) == 0);
   assert(pthread_mutex_init(&session.flush_mutex, nullptr) == 0);
   session.airplay_stream_type = realtime_stream;
   assert(pthread_create(&session.rtp_realtime_audio_thread, nullptr, idleReceiver, nullptr) == 0);
@@ -113,7 +114,7 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
   config.no_sync = 1;
   config.volume_control_profile = VCP_flat;
   config.volume_range_db = 12;
-  config.airplay_volume = 0;
+  sharedVolumeLevel.remember(0);
   pthread_t player;
   assert(pthread_create(&player, nullptr, player_thread_func, &session) == 0);
   {
@@ -121,9 +122,8 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
     changed.wait(lock, [] { return waiting; });
   }
   player_volume(-15, &session);
-  pthread_mutex_lock(&session.volume_control_mutex);
-  const int gain = session.fix_volume;
-  pthread_mutex_unlock(&session.volume_control_mutex);
+  if (mute) player_volume(-144, &session);
+  const int gain = session.volumeControl.pcmSnapshot().gainFixed16;
   assert(gain > 0 && gain < 65536);
   assert(player_put_packet(ALAC_44100_S16_2, 7, 1000, packet.data(), packet.size(), 0, 0,
                            &session) == 352);
@@ -136,7 +136,6 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
   assert(pthread_join(player, &completion) == 0 && completion == PTHREAD_CANCELED);
   activeSession = nullptr;
   assert(pthread_mutex_destroy(&session.flush_mutex) == 0);
-  assert(pthread_mutex_destroy(&session.volume_control_mutex) == 0);
   assert(played == submit);
   const auto statistics = session.statistics.snapshot();
   assert(statistics.packets == 1 && statistics.playNumber == 1);
@@ -146,7 +145,7 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
   if (submit) {
     assert(outputFrames == expectedFrames);
     if (expectedFrames > 0) {
-      const int expected = 6000 * gain / 65536;
+      const int expected = mute ? 0 : 6000 * gain / 65536;
       assert(outputSample >= expected - 1 && outputSample <= expected + 1);
     }
   }
@@ -156,4 +155,5 @@ int main() {
   checkPlayback(true, 999000000, 308, true);
   checkPlayback(true, 991000000, 0, false);
   checkPlayback(true, 992000000, 0, true);
+  checkPlayback(false, 999000000, 352, true, true);
 }

@@ -10,6 +10,7 @@
 #include "playback_samples.hpp"
 #include "playback_sync.hpp"
 #include "playback_statistics.hpp"
+#include "volume_control.hpp"
 #include <cstdlib>
 #include <atomic>
 
@@ -32,7 +33,6 @@ struct SessionState {
                              // otherwise
   uint32_t maximum_latency;  // set if an a=max-latency: line appears in the ANNOUNCE message; zero
                              // otherwise
-  int software_mute_enabled; // if we don't have a real mute that we can use
   int fd = -1;
   SOCKADDR remote, local;
   volatile int stop;
@@ -53,11 +53,8 @@ struct SessionState {
   int last_seqno_valid;
   seq_t last_seqno_read;
   // mutexes and condition variables
-  pthread_mutex_t flush_mutex, volume_control_mutex, player_create_delete_mutex;
-
-  int fix_volume;
-  double own_airplay_volume;
-  int own_airplay_volume_set;
+  pthread_mutex_t flush_mutex, player_create_delete_mutex;
+  VolumeControl volumeControl;
 
   int ab_buffering;
   uint32_t first_packet_timestamp;

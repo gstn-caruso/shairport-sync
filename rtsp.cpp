@@ -28,6 +28,8 @@
  */
 
 #include "session_state.hpp"
+#include "audio_player_adapter.hpp"
+#include "volume_runtime.hpp"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -2562,12 +2564,14 @@ void handle_set_parameter_parameter(rtsp_conn_info *conn, RtspMessage *req,
       float volume = atof(cp + strlen("volume: "));
       debug(3, "Connection %d: request to set AirPlay Volume to: %f.", conn->connection_number,
             volume);
-      // if we are playing, go ahead and change the volume
-      principalSession.applyIfCurrent(conn->connection_number, [&](SessionState &current) {
-        player_volume(volume, &current);
-      });
-      conn->own_airplay_volume = volume;
-      conn->own_airplay_volume_set = 1;
+      int previousState;
+      pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+      conn->volumeControl.rememberLevel(volume);
+      if (const auto ticket = principalSession.ticketFor(conn->connection_number)) {
+        applySessionVolume(volume, *conn);
+        principalSession.commitIfSelected(*ticket, [&] { sharedVolumeLevel.remember(volume); });
+      }
+      pthread_setcancelstate(previousState, nullptr);
     } else if (strncmp(cp, "progress: ", strlen("progress: ")) ==
                0) { // this can be sent even when metadata is not solicited
 
@@ -2745,11 +2749,7 @@ void rtsp_conversation_thread_cleanup_function(void *arg) {
       conn->ap2_client_name = NULL;
     }
     // remove flow control and mutexes
-    int rc = pthread_mutex_destroy(&conn->volume_control_mutex);
-    if (rc)
-      debug(1, "Connection %d: error %d destroying volume_control_mutex.", conn->connection_number,
-            rc);
-    rc = pthread_mutex_destroy(&conn->flush_mutex);
+    int rc = pthread_mutex_destroy(&conn->flush_mutex);
     if (rc)
       debug(1, "Connection %d: error %d destroying flush_mutex.", conn->connection_number, rc);
     rc = pthread_mutex_destroy(&conn->event_sender_mutex);
@@ -2775,10 +2775,6 @@ static void *rtsp_conversation_thread_func(void *pconn) {
   int rc = pthread_mutex_init(&conn->flush_mutex, NULL);
   if (rc)
     die("Connection %d: error %d initialising flush_mutex.", conn->connection_number, rc);
-  rc = pthread_mutex_init(&conn->volume_control_mutex, NULL);
-  if (rc)
-    die("Connection %d: error %d initialising volume_control_mutex.", conn->connection_number, rc);
-
   rc = pthread_mutex_init(&conn->player_create_delete_mutex, NULL);
   if (rc)
     die("Connection %d: error %d initialising player_create_delete_mutex.", conn->connection_number,

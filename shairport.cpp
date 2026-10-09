@@ -26,6 +26,7 @@
  */
 
 #include <errno.h>
+#include "volume_runtime.hpp"
 #include <fcntl.h>
 #include <getopt.h>
 #include <libconfig.h>
@@ -1087,9 +1088,7 @@ if (config_lookup(config.cfg, "general.alac_decoder") != NULL)
     set_debug_level(tdebuglev);
 
   // now set the initial volume to the default volume
-  config.airplay_volume =
-      config.default_airplay_volume; // if no volume is ever set or requested, default to initial
-                                     // default value if nothing else comes in first.
+  sharedVolumeLevel.remember(config.default_airplay_volume);
 
   ptp_send_control_message_string("T");
   if (ptp_shm_interface_open() != 0) {

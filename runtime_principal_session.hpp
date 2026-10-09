@@ -86,12 +86,6 @@ public:
     action();
     return true;
   }
-  template <typename Action> bool applyIfCurrent(int id, Action action) {
-    std::lock_guard lock(mutex_);
-    if (!current_ || current_->connection_number != id) return false;
-    action(*current_);
-    return true;
-  }
   template <typename Action> auto mutateSession(SessionState &session, Action action) {
     std::lock_guard lock(mutex_);
     return action(session);

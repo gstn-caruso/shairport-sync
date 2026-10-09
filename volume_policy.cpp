@@ -5,10 +5,10 @@
 
 double VolumePolicy::attenuation(double level, int32_t maximum, int32_t minimum, VolumeProfile profile) {
   if (level < -30 || level > 0 || !std::isfinite(level)) return minimum;
-  const double fraction = (30 + level) / 30;
-  const double flat = minimum + (maximum - minimum) * fraction;
-  if (profile == VolumeProfile::flat) return flat;
+  if (profile == VolumeProfile::flat) return ((maximum - minimum) * (30.0 + level) / 30) + minimum;
   if (profile == VolumeProfile::dasl) {
+    const double fraction = 1 - level / -30.0;
+    const double flat = minimum + (maximum - minimum) * fraction;
     if (fraction <= 0) return minimum;
     return std::min(double(maximum), std::max(flat, maximum + 1000 * std::log10(fraction) / std::log10(2)));
   }

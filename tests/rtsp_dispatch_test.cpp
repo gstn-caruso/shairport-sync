@@ -17,8 +17,7 @@ static void check_shared_methods(rtsp_conn_info *conn) {
   request->replaceBody("volume: -15.000000\r\nprogress: 0/44100/88200\r\n");
   rtsp_dispatch_request(conn, request, response);
   assert(response->responseCode() == 200);
-  assert(conn->own_airplay_volume_set);
-  assert(conn->own_airplay_volume == -15.0);
+  assert(suggested_volume(conn) == -15.0);
   msg_free(&request);
   msg_free(&response);
   request = msg_init();

@@ -70,6 +70,7 @@ add_library(receiver STATIC shairport.cpp bonjour_strings.cpp mdns.cpp mdns_avah
   player.cpp audio.cpp audio_pa.cpp activity_monitor.cpp activity_state.cpp rtsp.cpp rtsp_message.cpp ap2_buffered_audio_processor.cpp
   statistics_formatter.cpp
   volume_policy.cpp
+  volume_runtime.cpp
   ap2_event_receiver.cpp ap2_event_message_handler.cpp ptp-utilities.cpp utilities/debug.cpp
   utilities/network_utilities.cpp utilities/rtsp_message_utilities.cpp utilities/string_utilities.cpp
   utilities/exit.cpp utilities/buffered_read.cpp utilities/structured_buffer.cpp utilities/mod23.cpp
@@ -103,6 +104,11 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(volume-adapter-test tests/volume_adapter_test.cpp)
+  target_compile_options(volume-adapter-test PRIVATE -UNDEBUG)
+  target_link_libraries(volume-adapter-test PRIVATE receiver)
+  add_test(NAME volume-adapter COMMAND volume-adapter-test)
+  set_tests_properties(volume-adapter PROPERTIES TIMEOUT 5)
   add_executable(principal-volume-test tests/principal_volume_test.cpp)
   target_compile_options(principal-volume-test PRIVATE -UNDEBUG)
   target_link_libraries(principal-volume-test PRIVATE receiver)
