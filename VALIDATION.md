@@ -219,6 +219,15 @@ Group (0.12s), exact flush-history case and Release 195/195 (15.31s) passed; eac
 entry has timeout 5. Native assertions and C ABI/cancellation/shell checks remain;
 production is unchanged and sanitizers/devices were not rerun.
 
+Packet-wait discovery (`ctest --test-dir build/redesign-release -R '^AudioPacketWait\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Two independent cases retain earlier-signal detection and native deferred
+cancellation, joined completion, exactly-once frame release and unlocked reuse.
+Group (0.04s), exact cancellation case, two shuffled repetitions and Release
+196/196 (15.42s) passed; each entry has timeout 5. The handshake resets under its
+mutex; native cancel/join assertions and both wrap flags remain. C ABI/shell checks
+stay green; production is unchanged and sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |

@@ -1,4 +1,5 @@
 #include "audio_packet_buffer.hpp"
+#include <gtest/gtest.h>
 #include <atomic>
 #include <cassert>
 #include <condition_variable>
@@ -44,15 +45,28 @@ static void *waitWithExtractedPacket(void *argument) {
   buffer.waitForChange(buffer.revision(), deadline);
   return nullptr;
 }
-int main() {
-  AudioPacketBuffer buffer;
+static void checkEarlierResetSignal(AudioPacketBuffer &buffer) {
   auto earlier = buffer.revision();
   buffer.reset();
-  assert(buffer.waitForChange(earlier, {0, 0}) == 0);
+  EXPECT_EQ(buffer.waitForChange(earlier, {0, 0}), 0);
+}
+
+TEST(AudioPacketWait, ResetSignalArrivingBeforeWaitIsNotLost) {
+  AudioPacketBuffer buffer;
+  checkEarlierResetSignal(buffer);
+}
+
+TEST(AudioPacketWait, DeferredCancellationReleasesExtractedFrameAndUnlocksBuffer) {
+  AudioPacketBuffer buffer;
+  checkEarlierResetSignal(buffer);
+  {
+    std::lock_guard lock(observation);
+    waiting = false;
+  }
   buffer.accept(99, 0, [] { return packet(99); });
   const auto released = framesReleased.load();
   pthread_t thread;
-  assert(pthread_create(&thread, nullptr, waitWithExtractedPacket, &buffer) == 0);
+  ASSERT_EQ(pthread_create(&thread, nullptr, waitWithExtractedPacket, &buffer), 0);
   {
     std::unique_lock lock(observation);
     entered.wait(lock, [] { return waiting; });
@@ -60,7 +74,7 @@ int main() {
   assert(pthread_cancel(thread) == 0);
   void *completion;
   assert(pthread_join(thread, &completion) == 0 && completion == PTHREAD_CANCELED);
-  assert(framesReleased == released + 1);
+  EXPECT_EQ(framesReleased.load(), released + 1);
   buffer.accept(100, 1, [] { return packet(100); });
-  assert(buffer.occupancy() == 1);
+  EXPECT_EQ(buffer.occupancy(), 1);
 }
