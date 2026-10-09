@@ -1,15 +1,15 @@
 #include "runtime_principal_session.hpp"
 #include "volume_control.hpp"
+#include <gtest/gtest.h>
 #include <cassert>
 #include <condition_variable>
 #include <thread>
 
-int main() {
+static void checkRetiredTicketEffects(SharedVolumeLevel &shared) {
   RuntimePrincipalSession principal;
   SessionState first{}, second{};
   first.connection_number = 1;
   second.connection_number = 2;
-  SharedVolumeLevel shared;
   assert(principal.acquire(first, true).accepted);
   const auto firstTicket = principal.ticketFor(1);
   assert(firstTicket);
@@ -22,7 +22,16 @@ int main() {
   assert(shared.current() == -15);
   principal.releaseIfCurrent(2);
   assert(!principal.commitIfSelected(*secondTicket, [&] { shared.remember(0); }));
+}
 
+TEST(PrincipalVolume, RetiredTicketsCannotCommitSharedVolumeEffects) {
+  SharedVolumeLevel shared;
+  checkRetiredTicketEffects(shared);
+}
+
+TEST(PrincipalVolume, ConcurrentReplacementRejectsOldEffectAndCommitsNewLevel) {
+  SharedVolumeLevel shared;
+  checkRetiredTicketEffects(shared);
   RuntimePrincipalSession concurrent;
   SessionState oldSession{}, newSession{};
   oldSession.connection_number = 3;

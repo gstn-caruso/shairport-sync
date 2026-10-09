@@ -237,6 +237,15 @@ each entry has timeout 5. Output settings, shared level and callback pointer res
 per run. Native callback assertions, C ABI/cancellation/shell checks remain;
 production is unchanged and sanitizers/devices were not rerun.
 
+Principal-volume discovery (`ctest --test-dir build/redesign-release -R '^PrincipalVolume\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Two independently owned principal/session/level cases retain ticket retirement,
+all numeric level checks and condition-variable replacement ordering with a joined
+effect thread. Concurrent replacement replays the earlier selection history.
+Group (0.04s), exact concurrent case, two shuffled repetitions and Release 199/199
+(15.36s) passed; each entry has timeout 5. Native assertions and C ABI/cancellation/
+shell checks remain; production is unchanged and sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
