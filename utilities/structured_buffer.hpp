@@ -7,13 +7,9 @@
 #include <memory>
 
 /*
- * I am a fixed-capacity buffer for building messages from text and binary bytes.
- * I own my storage and know how much of it belongs to the current message.
- * Ask me to append bytes, append formatted text, or clear the message for reuse.
- * I reject binary additions that leave no room for a terminator; formatted text
- * is truncated to fit. Clearing retains my storage, and destruction releases it.
- * My C adapter borrows data() and length() to send the message; the borrowed
- * storage remains valid until my destruction, and later writes change its bytes.
+ * Binary appends must leave room for a terminator; formatted text is truncated.
+ * data() returns borrowed storage valid until destruction. Later writes change
+ * its contents; clear() retains the storage.
  */
 class StructuredBuffer {
 public:
