@@ -1060,62 +1060,17 @@ int player_play(rtsp_conn_info *conn) {
                               // access to the output device (i.e. knowing that it should not be in
                               // use by another program at this time).
 
-  pthread_mutex_lock_and_cleanup_push(&conn->player_create_delete_mutex);
-  if (conn->player_thread == NULL) {
-    pthread_t *pt = static_cast<pthread_t *>(malloc(sizeof(pthread_t)));
-    if (pt == NULL)
-      die("Couldn't allocate space for pthread_t");
-
-    int rc = named_pthread_create_with_priority(pt, 3, player_thread_func, (void *)conn,
-                                                "player_%d", conn->connection_number);
-    if (rc)
-      debug(1, "Connection %d: error creating player_thread: %s", conn->connection_number,
-            strerror(errno));
-    conn->player_thread = pt; // set _after_ creation of thread
-  } else {
-    debug(1, "Connection %d: player thread already exists.", conn->connection_number);
-  }
-  pthread_cleanup_pop(1); // release the player_create_delete_mutex
-  conn->is_playing = 1;
-  return 0;
+  const auto started = conn->playbackRun.start(player_thread_func, conn,
+      [id = conn->connection_number](pthread_t *thread, PlaybackRun::Routine routine, void *argument) {
+        return named_pthread_create_with_priority(thread, 3, routine, argument, "player_%d", id);
+      });
+  return started == PlaybackRun::StartResult::failed ? -1 : 0;
 }
 
 int player_stop(rtsp_conn_info *conn) {
-  // note -- this may be called from another connection thread.
   debug(2, "Connection %d: player_stop.", conn->connection_number);
-  int response = 0; // okay
-  pthread_mutex_lock_and_cleanup_push(&conn->player_create_delete_mutex);
-  pthread_t *pt = conn->player_thread;
-  if (pt) {
-    debug(3, "player_thread cancel...");
-    conn->player_thread = NULL; // cleared _before_ cancelling of thread
-    pthread_cancel(*pt);
-    debug(3, "player_thread join...");
-    if (pthread_join(*pt, NULL) == -1) {
-      char errorstring[1024];
-      strerror_r(errno, (char *)errorstring, sizeof(errorstring));
-      debug(1, "Connection %d: error %d joining player thread: \"%s\".", conn->connection_number,
-            errno, (char *)errorstring);
-    } else {
-      debug(2, "Connection %d: player_stop successful.", conn->connection_number);
-    }
-    free(pt);
-    // reset_anchor_info(conn); // say the clock is no longer valid
-    response = 0; // deleted
-  } else {
-    debug(2, "Connection %d: no player thread.", conn->connection_number);
-    response = -1; // already deleted or never created...
-  }
-  pthread_cleanup_pop(1); // release the player_create_delete_mutex
-  if (response == 0) {    // if the thread was just stopped and deleted...
-    conn->is_playing = 0;
-/*
-// this is done in the player cleanup handler
-#ifdef CONFIG_AIRPLAY_2
-    ptp_send_control_message_string("E"); // signify play is "E"nding
-#endif
-*/
-    command_stop();
-  }
-  return response;
+  if (!conn->playbackRun.stop())
+    return -1;
+  command_stop();
+  return 0;
 }

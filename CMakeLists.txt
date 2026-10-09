@@ -72,6 +72,7 @@ add_library(receiver STATIC shairport.cpp bonjour_strings.cpp mdns.cpp mdns_avah
   volume_policy.cpp
   volume_runtime.cpp
   playback_timing.cpp
+  playback_run.cpp
   ap2_event_receiver.cpp ap2_event_message_handler.cpp ptp-utilities.cpp utilities/debug.cpp
   utilities/network_utilities.cpp utilities/rtsp_message_utilities.cpp utilities/string_utilities.cpp
   utilities/exit.cpp utilities/buffered_read.cpp utilities/structured_buffer.cpp utilities/mod23.cpp
@@ -105,6 +106,11 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(playback-run-test tests/playback_run_test.cpp)
+  target_compile_options(playback-run-test PRIVATE -UNDEBUG)
+  target_link_libraries(playback-run-test PRIVATE receiver)
+  add_test(NAME playback-run COMMAND playback-run-test)
+  set_tests_properties(playback-run PROPERTIES TIMEOUT 5)
   add_executable(playback-timing-test tests/playback_timing_test.cpp)
   target_compile_options(playback-timing-test PRIVATE -UNDEBUG)
   target_link_libraries(playback-timing-test PRIVATE receiver)

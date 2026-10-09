@@ -1828,9 +1828,8 @@ void handle_teardown_2(rtsp_conn_info *conn, __attribute__((unused)) RtspMessage
     plist_t streams = plist_dict_get_item(messagePlist, "streams");
     if (streams != NULL) {
       // just drop the player, leave the connection open
-      if (conn->player_thread) {
+      if (player_stop(conn) == 0) {
         debug(4, "Connection %d from \"%s\": TEARDOWN (AP2 %s) %s Content-Length %d is stopping a player thread", conn->connection_number, conn->ap2_client_name, get_category_string(conn->airplay_stream_category), req->requestPath(), req->bodyLength());
-        player_stop(conn);                    // this nulls the player_thread and cancels the threads...
         activity_monitor_signify_activity(0); // inactive, and should be after command_stop()
       }
     } else {
@@ -2234,9 +2233,8 @@ void handle_setup_2(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
 
     if (conn->airplay_stream_category == ptp_stream) {
 
-      if (conn->player_thread) {
+      if (player_stop(conn) == 0) {
         debug(1, "stopping a running player during setup phase 2");
-        player_stop(conn); // this nulls the player_thread and cancels the threads...
         activity_monitor_signify_activity(0); // inactive, and should be after command_stop()
       }
 
@@ -2672,8 +2670,7 @@ void rtsp_conversation_thread_cleanup_function(void *arg) {
     debug(3, "Connection %d: %s rtsp_conversation_thread_func_cleanup_function called.",
           conn->connection_number, get_category_string(conn->airplay_stream_category));
 
-    if (conn->player_thread) {
-      player_stop(conn); // this nulls the player_thread and cancels the threads...
+    if (player_stop(conn) == 0) {
       activity_monitor_signify_activity(0); // inactive, and should be after command_stop()
     }
 
@@ -2774,11 +2771,6 @@ static void *rtsp_conversation_thread_func(void *pconn) {
   int rc = pthread_mutex_init(&conn->flush_mutex, NULL);
   if (rc)
     die("Connection %d: error %d initialising flush_mutex.", conn->connection_number, rc);
-  rc = pthread_mutex_init(&conn->player_create_delete_mutex, NULL);
-  if (rc)
-    die("Connection %d: error %d initialising player_create_delete_mutex.", conn->connection_number,
-        rc);
-
   rc = pthread_mutex_init(&conn->event_sender_mutex, NULL);
   if (rc)
     die("Connection %d: error %d initialising event_sender_mutex.", conn->connection_number, rc);

@@ -62,7 +62,7 @@ public:
     std::lock_guard lock(mutex_);
     if (!current_)
       return {};
-    return {current_->connection_number, current_->is_playing != 0,
+    return {current_->connection_number, current_->playbackRun.isActive(),
             current_->airplay_stream_category, current_->input_rate, current_->type,
             current_->airplay_gid ? current_->airplay_gid : "",
             current_->groupContainsGroupLeader != 0};

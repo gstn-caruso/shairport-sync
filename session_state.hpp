@@ -12,6 +12,7 @@
 #include "playback_statistics.hpp"
 #include "volume_control.hpp"
 #include "playback_timing.hpp"
+#include "playback_run.hpp"
 #include <cstdlib>
 #include <atomic>
 
@@ -23,7 +24,6 @@ struct SessionState {
   bool mayAcquirePrincipal() const { return !retiring_.load(); }
   void beginRetirement() { retiring_.store(true); }
   int connection_number;           // for debug ID purposes, nothing else...
-  int is_playing;                  // set true by player_play, set false by player_stop
   int input_format_is_valid;       // set when the input format is known and set in this structure
   int resend_interval;                      // this is really just for debugging
   char *UserAgent;                          // free this on teardown
@@ -43,7 +43,7 @@ struct SessionState {
   pthread_t thread;
 
   PlaybackStatistics statistics;
-  pthread_t *player_thread;
+  PlaybackRun playbackRun;
   AudioPacketBuffer packetBuffer;
   unsigned int frames_per_packet, input_rate;
   // int connection_state_to_output;
@@ -52,7 +52,7 @@ struct SessionState {
   int last_seqno_valid;
   seq_t last_seqno_read;
   // mutexes and condition variables
-  pthread_mutex_t flush_mutex, player_create_delete_mutex;
+  pthread_mutex_t flush_mutex;
   VolumeControl volumeControl;
 
   int flush_output_flushed; // true if the output device has been flushed.
