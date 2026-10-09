@@ -27,6 +27,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include "session_state.hpp"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -57,6 +58,7 @@
 #include "utilities/rtsp_message_utilities.h"
 #include "rtsp_message.hpp"
 #include <format>
+#include <new>
 
 #include <openssl/evp.h>
 #include <openssl/md5.h>
@@ -168,7 +170,7 @@ void cancel_all_RTSP_threads(airplay_stream_c stream_category, int except_this_o
       pthread_join(conns[i]->thread, NULL);
       debug(2, "Connection %d: %s joined.", conns[i]->connection_number,
             get_category_string(conns[i]->airplay_stream_category));
-      free(conns[i]);
+      delete conns[i];
       conns[i] = NULL;
     }
   }
@@ -190,7 +192,7 @@ void cleanup_threads(void) {
             conns[i]->connection_number);
       pthread_join(conns[i]->thread, &retval);
       debug(4, "Connection %d: deleted in cleanup.", conns[i]->connection_number);
-      free(conns[i]);
+      delete conns[i];
       conns[i] = NULL;
     }
     if (conns[i] != NULL) {
@@ -3178,6 +3180,12 @@ void rtsp_listen_loop_cleanup_handler(__attribute__((unused)) void *arg) {
   pthread_setcancelstate(oldState, NULL);
 }
 
+void discardUnregisteredSession(void *argument) {
+  auto **session = static_cast<rtsp_conn_info **>(argument);
+  delete *session;
+  *session = nullptr;
+}
+
 void *rtsp_listen_loop(__attribute((unused)) void *arg) {
   //  #include <syscall.h>
   //  debug(1, "rtsp_listen_loop PID %d", syscall(SYS_gettid));
@@ -3321,11 +3329,10 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
 
       int release_conn = 1; // on exit, deallocate the buffer unless everything was okay
 
-      rtsp_conn_info *conn = static_cast<rtsp_conn_info *>(malloc(sizeof(rtsp_conn_info)));
+      rtsp_conn_info *conn = new (std::nothrow) rtsp_conn_info{};
       if (conn == 0)
         die("Couldn't allocate memory for an rtsp_conn_info record.");
-      pthread_cleanup_push(malloc_cleanup, &conn);
-      memset(conn, 0, sizeof(rtsp_conn_info));
+      pthread_cleanup_push(discardUnregisteredSession, &conn);
       conn->connection_number = RTSP_connection_index++;
       debug(2, "Connection %d is at: 0x%" PRIxPTR ".", conn->connection_number, (uintptr_t)conn);
 

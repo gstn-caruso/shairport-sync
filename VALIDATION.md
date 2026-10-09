@@ -7,6 +7,7 @@ CTest covers:
 
 | Test | Contract |
 | --- | --- |
+| `rtp-clock` | Anchor validity, mastership windows, fallback, wraparound, latency and frame/time conversions |
 | `rtsp-message` | Owned request parsing, header order/duplicates, binary framing, payload interpretation and socket output |
 | `rtsp-message-c` | Opaque C message allocation and cleanup linkage |
 | `receiver-encoding-cpp` | Unsupported output encodings and wire SSRC values remain representable with the C ABI |

@@ -24,6 +24,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include "session_state.hpp"
 #include "bonjour_strings.h"
 #include "common.h"
 

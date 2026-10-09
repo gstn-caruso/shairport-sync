@@ -24,6 +24,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include "session_state.hpp"
 #include "ap2_event_receiver.h"
 #include "ap2_event_message_handler.h"
 #include "common.h"

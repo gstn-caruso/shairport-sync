@@ -24,6 +24,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include "session_state.hpp"
 #include "ap2_buffered_audio_processor.h"
 #include "common.h"
 #include "player.h"

@@ -24,6 +24,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include "../session_state.hpp"
 #include "rtsp_message_utilities.h"
 #include "../common.h"
 #include "../rtsp_message.hpp"

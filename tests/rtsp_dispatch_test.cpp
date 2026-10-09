@@ -1,3 +1,4 @@
+#include "session_state.hpp"
 #include "common.h"
 #include "rtsp.h"
 #include "rtsp_message.hpp"

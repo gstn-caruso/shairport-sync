@@ -25,6 +25,8 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include "session_state.hpp"
+#include <bit>
 #include "rtp.h"
 #include "common.h"
 #include "player.h"
@@ -140,7 +142,7 @@ void rtp_initialise(rtsp_conn_info *conn) {
 }
 
 void rtp_terminate(rtsp_conn_info *conn) {
-  conn->anchor_rtptime = 0;
+  conn->clock.reset();
   // destroy the timer mutex
   int rc = pthread_mutex_destroy(&conn->reference_time_mutex);
   if (rc)
@@ -218,172 +220,67 @@ void rtp_request_resend(seq_t first, uint32_t count, rtsp_conn_info *conn) {
 
 void set_ptp_anchor_info(rtsp_conn_info *conn, uint64_t clock_id, uint32_t rtptime,
                          uint64_t networktime) {
-  if ((conn->anchor_clock != 0) && (conn->anchor_clock == clock_id) &&
-      (conn->anchor_remote_info_is_valid != 0)) {
-    // check change in timing
-    int64_t time_difference = networktime - conn->anchor_time;
-    int32_t frame_difference = rtptime - conn->anchor_rtptime;
-    double time_difference_in_frames = (1.0 * time_difference * conn->input_rate) / 1000000000;
-    double frame_change = frame_difference - time_difference_in_frames;
-    debug(3,
-          "Connection %d: set_ptp_anchor_info: clock: %" PRIx64 ", rtptime: %" PRIu32
-          ", networktime: %" PRIx64 ", frame adjustment: %7.3f.",
-          conn->connection_number, clock_id, rtptime, networktime, frame_change);
-  } else {
-    debug(2,
-          "Connection %d: set_ptp_anchor_info: clock: %" PRIx64 ", rtptime: %" PRIu32
-          ", networktime: %" PRIx64 ".",
-          conn->connection_number, clock_id, rtptime, networktime);
-  }
-  if (conn->anchor_clock != clock_id) {
-    debug(2, "Connection %d: Set Anchor Clock: %" PRIx64 ".", conn->connection_number, clock_id);
-  }
-  // debug(1,"set anchor info clock: %" PRIx64", rtptime: %u, networktime: %" PRIx64 ".", clock_id,
-  // rtptime, networktime);
-
-  // if the clock is the same but any details change, and if the last_anchor_info has not been
-  // valid for some minimum time (and thus may not be reliable), we need to invalidate
-  // last_anchor_info
-
-  if ((conn->airplay_stream_type == buffered_stream) && (conn->ap2_play_enabled != 0) &&
-      ((clock_id != conn->anchor_clock) || (conn->anchor_rtptime != rtptime) ||
-       (conn->anchor_time != networktime))) {
-    uint64_t master_clock_id = 0;
-    ptp_get_clock_info(&master_clock_id, NULL, NULL, NULL);
-    debug(1,
-          "Connection %d: Note: anchor parameters have changed. Old clock: %" PRIx64
-          ", rtptime: %u, networktime: %" PRIu64 ". New clock: %" PRIx64
-          ", rtptime: %u, networktime: %" PRIu64 ". Current master clock: %" PRIx64 ".",
-          conn->connection_number, conn->anchor_clock, conn->anchor_rtptime, conn->anchor_time,
-          clock_id, rtptime, networktime, master_clock_id);
-  }
-
-  if ((clock_id == conn->anchor_clock) &&
-      ((conn->anchor_rtptime != rtptime) || (conn->anchor_time != networktime))) {
-    uint64_t time_now = get_absolute_time_in_ns();
-    int64_t last_anchor_validity_duration = time_now - conn->last_anchor_validity_start_time;
-    if (last_anchor_validity_duration < 5000000000) {
-      if (conn->airplay_stream_type == buffered_stream)
-        debug(2,
-              "Connection %d: Note: anchor parameters have changed before clock %" PRIx64
-              " has stabilised.",
-              conn->connection_number, clock_id);
-      conn->last_anchor_info_is_valid = 0;
-    }
-  }
-
-  conn->anchor_remote_info_is_valid = 1;
-
-  // these can be modified if the master clock changes over time
-
-  conn->anchor_rtptime = rtptime;
-  conn->anchor_time = networktime;
-  conn->anchor_clock = clock_id;
-  debug(2, "set_ptp_anchor_info done.");
+  conn->clock.setAnchor(clock_id, rtptime, networktime, get_absolute_time_in_ns());
+  debug(2, "Connection %d: Set Anchor Clock: %" PRIx64 ", rtptime: %u, networktime: %" PRIu64 ".",
+        conn->connection_number, clock_id, rtptime, networktime);
 }
 
-int long_time_notifcation_done = 0;
+class ClockDiagnostics {
+public:
+  void reset() noexcept {
+    oldSampleNotification_ = false;
+    previousOffset_ = 0;
+    previousClock_ = 0;
+  }
 
-uint64_t previous_offset = 0;
-uint64_t previous_clock_id = 0;
+  void observe(const ClockSample &sample, uint64_t now) {
+    auto mastershipAge = std::bit_cast<int64_t>(now - sample.mastershipStart);
+    if (sample.status != clock_ok || mastershipAge < 400000000)
+      return;
+    auto sampleAge = std::bit_cast<int64_t>(now - sample.sampleTime);
+    if (sampleAge > 300000000000 && !oldSampleNotification_) {
+      debug(1, "The last PTP timing sample is pretty old: %f seconds.", sampleAge * 0.000000001);
+      oldSampleNotification_ = true;
+    } else if (sampleAge < 2000000000 && oldSampleNotification_) {
+      debug(1, "The last PTP timing sample is no longer too old: %f seconds.", sampleAge * 0.000000001);
+      oldSampleNotification_ = false;
+    }
+    auto jitter = std::bit_cast<int64_t>(sample.offset - previousOffset_);
+    if (previousOffset_ != 0 && previousClock_ == sample.id &&
+        (jitter > 3000000 || jitter < -3000000))
+      debug(1, "Clock jitter: %.3f mS. Time since sample: %.3f mS. Time since start of mastership: %.3f seconds.",
+            jitter * 0.000001, sampleAge * 0.000001, mastershipAge * 0.000000001);
+    previousOffset_ = sample.offset;
+    previousClock_ = sample.id;
+  }
+
+private:
+  bool oldSampleNotification_ = false;
+  uint64_t previousOffset_ = 0;
+  uint64_t previousClock_ = 0;
+};
+
+static ClockDiagnostics clockDiagnostics;
 
 void reset_ptp_anchor_info(rtsp_conn_info *conn) {
   debug(2, "Connection %d: Clear anchor information.", conn->connection_number);
-  conn->last_anchor_info_is_valid = 0;
-  conn->anchor_remote_info_is_valid = 0;
-  long_time_notifcation_done = 0;
-  previous_offset = 0;
-  previous_clock_id = 0;
+  conn->clock.reset();
+  clockDiagnostics.reset();
 }
 
 int get_ptp_anchor_local_time_info(rtsp_conn_info *conn, uint32_t *anchorRTP,
-                                   uint64_t *anchorLocalTime) {
-  int response = clock_no_anchor_info; // no anchor information
-  if (conn->anchor_remote_info_is_valid != 0) {
-    response = clock_not_valid;
-    uint64_t actual_clock_id;
-    uint64_t actual_time_of_sample, actual_offset, start_of_mastership;
-    response = ptp_get_clock_info(&actual_clock_id, &actual_time_of_sample, &actual_offset,
-                                  &start_of_mastership);
-    if (response == clock_ok) {
-      uint64_t time_now = get_absolute_time_in_ns();
-      int64_t time_since_start_of_mastership = time_now - start_of_mastership;
-      if (time_since_start_of_mastership >= 400000000L) {
-        int64_t time_since_sample = time_now - actual_time_of_sample;
-        if (time_since_sample > 300000000000L) {
-          if (long_time_notifcation_done == 0) {
-            debug(1, "The last PTP timing sample is pretty old: %f seconds.",
-                  0.000000001 * time_since_sample);
-            long_time_notifcation_done = 1;
-          }
-        } else if ((time_since_sample < 2000000000) && (long_time_notifcation_done != 0)) {
-          debug(1, "The last PTP timing sample is no longer too old: %f seconds.",
-                0.000000001 * time_since_sample);
-          long_time_notifcation_done = 0;
-        }
-
-        int64_t jitter = actual_offset - previous_offset;
-
-        if ((previous_offset != 0) && (previous_clock_id == actual_clock_id) &&
-            ((jitter > 3000000) || (jitter < -3000000)))
-          debug(1,
-                "Clock jitter: %.3f mS. Time since sample: %.3f mS. Time since start of "
-                "mastership: %.3f "
-                "seconds.",
-                jitter * 0.000001, time_since_sample * 0.000001,
-                time_since_start_of_mastership * 0.000000001);
-
-        previous_offset = actual_offset;
-        previous_clock_id = actual_clock_id;
-
-        if (actual_clock_id == conn->anchor_clock) {
-          conn->last_anchor_rtptime = conn->anchor_rtptime;
-          conn->last_anchor_local_time = conn->anchor_time - actual_offset;
-          conn->last_anchor_time_of_update = time_now;
-          if (conn->last_anchor_info_is_valid == 0)
-            conn->last_anchor_validity_start_time = start_of_mastership;
-          conn->last_anchor_info_is_valid = 1;
-        } else {
-          debug(3, "Current master clock %" PRIx64 " and anchor_clock %" PRIx64 " are different",
-                actual_clock_id, conn->anchor_clock);
-          // the anchor clock and the actual clock are different
-
-          if (conn->last_anchor_info_is_valid != 0) {
-
-            int64_t time_since_last_update =
-                get_absolute_time_in_ns() - conn->last_anchor_time_of_update;
-            if (time_since_last_update > 5000000000) {
-              int64_t duration_of_mastership = time_now - start_of_mastership;
-              debug(2,
-                    "Connection %d: Master clock has changed to %" PRIx64
-                    ". History: %.3f milliseconds.",
-                    conn->connection_number, actual_clock_id, 0.000001 * duration_of_mastership);
-
-              // Now, the thing is that while the anchor clock and master clock for a
-              // buffered session start off the same,
-              // the master clock can change without the anchor clock changing.
-              // SPS gives the new master clock time to settle down and then
-              // calculates the appropriate offset to it by
-              // calculating back from the local anchor information and the new clock's
-              // advertised offset.
-
-              conn->anchor_time = conn->last_anchor_local_time + actual_offset;
-              conn->anchor_clock = actual_clock_id;
-            }
-
-          } else {
-            response = clock_not_valid; // no current clock information and no previous clock info
-          }
-        }
-
-      } else {
-        // debug(1, "mastership time: %f s.", time_since_start_of_mastership * 0.000000001);
-        response = clock_not_valid; // hasn't been master for long enough...
-      }
-    }
-
-    // here, check and update the clock status
-    if ((clock_status_t)response != conn->clock_status) {
+                                  uint64_t *anchorLocalTime) {
+  if (!conn->clock.hasAnchor())
+    return clock_no_anchor_info;
+  auto previousStatus = conn->clock.status();
+  ClockSample sample{};
+  sample.status = static_cast<clock_status_t>(
+      ptp_get_clock_info(&sample.id, &sample.sampleTime, &sample.offset, &sample.mastershipStart));
+  auto now = get_absolute_time_in_ns();
+  int response = conn->clock.observe(sample, now);
+  clockDiagnostics.observe(sample, now);
+  auto actual_clock_id = sample.id;
+  if (response != previousStatus) {
       switch (response) {
       case clock_ok:
         debug(2, "Connection %d: NQPTP master clock %" PRIx64 ".", conn->connection_number,
@@ -427,64 +324,41 @@ int get_ptp_anchor_local_time_info(rtsp_conn_info *conn, uint32_t *anchorRTP,
               conn->connection_number, response);
         break;
       }
-      conn->clock_status = static_cast<clock_status_t>(response);
-    }
-
-    if (conn->last_anchor_info_is_valid != 0) {
-      if (anchorRTP != NULL) {
-        // Use the current rate in case the stream format has changed.
-        int32_t added_latency = (int32_t)(config.audio_backend_latency_offset * conn->input_rate);
-        *anchorRTP = conn->last_anchor_rtptime - added_latency;
-      }
-      if (anchorLocalTime != NULL)
-        *anchorLocalTime = conn->last_anchor_local_time;
-    }
   }
+  if (auto frame = conn->clock.anchorFrame(conn->input_rate, config.audio_backend_latency_offset);
+      frame && anchorRTP)
+    *anchorRTP = *frame;
+  if (auto time = conn->clock.localAnchorTime(); time && anchorLocalTime)
+    *anchorLocalTime = *time;
   return response;
 }
 
 int have_ptp_timing_information(rtsp_conn_info *conn) {
-  if (get_ptp_anchor_local_time_info(conn, NULL, NULL) == clock_ok)
-    return 1;
-  else
-    return 0;
+  return get_ptp_anchor_local_time_info(conn, NULL, NULL) == clock_ok;
 }
 
 int frame_to_ptp_local_time(uint32_t timestamp, uint64_t *time, rtsp_conn_info *conn) {
-  int result = -1;
-  uint32_t anchor_rtptime = 0;
-  uint64_t anchor_local_time = 0;
-  if ((conn->input_rate != 0) && (get_ptp_anchor_local_time_info(conn, &anchor_rtptime, &anchor_local_time) == clock_ok)) {
-    int32_t frame_difference = timestamp - anchor_rtptime;
-    int64_t time_difference = frame_difference;
-    time_difference = time_difference * 1000000000;
-    time_difference = time_difference / conn->input_rate;
-    uint64_t ltime = anchor_local_time + time_difference;
-    *time = ltime;
-    result = 0;
-  } else {
-    debug(4, "frame_to_ptp_local_time can't get anchor local time information");
-  }
-  return result;
+  if (conn->input_rate == 0)
+    return -1;
+  get_ptp_anchor_local_time_info(conn, NULL, NULL);
+  auto converted = conn->clock.localTimeForFrame(timestamp, conn->input_rate,
+                                                config.audio_backend_latency_offset);
+  if (!converted)
+    return -1;
+  *time = *converted;
+  return 0;
 }
 
 int local_ptp_time_to_frame(uint64_t time, uint32_t *frame, rtsp_conn_info *conn) {
-  int result = -1;
-  uint32_t anchor_rtptime = 0;
-  uint64_t anchor_local_time = 0;
-  if ((conn->input_rate != 0) && (get_ptp_anchor_local_time_info(conn, &anchor_rtptime, &anchor_local_time) == clock_ok)) {
-    int64_t time_difference = time - anchor_local_time;
-    int64_t frame_difference = time_difference;
-    frame_difference = frame_difference * conn->input_rate; // but this is by 10^9
-    frame_difference = frame_difference / 1000000000;
-    int32_t fd32 = frame_difference;
-    uint32_t lframe = anchor_rtptime + fd32;
-    *frame = lframe;
-    result = 0;
-  } else {
-    debug(2, "local_ptp_time_to_frame can't get anchor local time information");
-  }
-  return result;
+  if (conn->input_rate == 0)
+    return -1;
+  get_ptp_anchor_local_time_info(conn, NULL, NULL);
+  auto converted = conn->clock.frameForLocalTime(time, conn->input_rate,
+                                                config.audio_backend_latency_offset);
+  if (!converted)
+    return -1;
+  *frame = *converted;
+  return 0;
 }
 
 void rtp_ap2_control_handler_cleanup_handler(void *arg) {
@@ -669,10 +543,6 @@ void *rtp_ap2_control_receiver(void *arg) {
               }
               conn->latency = net_latency; // this is the time window within which packets can be accepted without being too late
               set_ptp_anchor_info(conn, clock_id, frame_1 - ap2_realttime_stream_latency_fudge_factor, remote_packet_time_ns);
-              if (conn->anchor_clock != clock_id) {
-                debug(2, "Connection %d: Change Anchor Clock: %" PRIx64 ".",
-                      conn->connection_number, clock_id);
-              }
 
             } break;
             case 0xd6:

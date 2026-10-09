@@ -1,7 +1,3 @@
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #ifndef _COMMON_H
 #define _COMMON_H
 
@@ -15,6 +11,10 @@ extern "C" {
 #include "config.h"
 #include "definitions.h"
 #include "mdns.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 
 // struct sockaddr_in6 is bigger than struct sockaddr. derp
@@ -479,8 +479,8 @@ char *bnprintf(char *buffer, ssize_t max_bytes, const char *format, ...);
 extern char git_version_string[];
 #endif
 
-#endif // _COMMON_H
-
 #ifdef __cplusplus
 }
 #endif
+
+#endif // _COMMON_H

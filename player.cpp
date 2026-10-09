@@ -28,6 +28,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include "session_state.hpp"
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -2346,7 +2347,7 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
                     " and time of packet: %" PRIx64 ".",
                     0.000000001 * time_difference, get_absolute_time_in_ns(), time_to_play);
               debug(2, "packet rtptime: %u, reference_timestamp: %u", curframe->timestamp,
-                    conn->anchor_rtptime);
+                    conn->clock.referenceFrame());
 
               do_wait = 0; // let it go
             }

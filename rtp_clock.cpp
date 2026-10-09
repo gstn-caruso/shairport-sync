@@ -38,6 +38,12 @@ void RtpClock::reset() noexcept {
   status_ = clock_no_anchor_info;
 }
 
+bool RtpClock::hasAnchor() const noexcept { return remote_.has_value(); }
+uint32_t RtpClock::referenceFrame() const noexcept { return remote_ ? remote_->frame : 0; }
+std::optional<uint64_t> RtpClock::localAnchorTime() const noexcept {
+  return local_ ? std::optional(local_->time) : std::nullopt;
+}
+
 std::optional<uint32_t> RtpClock::anchorFrame(uint32_t rate, double latency) const noexcept {
   if (!local_)
     return std::nullopt;
