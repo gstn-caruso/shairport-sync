@@ -2,6 +2,7 @@
 #include "audio_arrival.hpp"
 #include "playback_sync.hpp"
 #include <algorithm>
+#include <bit>
 #include <limits>
 #include <optional>
 #include <cstdint>
@@ -68,7 +69,8 @@ public:
     if (reading.status == 0 && outputBaseline_) {
       const int64_t rawDuration = std::bit_cast<int64_t>(reading.rawTime - outputStart_.rawTime);
       const int64_t correctedDuration = std::bit_cast<int64_t>(reading.correctedTime - outputStart_.correctedTime);
-      if (rawDuration != 0) {
+      totals_.outputRateAvailable = rawDuration > 0 && correctedDuration > 0;
+      if (totals_.outputRateAvailable) {
         const auto frames = played - (outputStart_.sentFrames - outputStart_.queuedFrames);
         totals_.rawOutputFramesPerSecond = 1e9 * frames / rawDuration;
         totals_.correctedOutputFramesPerSecond = 1e9 * frames / correctedDuration;

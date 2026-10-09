@@ -41,6 +41,8 @@ int main() {
   statistics.recordOutputReading({0, 2000000000, 3000000000, 10, 44100 + 100});
   auto output = statistics.snapshot();
   assert(output.outputRateAvailable && output.rawOutputFramesPerSecond == 44100);
+  statistics.recordOutputReading({0, 2000000000, 2000000000, 10, 44200});
+  assert(!statistics.snapshot().outputRateAvailable);
   statistics.recordOutputReading({1, 3000000000, 4000000000, 10, 90000});
   assert(!statistics.snapshot().outputRateAvailable);
   statistics.observeBufferedBytes(20000);
