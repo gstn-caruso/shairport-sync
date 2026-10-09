@@ -1,6 +1,6 @@
 #pragma once
 #include "utilities/ffmpeg_api.h"
-#include "native_pcm_shape.hpp"
+#include "audio/pcm/native_pcm_shape.hpp"
 #include <memory>
 #include <optional>
 #include <span>

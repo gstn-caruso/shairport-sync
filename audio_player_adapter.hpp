@@ -1,7 +1,7 @@
 #pragma once
 #include "audio_decoder.hpp"
 #include "resampler.hpp"
-#include "pcm_encoder.hpp"
+#include "audio/pcm/pcm_encoder.hpp"
 #include <functional>
 
 struct SessionState;

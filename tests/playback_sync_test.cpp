@@ -1,4 +1,4 @@
-#include "playback_sync.hpp"
+#include "playback/timing/playback_sync.hpp"
 #include <gtest/gtest.h>
 
 static void checkInitialFrameError(PlaybackSync &sync, SyncObservation &observation) {

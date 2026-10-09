@@ -1,6 +1,6 @@
 #pragma once
 
-#include "audio_types.h"
+#include "audio/format/audio_types.h"
 #include <optional>
 #include <string_view>
 

@@ -1,4 +1,4 @@
-#include "audio_input_state.hpp"
+#include "audio/format/audio_input_state.hpp"
 #include <gtest/gtest.h>
 
 TEST(AudioInputState, PacketShapeDoesNotClaimDecoderValidity) {

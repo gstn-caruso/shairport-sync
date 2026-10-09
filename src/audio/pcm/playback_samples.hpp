@@ -1,6 +1,6 @@
 #pragma once
-#include "converted_audio.hpp"
-#include "pcm_encoder.hpp"
+#include "audio/pcm/converted_audio.hpp"
+#include "audio/pcm/pcm_encoder.hpp"
 #include <functional>
 #include <vector>
 

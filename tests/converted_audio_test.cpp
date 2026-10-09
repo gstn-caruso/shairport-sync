@@ -1,4 +1,4 @@
-#include "converted_audio.hpp"
+#include "audio/pcm/converted_audio.hpp"
 #include <gtest/gtest.h>
 
 TEST(ConvertedAudio, MoveConstructionTransfersPcmAndEmptiesSource) {

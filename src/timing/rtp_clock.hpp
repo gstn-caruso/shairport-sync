@@ -1,6 +1,6 @@
 #pragma once
 
-#include "clock_status.h"
+#include "timing/clock_status.h"
 #include <cstdint>
 #include <optional>
 

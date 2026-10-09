@@ -2,17 +2,17 @@
 
 #include "common.h"
 #include "player.h"
-#include "rtp_clock.hpp"
+#include "timing/rtp_clock.hpp"
 #include "audio_decoder.hpp"
-#include "audio_input_state.hpp"
+#include "audio/format/audio_input_state.hpp"
 #include "resampler.hpp"
 #include "audio_packet_buffer.hpp"
-#include "pcm_encoder.hpp"
-#include "playback_samples.hpp"
-#include "playback_sync.hpp"
+#include "audio/pcm/pcm_encoder.hpp"
+#include "audio/pcm/playback_samples.hpp"
+#include "playback/timing/playback_sync.hpp"
 #include "playback_statistics.hpp"
 #include "volume_control.hpp"
-#include "playback_timing.hpp"
+#include "playback/timing/playback_timing.hpp"
 #include "playback_run.hpp"
 #include <cstdlib>
 #include <atomic>

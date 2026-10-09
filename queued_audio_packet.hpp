@@ -1,6 +1,6 @@
 #pragma once
 #include "audio_decoder.hpp"
-#include "converted_audio.hpp"
+#include "audio/pcm/converted_audio.hpp"
 #include "leading_audio_trim.hpp"
 #include "resampler.hpp"
 #include <bit>
