@@ -903,6 +903,13 @@ static PlaybackMode playbackModeFor(playback_mode_type mode) {
   return PlaybackMode::stereo;
 }
 
+static void beginPcmFrame(rtsp_conn_info *conn) {
+  pthread_mutex_lock(&conn->volume_control_mutex);
+  const int gain = conn->fix_volume;
+  pthread_mutex_unlock(&conn->volume_control_mutex);
+  conn->pcmEncoder.beginFrame(gain, config.playback_mode == ST_mono);
+}
+
 void *player_thread_func(void *arg) {
   rtsp_conn_info *conn = (rtsp_conn_info *)arg;
   // if (config.output->prepare)
@@ -1075,12 +1082,13 @@ void *player_thread_func(void *arg) {
 
     pthread_testcancel(); // allow a pthread_cancel request to take effect.
 
-    conn->pcmEncoder.beginFrame(conn->fix_volume, config.playback_mode == ST_mono);
+    beginPcmFrame(conn);
 
     auto inframe = buffer_get_frame(
         conn, request_resync); // this has a guaranteed [and needed!] cancellation point
     request_resync = 0;
     if (inframe) {
+      beginPcmFrame(conn);
       const auto playback = inframe->metadata();
       if (!inframe->audioBytes().empty()) {
         /*
