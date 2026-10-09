@@ -1,11 +1,19 @@
 #include "activity_state.hpp"
 #include <cassert>
 
-int main() {
-  assert(activity_status() == am_inactive);
+static void checkImmediateActivity() {
   ActivityState activity;
   assert(activity.status() == am_inactive);
   assert(activity.signifyActivity(false, 0.0) == ActivityState::Effect::none);
+  assert(activity.signifyActivity(true, 0.0) == ActivityState::Effect::activate);
+  assert(activity.status() == am_active);
+  assert(activity.signifyActivity(true, 0.0) == ActivityState::Effect::none);
+  assert(activity.signifyActivity(false, 0.0) == ActivityState::Effect::deactivate);
+  assert(activity.status() == am_inactive);
+  assert(activity.signifyActivity(false, 0.0) == ActivityState::Effect::none);
+}
+
+static void checkDelayedActivityAndReactivation() {
   ActivityState delayed;
   assert(delayed.advance() == ActivityState::Wait::signal);
   delayed.signifyActivity(true, 2.0);
@@ -18,12 +26,9 @@ int main() {
   assert(delayed.signifyActivity(true, 2.0) == ActivityState::Effect::none);
   assert(delayed.advance() == ActivityState::Wait::signal);
   assert(delayed.status() == am_active);
-  assert(activity.signifyActivity(true, 0.0) == ActivityState::Effect::activate);
-  assert(activity.status() == am_active);
-  assert(activity.signifyActivity(true, 0.0) == ActivityState::Effect::none);
-  assert(activity.signifyActivity(false, 0.0) == ActivityState::Effect::deactivate);
-  assert(activity.status() == am_inactive);
-  assert(activity.signifyActivity(false, 0.0) == ActivityState::Effect::none);
+}
+
+static void checkExpiration() {
   ActivityState expired;
   expired.signifyActivity(true, 2.0);
   assert(expired.timeoutExpired() == ActivityState::Effect::none);
@@ -38,6 +43,9 @@ int main() {
   expired.signifyActivity(true, 2.0);
   assert(expired.timeoutExpired() == ActivityState::Effect::none);
   assert(expired.status() == am_active);
+}
+
+static void checkStop() {
   ActivityState stopped;
   assert(stopped.stop() == ActivityState::Effect::none);
   stopped.signifyActivity(true, 2.0);
@@ -51,4 +59,12 @@ int main() {
   assert(stopped.stop() == ActivityState::Effect::deactivate);
   assert(stopped.status() == am_inactive);
   assert(stopped.advance() == ActivityState::Wait::signal);
+}
+
+int main() {
+  assert(activity_status() == am_inactive);
+  checkImmediateActivity();
+  checkDelayedActivityAndReactivation();
+  checkExpiration();
+  checkStop();
 }
