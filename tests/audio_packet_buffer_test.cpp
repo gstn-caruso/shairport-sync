@@ -105,4 +105,14 @@ int main() {
   const auto boundary = buffer.applyFlush();
   assert(boundary.complete && boundary.resetTiming && buffer.occupancy() == 0);
   assert(!buffer.applyFlush().flushOutput);
+  Resampler delayed;
+  const auto format = *AudioFormat::fromSsrc(ALAC_44100_S16_2);
+  assert(delayed.configure(format, AV_SAMPLE_FMT_S16P, {48000, 2}));
+  auto prior = delayed.convert(*decodedFrame());
+  assert(prior && delayed.retainedFrames() > 0);
+  const auto retained = delayed.retainedFrames();
+  auto failed = QueuedAudioPacket::decoded(format, 60, 11000, 0, {});
+  assert(failed.convertWith(delayed));
+  assert(failed.audioBytes().empty() && failed.metadata().frames == 0);
+  assert(delayed.retainedFrames() == retained);
 }

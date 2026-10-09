@@ -52,6 +52,8 @@ public:
     return std::bit_cast<int32_t>(metadata_.timestamp - timestamp) < 0;
   }
   std::expected<void, ResamplerFailure> convertWith(Resampler &resampler) {
+    if (!frame_ && metadata_.frames == 0)
+      return {};
     if (frame_ && !trim_.applyTo(*frame_))
       return std::unexpected(ResamplerFailure{ResamplerFailure::Kind::allocationFailed});
     auto converted = frame_ ? resampler.convert(*frame_) : resampler.silence(metadata_.frames);
