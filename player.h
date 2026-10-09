@@ -6,6 +6,7 @@
 
 #include "config.h"
 #include "definitions.h"
+#include "clock_status.h"
 
 
 
@@ -99,19 +100,6 @@ typedef struct __attribute__((__packed__)) alac_ffmpeg_magic_cookie {
 
 
 // these are for reporting the status of the clock
-typedef enum {
-  clock_no_anchor_info,
-  clock_ok,
-  clock_service_unavailable,
-  clock_access_error,
-  clock_data_unavailable,
-  clock_no_master,
-  clock_version_mismatch,
-  clock_not_synchronised,
-  clock_not_valid,
-  clock_not_ready,
-} clock_status_t;
-
 typedef uint16_t seq_t;
 
 // these are the values coming in on a buffered audio RTP packet's SSRC field
