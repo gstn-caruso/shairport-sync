@@ -77,7 +77,7 @@
 
 #include "ap2_buffered_audio_processor.h"
 #include "ap2_event_receiver.h"
-#include "pair_ap/pair.h"
+#include "utilities/pairing_api.h"
 #include <plists/get_info_response.h>
 #include "ptp-utilities.h"
 #include <plist/plist.h>

@@ -3,6 +3,10 @@
 
 #include "player.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
   int index_number;
   uint32_t referenceCount; // we might start using this...
@@ -40,5 +44,9 @@ ssize_t write_encrypted(int fd, pair_cipher_bundle *ctx, const void *buf, size_t
 void generateTxtDataValueInfo(rtsp_conn_info *conn, void **response, size_t *responseLength);
 plist_t generateInfoPlist(rtsp_conn_info *conn);
 char *plist_as_xml_text(plist_t the_plist); // caller must free the returned NUL-terminated string
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // _RTSP_H

@@ -5,6 +5,10 @@
 #include "nqptp-shm-structures.h"
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int ptp_get_clock_info(uint64_t *actual_clock_id, uint64_t *time_of_sample, uint64_t *raw_offset,
                        uint64_t *mastership_start_time);
 
@@ -14,5 +18,9 @@ void ptp_shm_interface_init();
 int ptp_shm_interface_open();
 int ptp_get_clock_version();
 int ptp_shm_interface_close();
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* __PTP_UTILITIES_H */

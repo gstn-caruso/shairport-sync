@@ -5,6 +5,10 @@
 #include "player.h"
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 extern int mdns_pid;
 
 void mdns_unregister(void);
@@ -14,7 +18,7 @@ void mdns_update(char **txt_records, char **secondary_txt_records);
 void mdns_ls_backends(void);
 
 typedef struct {
-  char *name;
+  const char *name;
   int (*mdns_register)(char *ap1name, char *ap2name, int port, char **txt_records,
                        char **secondary_txt_records);
   int (*mdns_update)(char **txt_records, char **secondary_txt_records);
@@ -33,5 +37,9 @@ typedef struct {
   "sf=0x4", "fv=76400.10", "am=ShairportSync", "vs=105.1", "tp=TCP,UDP", "vn=65537", "ss=16",      \
       "sr=44100", "da=true", "sv=false", "et=0,1", "ek=1", "cn=0,1", "ch=2", "txtvers=1",          \
       config.password ? "pw=true" : "pw=false"
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // _MDNS_H

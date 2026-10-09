@@ -3,6 +3,10 @@
 #include "player.h"
 #include "rtsp.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 rtsp_message *msg_init(void);
 int msg_handle_line(rtsp_message **pmsg, char *line);
 int msg_add_header(rtsp_message *msg, char *name, char *value);
@@ -27,3 +31,7 @@ void _debug_print_msg_headers(rtsp_conn_info *conn, const char *filename, const 
 
 int rtsp_message_contains_plist(rtsp_message *message);
 plist_t plist_from_rtsp_content(rtsp_message *message);
+
+#ifdef __cplusplus
+}
+#endif

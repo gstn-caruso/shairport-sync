@@ -411,10 +411,10 @@ int mkpath(const char *path, mode_t mode);
 
 
 
-int do_pthread_setname(pthread_t *restrict thread, const char *format, ...);
+int do_pthread_setname(pthread_t *__restrict thread, const char *format, ...);
 
-int named_pthread_create(pthread_t *restrict thread, const pthread_attr_t *restrict attr,
-                         void *(*start_routine)(void *), void *restrict arg, const char *format,
+int named_pthread_create(pthread_t *__restrict thread, const pthread_attr_t *__restrict attr,
+                         void *(*start_routine)(void *), void *__restrict arg, const char *format,
                          ...);
 int named_pthread_create_with_priority(pthread_t *thread, int priority,
                                        void *(*start_routine)(void *), void *arg,

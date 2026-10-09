@@ -1704,7 +1704,7 @@ char *bnprintf(char *buffer, ssize_t max_bytes, const char *format, ...) {
   return buffer;
 }
 
-int do_pthread_setname(pthread_t *restrict thread, const char *format, ...) {
+int do_pthread_setname(pthread_t *__restrict thread, const char *format, ...) {
   // pthread_setname_np/2 not defined in macOS
   char actual_name[16];
   va_list args;

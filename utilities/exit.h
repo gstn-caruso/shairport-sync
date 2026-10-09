@@ -25,6 +25,14 @@ SOFTWARE.
 #pragma once
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void exit_init();
 void exit_request(const int exit_status); // call this to ask for the program to be exited.
 // pass in EXIT_SUCCESS or EXIT_FAILURE.
+
+#ifdef __cplusplus
+}
+#endif

@@ -10,8 +10,12 @@
 
 
 #define MAX_DEFERRED_FLUSH_REQUESTS 10
-#include "pair_ap/pair.h"
+#include "utilities/pairing_api.h"
 #include <plist/plist.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -537,5 +541,9 @@ int ssrc_is_recognised(ssrc_t ssrc);
 int ssrc_is_aac(ssrc_t ssrc); // used to decide if a mute might be needed (AAC only)
 void prepare_decoding_chain(rtsp_conn_info *conn, ssrc_t ssrc); // also sets up timing stuff
 void clear_decoding_chain(rtsp_conn_info *conn);                // tear down the decoding chain
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif //_PLAYER_H
