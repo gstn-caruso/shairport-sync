@@ -68,4 +68,28 @@ int main() {
   assert(muted.metadata().frames == 352);
   for (auto byte : muted.audioBytes())
     assert(byte == 0);
+  buffer.reset();
+  buffer.accept(30, 1000, [] { return packet(30, 8000); });
+  buffer.accept(31, 1001, [] { return packet(31, 8016); });
+  auto beforeFlush = buffer.front();
+  auto flushId = buffer.requestFlush(8005);
+  auto partial = buffer.applyFlush();
+  assert(partial.id == flushId && partial.flushOutput && partial.complete);
+  assert(!buffer.takeFrontIf(beforeFlush->revision));
+  assert(buffer.front()->packet.timestamp == 8005 && buffer.front()->packet.frames == 11);
+  assert(!buffer.applyFlush().flushOutput);
+  auto futureId = buffer.requestFlush(9000);
+  auto future = buffer.applyFlush();
+  assert(future.id == futureId && future.flushOutput && !future.complete && future.resetTiming);
+  assert(buffer.occupancy() == 0);
+  buffer.accept(40, 1100, [] { return packet(40, 9005); });
+  auto expired = buffer.applyFlush();
+  assert(expired.id == futureId && !expired.flushOutput && expired.complete);
+  assert(buffer.occupancy() == 1);
+  auto unchanged = buffer.front();
+  assert(buffer.dropOutdatedBefore(9010) == 0);
+  assert(buffer.front()->packet.timestamp == unchanged->packet.timestamp);
+  buffer.requestFlush(0);
+  auto total = buffer.applyFlush();
+  assert(total.flushOutput && total.complete && total.resetTiming && buffer.occupancy() == 0);
 }

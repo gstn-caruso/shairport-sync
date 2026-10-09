@@ -5,7 +5,7 @@
 #include <vector>
 
 struct RetryPolicy {
-  uint64_t firstCheckAfter, repeatAfter, minimumRemaining, playbackLatency;
+  uint64_t firstCheckAfter = UINT64_MAX, repeatAfter = 0, minimumRemaining = 0, playbackLatency = 0;
 };
 struct PacketWindow {
   uint16_t first, end;

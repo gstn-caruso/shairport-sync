@@ -23,8 +23,10 @@ ArrivalKind AudioPacketBuffer::prepareAdmission(uint16_t sequence, uint64_t now)
     synced_ = true;
     return ArrivalKind::overflow;
   }
-  for (uint16_t missing = write_; missing != sequence; ++missing)
-    entries_[missing % capacity] = Entry{missing, now, std::nullopt};
+  for (uint16_t missing = write_; missing != sequence; ++missing) {
+    entries_[missing % capacity] = Entry{missing, std::nullopt};
+    planner_.noteMissing(missing, now);
+  }
   return ahead == 0 ? ArrivalKind::inOrder : ArrivalKind::ahead;
 }
 
@@ -44,6 +46,7 @@ std::optional<BufferedAudioPacket> AudioPacketBuffer::takeFrontIf(uint64_t revis
   BufferedAudioPacket packet = entry->packet ? BufferedAudioPacket(std::move(*entry->packet)) :
                                               BufferedAudioPacket(MissingAudioPacket{read_});
   entry.reset();
+  planner_.resolve(read_);
   ++read_;
   advanceRevision();
   return packet;
@@ -51,6 +54,7 @@ std::optional<BufferedAudioPacket> AudioPacketBuffer::takeFrontIf(uint64_t revis
 void AudioPacketBuffer::reset() {
   Lock lock(mutex_);
   resetUnderLock();
+  flush_.reset();
   advanceRevision();
 }
 void AudioPacketBuffer::resetUnderLock() {
@@ -58,6 +62,7 @@ void AudioPacketBuffer::resetUnderLock() {
     entry.reset();
   synced_ = false;
   read_ = write_ = 0;
+  planner_.reset();
 }
 size_t AudioPacketBuffer::occupancy() const {
   Lock lock(mutex_);
@@ -84,4 +89,70 @@ int AudioPacketBuffer::waitForChange(uint64_t revision, timespec deadline) {
     result = 0;
   pthread_cleanup_pop(1);
   return result;
+}
+uint64_t AudioPacketBuffer::requestFlush(uint32_t timestamp) {
+  Lock lock(mutex_);
+  flush_ = FlushRequest{++nextFlushId_, timestamp};
+  advanceRevision();
+  return flush_->id;
+}
+void AudioPacketBuffer::discardFrontUnderLock() {
+  entries_[read_ % capacity].reset();
+  planner_.resolve(read_);
+  ++read_;
+}
+AudioPacketBuffer::FlushEffect AudioPacketBuffer::applyFlush() {
+  Lock lock(mutex_);
+  if (!flush_)
+    return {};
+  FlushEffect effect{flush_->id, !flush_->delivered};
+  flush_->delivered = true;
+  if (flush_->timestamp == 0) {
+    effect.discarded = static_cast<uint16_t>(write_ - read_);
+    resetUnderLock();
+    flush_.reset();
+    effect.complete = effect.resetTiming = true;
+    advanceRevision();
+    return effect;
+  }
+  while (synced_ && read_ != write_) {
+    auto &entry = entries_[read_ % capacity];
+    if (!entry->packet) {
+      if (effect.discarded)
+        advanceRevision();
+      return effect;
+    }
+    if (entry->packet->trimBefore(flush_->timestamp)) {
+      effect.complete = true;
+      flush_.reset();
+      advanceRevision();
+      return effect;
+    }
+    discardFrontUnderLock();
+    ++effect.discarded;
+  }
+  if (effect.discarded) {
+    resetUnderLock();
+    effect.resetTiming = true;
+    advanceRevision();
+  }
+  return effect;
+}
+size_t AudioPacketBuffer::dropOutdatedBefore(uint32_t timestamp) {
+  Lock lock(mutex_);
+  size_t discarded = 0;
+  while (synced_ && read_ != write_) {
+    auto &entry = entries_[read_ % capacity];
+    if (!entry->packet || !entry->packet->endsBy(timestamp))
+      break;
+    discardFrontUnderLock();
+    ++discarded;
+  }
+  if (discarded)
+    advanceRevision();
+  return discarded;
+}
+std::vector<ResendRange> AudioPacketBuffer::due(uint64_t now, RetryPolicy policy) {
+  Lock lock(mutex_);
+  return planner_.due(now, policy, {read_, write_});
 }
