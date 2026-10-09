@@ -191,6 +191,15 @@ timeout 5. Mutex destruction follows nonfatal checks. ABI includes, cancellation
 and shell checks are preserved; production is unchanged and sanitizers/devices
 were not rerun.
 
+Audio-decoder discovery (`ctest --test-dir build/redesign-release -R '^AudioDecoder\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Ten independent cases retain all six format transitions/reuse checks, used-state
+reset, real ALAC roundtrip/frame lifetime, errors/destruction and Player ABI checks.
+Group (0.18s), exact roundtrip case, two shuffled in-process repetitions and Release
+180/180 (14.98s) passed; each entry has timeout 5. Native padding/ownership assertions
+and all four FFmpeg wrap flags remain. C ABI, cancellation and shell checks remain
+green; production is unchanged and sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
