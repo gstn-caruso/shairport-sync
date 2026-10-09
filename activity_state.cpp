@@ -27,3 +27,14 @@ ActivityState::Wait ActivityState::advance() noexcept {
   }
   return Wait::signal;
 }
+
+ActivityState::Effect ActivityState::timeoutExpired() noexcept {
+  if (state_ != am_timing_out)
+    return Effect::none;
+  if (playerActive_) {
+    state_ = am_active;
+    return Effect::none;
+  }
+  state_ = am_inactive;
+  return Effect::deactivate;
+}

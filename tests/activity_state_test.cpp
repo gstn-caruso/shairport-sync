@@ -23,4 +23,18 @@ int main() {
   assert(activity.signifyActivity(false, 0.0) == ActivityState::Effect::deactivate);
   assert(activity.status() == am_inactive);
   assert(activity.signifyActivity(false, 0.0) == ActivityState::Effect::none);
+  ActivityState expired;
+  expired.signifyActivity(true, 2.0);
+  assert(expired.timeoutExpired() == ActivityState::Effect::none);
+  expired.signifyActivity(false, 2.0);
+  assert(expired.advance() == ActivityState::Wait::beginTimeout);
+  assert(expired.timeoutExpired() == ActivityState::Effect::deactivate);
+  assert(expired.status() == am_inactive);
+  assert(expired.timeoutExpired() == ActivityState::Effect::none);
+  expired.signifyActivity(true, 2.0);
+  expired.signifyActivity(false, 2.0);
+  expired.advance();
+  expired.signifyActivity(true, 2.0);
+  assert(expired.timeoutExpired() == ActivityState::Effect::none);
+  assert(expired.status() == am_active);
 }

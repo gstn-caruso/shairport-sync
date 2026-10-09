@@ -10,6 +10,7 @@ public:
   am_state status() const noexcept;
   Effect signifyActivity(bool active, double idleTimeout) noexcept;
   Wait advance() noexcept;
+  Effect timeoutExpired() noexcept;
 
 private:
   am_state state_ = am_inactive;
