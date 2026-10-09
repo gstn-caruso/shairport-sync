@@ -55,7 +55,6 @@ struct SessionState {
   pthread_mutex_t flush_mutex;
   VolumeControl volumeControl;
 
-  int flush_output_flushed; // true if the output device has been flushed.
 
 
 

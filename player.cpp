@@ -615,7 +615,6 @@ void *player_thread_func(void *arg) {
   conn->pcmEncoder.reset();
   conn->playbackSync.resetForPlay();
   conn->playbackTiming.resetForPlay();
-  conn->flush_output_flushed = 0; // only send a flush command to the output device once
   conn->volumeControl.resetGainForPlay();
   conn->frames_per_packet = 352; // for ALAC -- will be changed if necessary
 
