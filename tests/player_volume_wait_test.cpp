@@ -16,6 +16,7 @@ static bool waitingAfterPacket = false;
 static bool waitingWithArrival = false, referenceAvailable = true;
 static bool frameTimeAvailable = true;
 static int prerollFrames = 0;
+static int requiredPrerollFrames = 0;
 static SessionState *activeSession = nullptr;
 static uint64_t expectedFrameTime = 999000000;
 static int16_t outputSample = 0;
@@ -28,7 +29,8 @@ extern "C" int __wrap_pthread_cond_timedwait(pthread_cond_t *condition, pthread_
     waiting = true;
     if (activeSession && activeSession->statistics.hasPlaybackSinceFlush())
       waitingAfterPacket = true;
-    if (activeSession && activeSession->statistics.hasArrivals())
+    if (activeSession && activeSession->statistics.hasArrivals() &&
+        prerollFrames >= requiredPrerollFrames)
       waitingWithArrival = true;
   }
   changed.notify_one();
@@ -120,6 +122,7 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
   referenceAvailable = anchor;
   frameTimeAvailable = conversion;
   prerollFrames = 0;
+  requiredPrerollFrames = expectedPreroll;
   expectedFrameTime = frameTime;
   outputFrames = 0;
   outputSample = 0;

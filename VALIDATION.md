@@ -45,6 +45,24 @@ and `--help` both exited successfully with the existing NQPTP fixture set to
 Release/Debug/ASan+UBSan/TSan and installation gate before merge. Device playback
 and live network pairing/teardown checks were not performed.
 
+Release CI run `37943651785` subsequently failed the native
+`NoDelayPrerollSubmitsSilenceThenWaits` assertion for 6615 preroll frames
+(actual red log: ignored `build/redesign-ci-release-failure.log`). The fixture's
+arrival flag did not require completed preroll: queue publication/wakeup and
+arrival bookkeeping do not themselves prove the silence callbacks finished.
+The wrapped native wait now publishes completion only after the case's
+required preroll count has been observed under the same observation mutex.
+The exact frame assertion, all ten case inputs, cancellation and wrapper flags
+remain unchanged; no production code changed. The original interleaving was
+not reproduced locally (1000 baseline repetitions passed), so this corrects
+the observation invariant without claiming a proven production-race cause.
+Afterward the failing case passed 1000 repetitions, all ten cases passed 200
+shuffled iterations (2000 executions), the named group passed, and all 237
+Release CTest entries passed (14.86s). Logs are in ignored
+`build/redesign-release/player-wait-completion-*.log`. The existing five-second
+CTest timeout still rejects incomplete progress. Sanitizers, installation and
+devices were not rerun in this fixture-only cycle; fresh CI remains required.
+
 The cycle notes below record evidence and verification limits at each stage;
 statements about pending integration or sanitizer runs describe that stage.
 
