@@ -57,6 +57,8 @@ static void checkNativeFormats() {
       assert(resampler.configure(format, sampleFormat, output));
       auto converted = resampler.convert(*frame);
       assert(converted && converted->frames() > 0);
+      assert(converted->shape() == NativePcmShape(output.channels, resampler.sampleBits(),
+                                                 resampler.effectiveSampleBits()));
       assert(converted->bytes().size() == converted->frames() * output.channels *
                                          resampler.sampleBits() / 8);
       assert(resampler.effectiveSampleBits() == (format.isAac() ? 32 : format.sampleBits()));

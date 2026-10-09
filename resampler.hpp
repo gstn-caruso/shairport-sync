@@ -34,6 +34,7 @@ public:
   unsigned sampleBits() const;
   unsigned effectiveSampleBits() const;
   int64_t retainedFrames() const;
+  NativePcmShape outputShape() const;
 
 private:
   struct Configuration {
@@ -50,6 +51,7 @@ private:
   static AVSampleFormat intermediateFormat(AudioFormat);
   static std::expected<Context, ResamplerFailure> buildContext(const Configuration &);
   std::expected<ConvertedAudio, ResamplerFailure> convertSamples(const uint8_t **, int frames);
+  NativePcmShape producedShape() const;
   mutable std::mutex mutex_;
   Context context_;
   std::optional<Configuration> configuration_;

@@ -166,7 +166,7 @@ std::expected<ConvertedAudio, ResamplerFailure> Resampler::convertSamples(const 
     return std::unexpected(ResamplerFailure{ResamplerFailure::Kind::conversionFailed, generated});
   retained_ = swr_get_delay(context_.get(), configuration_->output.rate);
   auto converted = ConvertedAudio::allocate(size_t(generated) * configuration_->output.channels *
-                                              bytesPerSample, generated, retained_);
+                                              bytesPerSample, generated, retained_, producedShape());
   if (!converted)
     return std::unexpected(ResamplerFailure{ResamplerFailure::Kind::allocationFailed});
   const size_t sourceSamples = size_t(generated) * convertedChannels_;
@@ -231,4 +231,15 @@ unsigned Resampler::effectiveSampleBits() const {
 int64_t Resampler::retainedFrames() const {
   std::lock_guard lock(mutex_);
   return retained_;
+}
+NativePcmShape Resampler::producedShape() const {
+  if (!configuration_)
+    return {};
+  return {configuration_->output.channels,
+          static_cast<unsigned>(av_get_bytes_per_sample(intermediateFormat(configuration_->input))) * 8,
+          configuration_->input.isAac() ? 32 : configuration_->input.sampleBits()};
+}
+NativePcmShape Resampler::outputShape() const {
+  std::lock_guard lock(mutex_);
+  return producedShape();
 }
