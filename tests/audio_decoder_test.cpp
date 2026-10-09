@@ -1,4 +1,5 @@
 #include "session_state.hpp"
+#include "audio_decoder.hpp"
 #include "common.h"
 #include "rtsp.h"
 #include "rtsp_message.hpp"
@@ -30,17 +31,20 @@ extern "C" int __wrap_avcodec_send_packet(AVCodecContext *context, const AVPacke
 }
 
 static void check_audio_formats(void) {
-  rtsp_conn_info conn{};
+  AudioDecoder decoder;
   const ssrc_t formats[] = {ALAC_44100_S16_2, ALAC_48000_S24_2, AAC_44100_F24_2,
                             AAC_48000_F24_2, AAC_48000_F24_5P1, AAC_48000_F24_7P1};
   for (size_t index = 0; index < sizeof(formats) / sizeof(formats[0]); index++) {
-    prepare_decoding_chain(&conn, formats[index]);
-    assert(conn.codec_context != NULL);
-    assert(conn.ffmpeg_decoding_chain_initialised);
-    assert(conn.input_rate == (formats[index] == ALAC_44100_S16_2 ||
+    auto format = *AudioFormat::fromSsrc(formats[index]);
+    assert(decoder.prepare(format) == Preparation::changed);
+    assert(decoder.currentFormat() == format);
+    assert(decoder.prepare(format) == Preparation::unchanged);
+    assert(decoder.currentFormat()->sampleRate() == (formats[index] == ALAC_44100_S16_2 ||
                                 formats[index] == AAC_44100_F24_2 ? 44100U : 48000U));
   }
-  clear_decoding_chain(&conn);
+  decoder.reset();
+  decoder.reset();
+  assert(!decoder.currentFormat());
 
   AVCodecContext *encoder = avcodec_alloc_context3(avcodec_find_encoder(AV_CODEC_ID_ALAC));
   assert(encoder != NULL);
@@ -59,18 +63,18 @@ static void check_audio_formats(void) {
   assert(avcodec_send_frame(encoder, silence) == 0);
   AVPacket *packet = av_packet_alloc();
   assert(avcodec_receive_packet(encoder, packet) == 0);
-  prepare_decoding_chain(&conn, ALAC_44100_S16_2);
-  AVFrame *decoded = block_to_avframe(&conn, packet->data, packet->size);
-  assert(decoded != NULL);
-  assert(decoded->nb_samples == 352);
-  assert(decoded->sample_rate == 44100);
-  assert(decoded->ch_layout.nb_channels == 2);
-  assert(decoded->format == AV_SAMPLE_FMT_S16P);
-  av_frame_free(&decoded);
+  assert(decoder.prepare(*AudioFormat::fromSsrc(ALAC_44100_S16_2)) == Preparation::changed);
+  auto decoded = decoder.decode({packet->data, static_cast<size_t>(packet->size)});
+  assert(decoded);
+  assert((*decoded)->nb_samples == 352);
+  assert((*decoded)->sample_rate == 44100);
+  assert((*decoded)->ch_layout.nb_channels == 2);
+  assert((*decoded)->format == AV_SAMPLE_FMT_S16P);
+  assert(decoder.decodedSampleFormat() == AV_SAMPLE_FMT_S16P);
   av_packet_free(&packet);
   av_frame_free(&silence);
   avcodec_free_context(&encoder);
-  clear_decoding_chain(&conn);
+  decoder.reset();
 }
 
 int main() { check_audio_formats(); }
