@@ -32,6 +32,9 @@ EXTRA_DIST = scripts/shairport-sync.conf scripts/shairport-sync.user.service \
   tests/nqptp_test.sh tests/nqptp_fixture.c tests/removed_options_test.sh \
   verify-gitversion user-service-install.sh README.md BUILD.md AIRPLAY2.md \
   ADDINGTOHOME.md TROUBLESHOOTING.md CONFIGURATION.md VALIDATION.md
+EXTRA_DIST += CMakeLists.txt .tool-versions cmake/clang-toolchain.cmake \
+  cmake/config.h.in cmake/cpp26_probe.cpp cmake/git-version.cmake \
+  tests/cmake_configure_test.sh tests/receiver_linkage_test.cpp
 TESTS = tests/configure_test.sh tests/nqptp_test.sh tests/removed_options_test.sh
 if INSTALL_CONFIG_FILES
 install-exec-hook:

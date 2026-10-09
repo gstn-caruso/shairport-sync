@@ -67,3 +67,76 @@ libraries first failed with undefined reference to
 `build/cpp-receiver-linkage-test --version` exited zero with the AirPlay2/smi10/
 OpenSSL/Avahi/PulseAudio feature string. GCC 15 established the ABI contract;
 the pinned Clang CMake build validates it separately. This check starts no service.
+
+## CMake migration feedback
+
+Expectation: the pinned Clang 23.1.3 / libstdc++ 15 build provides the same four
+receiver contracts and staged binary/manual/sample as Autotools, with generated
+files isolated in its build directory. The initial manual check
+`cmake -S . -B build/cmake-red -G Ninja` failed because CMakeLists.txt was absent.
+After adding CMake configuration, the same command with GCC 15 failed explicitly
+with `Clang 23.1.3 is required`. The standard-library feature probe compiled,
+linked and ran successfully using GCC 15 with `-std=c++26 -pthread`; that checks
+the host library, and does not establish pinned Clang compatibility.
+
+The CMake configure contract was added after its initial platform/compiler/
+provider guards were implemented; no prior automated red is claimed for those
+guards. A subsequent test requires explicit rejection of
+`CMAKE_CXX_STANDARD=23` and `CMAKE_CXX_EXTENSIONS=ON`. It precedes the new dialect
+guard: the first pinned Clang CTest run failed with
+`Accepted incompatible C++ dialect CMAKE_CXX_STANDARD=23` (3/4 passed).
+After adding explicit rejection, the same four contracts passed (4/4).
+An additional test first failed with
+`Accepted removed option CONFIG_LIBDAEMON=ON`; rejecting all legacy `CONFIG_`
+cache switches then made this case pass, instead of silently ignoring it.
+
+`asdf install clang 23.1.3` completed successfully using plugin commit
+`b7b8dd389c790237145e7436f1cd85b49611e37e`. `asdf which clang++` resolves to
+`/home/gaston/.asdf/installs/clang/23.1.3/bin/clang++`, and its version is 23.1.3.
+The expected/span/format/jthread probe compiled, linked and ran with this compiler
+and libstdc++ 15. The first CMake attempt failed looking for `clang-scan-deps`;
+disabling module scanning (modules are outside this migration) made it configure.
+
+Independent review found missing unversioned `g++` in the CI bootstrap and asdf
+shims losing their version outside the repository. `asdf current clang` from
+`/tmp` returned no selected version and exit 126, reproducing the latter issue.
+The toolchain now resolves real compiler paths from the repository. The CTest
+configuration contract successfully configured in a temporary directory without
+global asdf selection, rejected missing pkg-config dependencies, removed provider
+options, GCC, unsupported platforms and incompatible C++ dialects. A clean
+`ubuntu:26.04` Docker container with CMake, Ninja, g++-15, g++ and Python3 configured
+LLVM successfully. CI limits the plugin's Ninja command to two jobs; its full
+remote execution remains pending. CMake Release keeps the C assertions active,
+matching Autotools: preprocessing with `-DNDEBUG` disables them, while adding
+`-UNDEBUG` restores the checks.
+
+Reproduce the pinned build with the CMake commands in BUILD.md. CTest passed
+RTSP dispatch and six ALAC/AAC formats including real ALAC encode/decode, NQPTP
+startup rejection, removed runtime options, and configuration (4/4). A
+`DESTDIR="$PWD/build/cmake-stage" cmake --install build/cmake` installation
+produced the binary, manual and sample at the default Autotools paths. `cmp`
+confirmed identical manual/sample content. The staged binary's `--version`
+matched `git describe --tags --dirty --broken --always` and retained all features.
+The receiver archive exports `shairport_receiver_main`, with no `main` symbol.
+Touching the XML and then the generator script triggered separate Ninja
+regenerations; `cmp` confirmed unchanged generated plist bytes and header content.
+
+Autotools `make -C build/ap2-only check -j2` passed all four contracts with the
+generated-header isolation changes. `nm -g --defined-only` on `lib_receiver.a`
+showed the receiver entry point and no main symbol. Its staged install contained
+exactly the binary, manual and sample configuration; `cmp` confirmed the manual
+and sample match their repository sources. Device playback is outside this slice.
+
+## Device baseline during migration
+
+On 2026-10-08 the user reported connecting from two devices and observing their
+connections alternate. Read-only inspection of the user service identified
+`/usr/local/bin/shairport-sync`, version
+`48fe0601-AirPlay2-smi10-OpenSSL-Avahi-PulseAudio`, predating this branch. The
+service remained active without a fatal error or crash in the inspected journal.
+The journal included `Can not set realtime properties of thread player_1`.
+The current logging level does not expose client/session transitions, so it
+cannot independently establish the handover sequence. This is a user-reported
+baseline observation, not validation of the CMake binary, simultaneous multiroom,
+pairing/Home, or all realtime/buffered modes. The user can repeat hardware tests
+when the migrated receiver is ready.

@@ -1,0 +1,102 @@
+cmake_minimum_required(VERSION 4.2)
+project(shairport-sync VERSION 5.5.1 LANGUAGES C CXX)
+
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  message(FATAL_ERROR "Linux is the only supported platform")
+endif()
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR OR EXISTS "${CMAKE_SOURCE_DIR}/config.h")
+  message(FATAL_ERROR "Use an out-of-tree build; run make distclean after an in-tree Autotools build")
+endif()
+if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" OR
+   NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR
+   NOT CMAKE_C_COMPILER_VERSION VERSION_EQUAL "23.1.3" OR
+   NOT CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL "23.1.3")
+  message(FATAL_ERROR "Clang 23.1.3 is required; install the pinned asdf toolchain")
+endif()
+get_cmake_property(cache_variables CACHE_VARIABLES)
+foreach(variable IN LISTS cache_variables)
+  if(variable MATCHES "^(WITH_|WITHOUT_|CONFIG_)")
+    message(FATAL_ERROR "removed option: ${variable}; the receiver stack is fixed")
+  endif()
+endforeach()
+
+if((DEFINED CMAKE_CXX_STANDARD AND NOT CMAKE_CXX_STANDARD STREQUAL "26") OR
+   (DEFINED CMAKE_CXX_EXTENSIONS AND CMAKE_CXX_EXTENSIONS))
+  message(FATAL_ERROR "C++26 without extensions is required")
+endif()
+set(CMAKE_CXX_STANDARD 26)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+find_package(Threads REQUIRED)
+try_run(cpp26_run cpp26_compile SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cpp26_probe.cpp"
+  LINK_LIBRARIES Threads::Threads COMPILE_OUTPUT_VARIABLE cpp26_output)
+if(NOT cpp26_compile OR NOT cpp26_run EQUAL 0)
+  message(FATAL_ERROR "C++26 expected/span/format/jthread with libstdc++ 15 must compile, link and run: ${cpp26_output}")
+endif()
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(RECEIVER REQUIRED IMPORTED_TARGET popt libconfig "libpulse>=0.9.2"
+  avahi-client libssl libcrypto libsodium libgcrypt uuid libavutil libavcodec libavformat libswresample)
+pkg_check_modules(PLIST QUIET IMPORTED_TARGET "libplist-2.0>=2.3.0")
+if(PLIST_FOUND)
+  set(HAVE_LIBPLIST_GE_2_3_0 1)
+else()
+  pkg_check_modules(PLIST REQUIRED IMPORTED_TARGET "libplist-2.0>=2.0.0")
+endif()
+find_program(PLISTUTIL plistutil REQUIRED)
+find_program(XXD xxd REQUIRED)
+find_package(Git QUIET)
+if(Git_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+  set(CONFIG_USE_GIT_VERSION_STRING 1)
+  add_custom_target(git-version ALL
+    COMMAND "${CMAKE_COMMAND}" "-DGIT=${GIT_EXECUTABLE}" "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+      "-DOUTPUT=${CMAKE_BINARY_DIR}/cmake-gitversion.h" -P "${CMAKE_SOURCE_DIR}/cmake/git-version.cmake"
+    BYPRODUCTS "${CMAKE_BINARY_DIR}/cmake-gitversion.h")
+endif()
+configure_file(cmake/config.h.in config.h)
+add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/plists/get_info_response.c" "${CMAKE_BINARY_DIR}/plists/get_info_response.h"
+  COMMAND sh "${CMAKE_SOURCE_DIR}/xml_plist_codegen.sh" "${CMAKE_SOURCE_DIR}/plists/get_info_response.xml" "${CMAKE_BINARY_DIR}/plists"
+  DEPENDS plists/get_info_response.xml xml_plist_codegen.sh VERBATIM)
+
+include(GNUInstallDirs)
+option(INSTALL_CONFIG_FILES "Install the sample configuration" ON)
+add_library(pair_ap STATIC pair_ap/pair.c pair_ap/pair_fruit.c pair_ap/pair_homekit.c pair_ap/pair-tlv.c)
+target_compile_definitions(pair_ap PRIVATE CONFIG_GCRYPT)
+add_library(receiver STATIC shairport.c bonjour_strings.c mdns.c mdns_avahi.c common.c rtp.c
+  player.c audio.c audio_pa.c activity_monitor.c rtsp.c ap2_buffered_audio_processor.c
+  ap2_event_receiver.c ap2_event_message_handler.c ptp-utilities.c utilities/debug.c
+  utilities/network_utilities.c utilities/rtsp_message_utilities.c utilities/string_utilities.c
+  utilities/exit.c utilities/buffered_read.c utilities/structured_buffer.c utilities/mod23.c
+  utilities/generate_random_uuid.c utilities/generate_device_uuid.c "${CMAKE_BINARY_DIR}/plists/get_info_response.c")
+foreach(target pair_ap receiver)
+  target_include_directories(${target} PUBLIC "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}")
+  target_compile_options(${target} PRIVATE -include "${CMAKE_SOURCE_DIR}/utilities/debug.h" -Wall -Wextra -Wshadow -Wformat=2 -fno-common -Wno-multichar -UNDEBUG)
+  target_link_libraries(${target} PUBLIC PkgConfig::RECEIVER PkgConfig::PLIST Threads::Threads m rt)
+endforeach()
+target_compile_definitions(receiver PRIVATE HAVE_CONFIG_H "SYSCONFDIR=\"${CMAKE_INSTALL_FULL_SYSCONFDIR}\"")
+target_link_libraries(receiver PUBLIC pair_ap)
+if(CONFIG_USE_GIT_VERSION_STRING)
+  add_dependencies(receiver git-version)
+  target_compile_definitions(receiver PRIVATE "SHAIRPORT_GIT_VERSION_HEADER=\"cmake-gitversion.h\"")
+endif()
+add_executable(shairport-sync main.c)
+target_link_libraries(shairport-sync PRIVATE receiver)
+install(TARGETS shairport-sync RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+install(FILES man/shairport-sync.1 DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
+if(INSTALL_CONFIG_FILES)
+  install(FILES scripts/shairport-sync.conf DESTINATION "${CMAKE_INSTALL_SYSCONFDIR}" RENAME shairport-sync.conf.sample)
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(receiver-linkage-test tests/receiver_linkage_test.cpp)
+  target_link_libraries(receiver-linkage-test PRIVATE receiver)
+  add_executable(rtsp-dispatch-test tests/rtsp_dispatch_test.c)
+  target_compile_options(rtsp-dispatch-test PRIVATE -UNDEBUG)
+  target_link_libraries(rtsp-dispatch-test PRIVATE receiver)
+  add_test(NAME rtsp-dispatch COMMAND rtsp-dispatch-test)
+  add_test(NAME nqptp COMMAND sh "${CMAKE_SOURCE_DIR}/tests/nqptp_test.sh" "$<TARGET_FILE:shairport-sync>")
+  add_test(NAME removed-options COMMAND sh "${CMAKE_SOURCE_DIR}/tests/removed_options_test.sh" "$<TARGET_FILE:shairport-sync>")
+  add_test(NAME configure-contract COMMAND sh "${CMAKE_SOURCE_DIR}/tests/cmake_configure_test.sh" "${CMAKE_BINARY_DIR}" "${CMAKE_C_COMPILER}" "${CMAKE_CXX_COMPILER}" "$<TARGET_FILE:receiver-linkage-test>")
+endif()
