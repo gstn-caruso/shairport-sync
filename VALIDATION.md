@@ -294,6 +294,16 @@ helper flags retain native mutex/condition ordering; callback pointer restores
 after join. Native assertions/C ABI/shell checks remain; production is unchanged
 and sanitizers/devices were not rerun.
 
+Session-registry discovery (`ctest --test-dir build/redesign-release -R '^SessionRegistry\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Five independent cases retain all ownership static assertions, failed/immediate
+thread checks, principal replacement, canceled retirement and batch-cancel-before-
+join socket lifetime checks. Batch retirement replays the prior retirement on the
+same registry/principal, then resets flags under its mutex. Group (0.09s), exact
+batch case, two shuffled repetitions and Release 221/221 (15.75s) passed; timeout
+is 5. Native callback assertions/order remain with fresh per-case state; production
+is unchanged and sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
