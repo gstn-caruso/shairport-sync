@@ -34,40 +34,13 @@
 
 extern audio_output audio_pa;
 
-static audio_output *outputs[] = {
-    &audio_pa,
-    NULL};
-
 audio_output *audio_get_output(const char *name) {
-  audio_output **out;
-
-  // default to the first
-  if (!name)
-    return outputs[0];
-
-  for (out = outputs; *out; out++)
-    if (!strcasecmp(name, (*out)->name))
-      return *out;
-
-  return NULL;
+  return !name || !strcasecmp(name, audio_pa.name) ? &audio_pa : NULL;
 }
 
 void audio_ls_outputs(void) {
-  audio_output **out;
-
-  printf("Available audio backends:\n");
-  for (out = outputs; *out; out++)
-    printf("    %s%s\n", (*out)->name, out == outputs ? " (default)" : "");
-
-  for (out = outputs; *out; out++) {
-    printf("\n");
-    if ((*out)->help) {
-      printf("Settings and options for the audio backend \"%s\":\n", (*out)->name);
-      (*out)->help();
-    } else {
-      printf("There are no settings or options for the audio backend \"%s\".\n", (*out)->name);
-    }
-  }
+  printf("Available audio backends:\n    %s (default)\n\n", audio_pa.name);
+  printf("There are no settings or options for the audio backend \"%s\".\n", audio_pa.name);
 }
 
 void parse_audio_options(const char *named_stanza, uint32_t default_format_set,

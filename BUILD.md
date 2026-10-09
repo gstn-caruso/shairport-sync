@@ -2,29 +2,10 @@
 
 ## CMake / C++26 build
 
-The receiver builds with CMake. The structured buffer and string
-utilities use C++ behind C APIs; the other receiver sources remain C. Returned
-strings retain their malloc/free ownership contract. CMake enables C++26
-and verifies real standard
-library support by compiling, linking and running an expected/span/format/jthread probe.
-CMake requires Clang 23.1.3 for C and C++, pinned in `.tool-versions`,
-with libstdc++ 15 and C++26 without GNU extensions. It compiles, links and runs
-`cmake/cpp26_probe.cpp` before building the receiver.
-
-Service-name formatting and replacement/truncation now live in the internal
-`receiver-text` C++ library. `utilities/string_utilities.hpp` accepts borrowed
-`string_view` inputs and returns owning `string` values; `appendWithLimit` returns
-`expected` with `TruncationError::limitTooSmall` when the suffix/ellipsis cannot
-fit. `ServiceNameFormatter` owns hostname and version values and preserves the
-ordered `%h`, `%H`, `%v`, `%V` expansion, last-domain removal, first-character
-ASCII capitalization and 50-byte UTF-8 truncation boundary. An empty replacement
-token is a no-op. C adapters obtain host/build information and contain exceptions
-while preserving caller-owned `malloc` results and `NULL` failure results.
-The C++ text test links only `receiver-text`, without receiver providers;
-the legacy C test continues to exercise the public adapters.
-
-Use CMake 4.2 or newer and Ninja. The compiler does not supply the C++ library:
-install GCC 15 development headers and libstdc++ 15 on the host first.
+Use CMake 4.2 or newer, Ninja, Clang 23.1.3 (pinned in `.tool-versions`)
+and libstdc++ 15. CMake checks C++26 without GNU extensions by compiling and
+running `cmake/cpp26_probe.cpp`. Most receiver sources are C; the buffer and
+string utilities expose C adapters over C++ implementations.
 
 Install the asdf toolchain from the repository root:
 
@@ -36,17 +17,9 @@ asdf install
 asdf reshim clang
 ```
 
-This asdf plugin builds LLVM from source; the first installation is expensive in
-CPU, disk space and time. Subsequent builds reuse the installed toolchain.
-CI instead downloads the official Linux x86_64 LLVM 23.1.3 binary archive,
-verifies its pinned SHA-256, and registers the compiler in asdf's install directory.
-It caches only Clang and its resource headers/runtimes (about 372 MB unpacked),
-without building LLVM or caching its development libraries and unrelated tools.
-The `.zst` archive requires `zstd --decompress --long=30` to decode its 1 GiB window.
-PR updates run once; pushes run on `master`, and newer commits cancel obsolete runs.
-The toolchain resolves real
-compiler paths through `asdf which` from the repository, so build directories
-outside the repository retain the selected version.
+The asdf plugin builds LLVM from source. CI uses a checksum-verified official
+binary archive; see the workflow in `.github/workflows`.
+The toolchain resolves compiler paths through `asdf which` from the repository.
 Install the receiver dependencies on Debian/Ubuntu, then build:
 
 ```sh
@@ -105,7 +78,9 @@ it does not establish the absence of data races.
 
 Install and run NQPTP compatible with this receiver's shared-memory interface (currently SMI version 10) and Avahi as system services. Start a PulseAudio-compatible user session. PipeWire users should run `pipewire-pulse`; the native PipeWire backend is not provided.
 
-Installation puts the binary under the chosen prefix and the sample configuration at `shairport-sync.conf.sample` under `sysconfdir`. Existing configuration is preserved. Copy and edit the sample deliberately, removing legacy backend, DSP and metadata-export settings.
+Copy `shairport-sync.conf.sample` to `shairport-sync.conf` and edit it before
+starting the receiver. When migrating an existing configuration, see
+[CONFIGURATION.md](CONFIGURATION.md) for unsupported settings.
 
 From the repository root, `./user-service-install.sh --dry-run` previews user service installation. `./user-service-install.sh` installs and starts the unit for your current user. Its default executable path is `/usr/local/bin/shairport-sync`; edit the unit if you chose another prefix. Do not run the installer as root. NQPTP and Avahi must already be running.
 

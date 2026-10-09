@@ -36,8 +36,6 @@ typedef struct {
 
 // backend interface
 typedef struct {
-  // may be NULL if no implemented
-  void (*help)(void);
   char *name;
   // start of program
   int (*init)(int argc, char **argv);
