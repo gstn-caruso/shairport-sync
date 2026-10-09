@@ -9,6 +9,8 @@ static void checkMapping(ChannelMapping::Specification specification, int16_t le
   ASSERT_TRUE(mapping.map(source, output));
   EXPECT_EQ(output[0], left);
   EXPECT_EQ(output[1], right);
+  EXPECT_EQ(output[2], -left);
+  EXPECT_EQ(output[3], -right);
 }
 
 TEST(ChannelMapping, DefaultOrderPreservesStereoChannels) {
@@ -41,6 +43,16 @@ TEST(ChannelMapping, FrontMonoDividesSignedSamplesBeforeSumming) {
   std::array<int32_t, 1> mixed{};
   ASSERT_TRUE(mono.map(oddSigned, mixed));
   EXPECT_EQ(mixed[0], 2);
+}
+
+TEST(ChannelMapping, MixedSelectionsMapEveryFrameInOutputOrder) {
+  auto mapping = ChannelMapping::from({"FL", "FR"}, 4, {true, {"FR", "FM", "--", "FL"}, ""});
+  const std::array<int32_t, 6> input{5, 9, -5, -9, -5, 9};
+  std::array<int32_t, 12> output{};
+  const std::array<int32_t, 12> expected{9, 6, 0, 5, -9, -6, 0, -5, 9, 2, 0, -5};
+
+  ASSERT_TRUE(mapping.map(input, output));
+  EXPECT_EQ(output, expected);
 }
 
 TEST(ChannelMapping, UnknownDeviceNameMarksMappingIncomplete) {
