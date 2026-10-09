@@ -32,15 +32,20 @@ static void checkReplacement() {
   assert(shairport::replaceOccurrences("a--b--", "--", "") == "ab");
 }
 
+static void assertLimitTooSmall(const std::expected<std::string, shairport::TruncationError> &result) {
+  assert(!result.has_value());
+  assert(result.error() == shairport::TruncationError::limitTooSmall);
+}
+
 static void checkLimits() {
   using shairport::appendWithLimit;
   assert(appendWithLimit("base", "!", 5).value() == "base!");
   assert(appendWithLimit("abcdef", "!", 6).value() == "ab...!");
   assert(appendWithLimit("abcdef", "!", 4).value() == "...!");
-  assert(appendWithLimit("abcdef", "!", 3).error() == shairport::TruncationError::limitTooSmall);
+  assertLimitTooSmall(appendWithLimit("abcdef", "!", 3));
   assert(appendWithLimit("", "", 0).value().empty());
-  assert(appendWithLimit("a", "", 0).error() == shairport::TruncationError::limitTooSmall);
-  assert(appendWithLimit("", "suffix", 3).error() == shairport::TruncationError::limitTooSmall);
+  assertLimitTooSmall(appendWithLimit("a", "", 0));
+  assertLimitTooSmall(appendWithLimit("", "suffix", 3));
   assert(appendWithLimit("a\xc3\xa9" "bcdef", "!", 6).value() == "a...!");
   assert(appendWithLimit("a\xc3\xa9" "bcdef", "!", 7).value() == "a\xc3\xa9...!");
   assert(appendWithLimit("a\xe2\x82\xac" "bcdef", "!", 7).value() == "a...!");
