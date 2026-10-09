@@ -48,12 +48,6 @@
 
 
 
-#include <openssl/aes.h> // needed for older AES stuff
-#include <openssl/bio.h> // needed for BIO_new_mem_buf
-#include <openssl/err.h> // needed for ERR_error_string, ERR_get_error
-#include <openssl/evp.h> // needed for EVP_PKEY_CTX_new, EVP_PKEY_sign_init, EVP_PKEY_sign
-#include <openssl/pem.h> // needed for PEM_read_bio_RSAPrivateKey, EVP_PKEY_CTX_set_rsa_padding
-#include <openssl/rsa.h> // needed for EVP_PKEY_CTX_set_rsa_padding
 
 
 
@@ -562,13 +556,6 @@ int setup_software_resampler(rtsp_conn_info *conn, ssrc_t ssrc) {
 
     // now, having set up the resampler, we can initialise it
 
-    // disabling this, as the soxr-based resampler seems not to give exactly the right number of
-    // frames going from 44100 to 48000 and requires stuffing to compensate.
-
-    // also, the soxr resampling engine isn't included in the Docker image.
-    // #ifdef CONFIG_SOXR
-    //      av_opt_set(swr, "resampler", "soxr", 0);
-    // #endif
     int sres = swr_init(swr);
     if (sres != 0)
       debug(1, "swr_init returned %d with SSRC of 0x%0x and LIBAVUTIL_VERSION_MAJOR of %u.", sres,
@@ -1226,8 +1213,6 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
   // The timestamp_gap is the difference between the timestamp and the expected timestamp.
   // It should normally be zero.
 
-  // It can be decoded by the Hammerton or Apple ALAC decoders, or by the FFmpeg decoder.
-
   // The SSRC signifies the encoding used for that block of audio.
   // It is used to select the type of decoding to be done by the FFMPEG-based
   // decoding chain
@@ -1236,7 +1221,6 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
   // replace it with the same duration of silence.
   // This is useful because the first block of an AAC play sequence usually contains
   // noisy transients.
-  // Not needed in Classic airPlay as there's no AAC in it.
 
   // Function returns the number of samples in the packet so that callers can watch for
   // anomalies in sequencing.
@@ -2428,9 +2412,6 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
   // debug(1, "Release frame %u.", curframe->timestamp);
 
     // clang-format off
-    // If we're using the Hammerton or ALAC decoder, then curframe->data will
-    // point to a malloced buffer of the stereo interleaved LPCM/44100/S16/2 audio
-    // But here, we must be using the FFMPEG decoder.
     // With the FFmpeg decoder we have an AVFrame in curframe->avframe.
     // The format could be anything -- it'll be transcoded here and placed in
     // malloc memory pointed to by curframe->data and the AVFrame will be freed.
@@ -2743,10 +2724,6 @@ int *statistics_print_profile;
 // be printed -- 2 means print, 1 means print only in a debug mode, 0 means skip
 
 // clang-format off
-int ap1_synced_statistics_print_profile[] =                  {2, 1, 2, 2, 0, 2, 1, 1, 2, 1, 1, 1, 0, 1, 1, 2, 2};
-int ap1_nosync_statistics_print_profile[] =                  {2, 0, 0, 0, 0, 2, 1, 1, 2, 1, 1, 1, 0, 1, 1, 0, 0};
-int ap1_nodelay_statistics_print_profile[] =                 {0, 0, 0, 0, 0, 2, 1, 1, 2, 0, 1, 1, 0, 1, 1, 0, 0};
-
 int ap2_realtime_synced_stream_statistics_print_profile[] =  {2, 1, 2, 2, 0, 2, 1, 1, 2, 1, 1, 1, 0, 0, 1, 2, 2};
 int ap2_realtime_nosync_stream_statistics_print_profile[] =  {2, 0, 0, 0, 0, 2, 1, 1, 2, 1, 1, 1, 0, 0, 1, 0, 0};
 int ap2_realtime_nodelay_stream_statistics_print_profile[] = {0, 0, 0, 0, 0, 2, 1, 1, 2, 0, 1, 1, 0, 0, 1, 0, 0};
@@ -2826,11 +2803,6 @@ void player_thread_cleanup_handler(void *arg) {
   }
 
 
-  // four possibilities
-  // 1 -- Classic Airplay -- "AirPlay 1"
-  // 2 -- AirPlay 2 in Classic Airplay mode
-  // 3 -- AirPlay 2 in Buffered Audio Mode
-  // 4 -- AirPlay 3 in Realtime Audio Mode.
 
 
     debug(2, "Cancelling AP2 timing, control and audio threads...");
@@ -2903,7 +2875,6 @@ void *player_thread_func(void *arg) {
   conn->packet_count = 0;
   conn->packet_count_since_flush = 0;
   conn->previous_random_number = 0;
-  conn->decoder_in_use = 0;
   conn->ab_buffering = 1;
   conn->ab_synced = 0;
   conn->first_packet_timestamp = 0;

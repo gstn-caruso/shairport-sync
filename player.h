@@ -140,8 +140,7 @@ typedef struct audio_buffer_entry { // decoded audio packets
   int32_t timestamp_gap;        // the difference between the timestamp and the expected timestamp.
   size_t length; // the length of the decoded data (or silence requested) in input frames
   ssrc_t ssrc;      // this is the type of this specific frame.
-  AVFrame *avframe; // In AP2 and optionally in AP1, an AVFrame will be
-  // used to carry audio rather than just a malloced memory space.
+  AVFrame *avframe; // Decoded audio carried by FFmpeg before output conversion.
 } abuf_t;
 
 typedef struct stats { // statistics for running averages
@@ -168,7 +167,6 @@ typedef struct stats { // statistics for running averages
 #define INTERPOLATION_LIMIT 20
 
 
-// the following is used even when not built for AirPlay 2
 typedef enum {
   unspecified_stream_category = 0,
   ptp_stream,
@@ -278,7 +276,6 @@ typedef struct {
   int64_t time_since_play_started; // nanoseconds
                                    // stats
   uint64_t missing_packets, late_packets, too_late_packets, resend_requests;
-  int decoder_in_use;
   // debug variables
   int last_seqno_valid;
   seq_t last_seqno_read;
@@ -344,7 +341,6 @@ typedef struct {
 
   airplay_stream_c
       airplay_stream_category; // is it a remote control stream or a normal "full service" stream?
-                               // (will be unspecified if not build for AirPlay 2)
 
   plist_t sessionPlist;
   char *airplay_gid; // UUID in the Bonjour advertisement -- if NULL, the group UUID is the same as

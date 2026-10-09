@@ -1017,11 +1017,6 @@ if (config_lookup(config.cfg, "general.alac_decoder") != NULL)
 
   config.airplay_features = 0x00018340405C4A00; // no AP2 metadata (b50), no AP1 text (b17), no AP1
                                                 // progress (b16), no AP1 artwork (b15)
-  //     0x0001C340405C4A00; // no AP2 metadata (b50), no AP1 text (b17), no AP1 progress (b16), no
-  //     AP1 artwork (b15) 0x0001C340445D0A00;
-  // config.airplay_features |= (1 << 26); // 0x0x4000000
-
-  // features=0x0001C340445D0A00 -- AirPort Express
 
 
   // now generate the fex field
@@ -1553,7 +1548,6 @@ int main(int argc, char **argv) {
   config.output_rate_auto_requested = 1;   // default auto select format
   config.output_format_auto_requested = 1; // default auto select format
 
-  config.decoders_supported |= 1 << decoder_ffmpeg_alac;
   config.decoder_in_use = 1 << decoder_ffmpeg_alac; // If present, use this in preference
 
   config.output_channel_mapping_enable = 1; // enabled by default
@@ -2121,10 +2115,6 @@ int main(int argc, char **argv) {
 #endif
 
 
-  // In AirPlay 2 mode, the AP1 prefix is the same as the device ID less the colons
-  // and has already been calculated.
-
-  // In AirPlay 1 mode, the AP1 prefix is calculated by hashing the service name.
 
 
 

@@ -211,7 +211,7 @@ typedef struct {
   int debugger_show_elapsed_time;  // in the debug message, display the time since startup
   int debugger_show_relative_time; // in the debug message, display the time since the last one
   int debugger_show_file_and_line; // in the debug message, display the filename and line number
-  int statistics_requested, use_negotiated_latencies;
+  int statistics_requested;
   playback_mode_type playback_mode;
   char *cmd_start, *cmd_stop, *cmd_set_volume, *cmd_unfixable;
   char *cmd_active_start, *cmd_active_stop;
@@ -219,13 +219,10 @@ typedef struct {
   double tolerance; // allow this much drift before attempting to correct it
   stuffing_type packet_stuffing;
                             // to be enabled under the auto setting
-  int decoders_supported;
   int decoder_in_use;
   char *configfile;
-  char *regtype; // The regtype is the service type followed by the protocol, separated by a dot, by
-                 // default “_raop._tcp.” for AirPlay 1.
-  char *regtype2;  // The regtype is the service type followed by the protocol, separated by a dot,
-                   // by default “_raop._tcp.” for AirPlay 2.
+  char *regtype; // Complementary AirPlay 2 discovery service: "_raop._tcp".
+  char *regtype2; // Primary AirPlay 2 discovery service: "_airplay._tcp".
   char *interface; // a string containg the interface name, or NULL if nothing specified
   int interface_index;                        // only valid if the interface string is non-NULL
   double audio_backend_buffer_desired_length; // this will be the length in seconds of the
@@ -356,9 +353,6 @@ char *base64_enc(uint8_t *input, int length);
 
 char *base64_encode_so(const unsigned char *data, size_t input_length, char *encoded_data,
                        size_t *output_length);
-
-#define RSA_MODE_AUTH (0)
-#define RSA_MODE_KEY (1)
 
 // given a volume (0 to -30) and high and low attenuations in dB*100 (e.g. 0 to -6000 for 0 to -60
 // dB), return an attenuation depending on a linear interpolation along the range
