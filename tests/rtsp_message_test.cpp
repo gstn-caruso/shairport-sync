@@ -1,5 +1,6 @@
 #include "common.h"
 #include "rtsp.h"
+#include "rtsp_message.hpp"
 #include "utilities/rtsp_message_utilities.h"
 #include <cassert>
 #include <cstdlib>
@@ -78,4 +79,17 @@ int main() {
   checkRequestParsing();
   checkHeaderLimitAndDuplicates();
   checkBinaryResponseFraming();
+  RtspMessage owned;
+  assert(owned.readLine("OPTIONS /info RTSP/1.0") == -1);
+  assert(owned.requestsMethod("OPTIONS"));
+  assert(owned.requestsPath("/info"));
+  assert(owned.readLine("Content-Length: 3") == -1);
+  assert(owned.readLine("") == 3);
+  std::string borrowed("A\0B", 3);
+  owned.replaceBody(borrowed);
+  borrowed[0] = 'X';
+  assert(owned.bodyText() == std::string_view("A\0B", 3));
+  assert(owned.bodyData()[3] == '\0');
+  owned.replaceBody("");
+  assert(owned.bodyLength() == 0);
 }
