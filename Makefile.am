@@ -41,11 +41,15 @@ install-exec-hook:
 	$(MKDIR_P) $(DESTDIR)$(sysconfdir)
 	$(INSTALL_DATA) $(top_srcdir)/scripts/shairport-sync.conf $(DESTDIR)$(sysconfdir)/shairport-sync.conf.sample
 endif
-check_PROGRAMS = rtsp-dispatch-test
+check_PROGRAMS = rtsp-dispatch-test structured-buffer-test
+structured_buffer_test_SOURCES = tests/structured_buffer_test.c
+structured_buffer_test_CFLAGS = $(AM_CFLAGS) -UNDEBUG
+structured_buffer_test_LDADD = $(shairport_sync_LDADD)
 rtsp_dispatch_test_SOURCES = tests/rtsp_dispatch_test.c
 rtsp_dispatch_test_CFLAGS = $(AM_CFLAGS) -UNDEBUG
 rtsp_dispatch_test_LDADD = $(shairport_sync_LDADD)
 TESTS += rtsp-dispatch-test
+TESTS += structured-buffer-test
 noinst_HEADERS = receiver.h activity_monitor.h ap2_buffered_audio_processor.h ap2_event_message_handler.h \
   ap2_event_receiver.h audio.h bonjour_strings.h common.h definitions.h mdns.h \
   nqptp-shm-structures.h player.h ptp-utilities.h rtp.h rtsp.h \
