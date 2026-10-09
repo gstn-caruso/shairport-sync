@@ -92,4 +92,15 @@ int main() {
   assert(owned.bodyData()[3] == '\0');
   owned.replaceBody("");
   assert(owned.bodyLength() == 0);
+  RtspMessage framedResponse;
+  framedResponse.respondWith(200);
+  assert(framedResponse.responsePacket().value() == "RTSP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n");
+  framedResponse.addHeader("CSeq", "1");
+  framedResponse.addHeader("CSeq", "2");
+  framedResponse.replaceBody(std::string_view("A\0B", 3));
+  std::string duplicateHeaders = "RTSP/1.0 200 OK\r\nCSeq: 1\r\nCSeq: 2\r\nContent-Length: 3\r\n\r\n";
+  duplicateHeaders.append("A\0B", 3);
+  assert(framedResponse.responsePacket().value() == duplicateHeaders);
+  framedResponse.replaceBody(std::string(4096, 'x'));
+  assert(framedResponse.responsePacket().error() == RtspMessage::FramingError::bodyTooLong);
 }

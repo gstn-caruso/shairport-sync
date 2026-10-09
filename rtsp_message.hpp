@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -26,11 +27,18 @@ public:
   std::string_view bodyText() const noexcept;
   const char *bodyData() const noexcept;
   uint32_t bodyLength() const noexcept;
+  void respondWith(int code) noexcept;
+  int responseCode() const noexcept;
+  bool hasResponseCode(int code) const noexcept;
+  enum class FramingError { headersTooLong = -1, lengthTooLong = -2, bodyTooLong = -3 };
+  std::expected<std::string, FramingError> responsePacket() const;
 
 private:
+  std::string_view responseReason() const noexcept;
   std::string method_;
   std::string path_;
   std::vector<Header> headers_;
   std::string body_;
   bool requestLineRead_ = false;
+  int responseCode_ = 0;
 };

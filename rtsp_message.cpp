@@ -1,5 +1,7 @@
 #include "rtsp_message.hpp"
 #include <cctype>
+#include <array>
+#include <format>
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
@@ -87,3 +89,36 @@ void RtspMessage::replaceBody(std::string_view bytes) {
 std::string_view RtspMessage::bodyText() const noexcept { return body_; }
 const char *RtspMessage::bodyData() const noexcept { return body_.c_str(); }
 uint32_t RtspMessage::bodyLength() const noexcept { return static_cast<uint32_t>(body_.size()); }
+
+void RtspMessage::respondWith(int code) noexcept { responseCode_ = code; }
+int RtspMessage::responseCode() const noexcept { return responseCode_; }
+bool RtspMessage::hasResponseCode(int code) const noexcept { return responseCode_ == code; }
+
+std::string_view RtspMessage::responseReason() const noexcept {
+  static constexpr std::array<std::pair<int, std::string_view>, 9> reasons{{
+      {200, "OK"}, {400, "Bad Request"}, {403, "Unauthorized"}, {404, "Not Found"},
+      {451, "Unavailable"}, {456, "Header Field Not Valid for Resource"},
+      {470, "Connection Authorization Required"}, {500, "Internal Server Error"},
+      {501, "Not Implemented"}}};
+  for (const auto &[code, reason] : reasons)
+    if (responseCode_ == code)
+      return reason;
+  return "Unauthorized";
+}
+
+std::expected<std::string, RtspMessage::FramingError> RtspMessage::responsePacket() const {
+  auto packet = std::format("RTSP/1.0 {} {}\r\n", responseCode_, responseReason());
+  for (const auto &header : headers_) {
+    packet += std::format("{}: {}\r\n", header.name, header.value);
+    if (packet.size() >= 3072)
+      return std::unexpected(FramingError::headersTooLong);
+  }
+  packet += std::format("Content-Length: {}\r\n", body_.size());
+  if (packet.size() >= 3072)
+    return std::unexpected(FramingError::lengthTooLong);
+  packet += "\r\n";
+  packet += body_;
+  if (packet.size() >= 3072)
+    return std::unexpected(FramingError::bodyTooLong);
+  return packet;
+}
