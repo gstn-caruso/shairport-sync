@@ -228,6 +228,15 @@ Group (0.04s), exact cancellation case, two shuffled repetitions and Release
 mutex; native cancel/join assertions and both wrap flags remain. C ABI/shell checks
 stay green; production is unchanged and sanitizers/devices were not rerun.
 
+Volume-adapter discovery (`ctest --test-dir build/redesign-release -R '^VolumeAdapter\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Three fresh callback/session contexts retain all backend effect-order, mute fallback
+and ignored-control checks, replaying prior gains/mute state. Group (0.05s), exact
+ignored-control case, two shuffled repetitions and Release 198/198 (15.38s) passed;
+each entry has timeout 5. Output settings, shared level and callback pointer restore
+per run. Native callback assertions, C ABI/cancellation/shell checks remain;
+production is unchanged and sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
