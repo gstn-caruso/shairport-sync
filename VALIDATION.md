@@ -99,6 +99,15 @@ installed binary `--version`, and installed manual/configuration byte
 comparisons passed. Production behavior and native wrapper/object paths are
 unchanged; sanitizer builds and device playback were not rerun.
 
+The first AudioInputState contract gives packet-shape coherence to a private
+leaf owner (Feature Envy, criterion #77). Its new named test first failed to
+compile because `audio_input_state.hpp` was absent; the red log is in ignored
+`build/redesign-release/audio-input-state-red.log`. The minimal header starts
+with zero rate/frames and false decoder validity, then records ALAC 44.1 kHz's
+44100/352 shape while remaining invalid. The nine relevant input-state/format
+cases and all 232 Release CTest entries passed (14.87s). Existing session state
+is not yet integrated; sanitizer builds and device playback were not rerun.
+
 The first discovery acceptance check was
 `ctest --test-dir build/cmake -R '^VolumePolicy\.' --no-tests=error`.
 It failed with no tests on the baseline. GoogleTest now registers six named
