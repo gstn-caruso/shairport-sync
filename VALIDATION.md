@@ -129,6 +129,14 @@ Concurrent assertions retain thread joining on failure. Native cancellation, C A
 and shell checks remain green; production is unchanged and sanitizers/devices
 were not rerun.
 
+Playback-timing review found resets applied to fresh objects, losing the original
+used-state prerequisites despite green tests. Each later case now replays the
+original earlier stages on its own object. Before reset, readiness is refused
+after initial preroll; before the final reset, delay is primed and queried. Reset
+restores readiness, advances revision and permits the original 4,800-frame exact
+lead result. No production mutation was used. All five cases (0.08s), the exact
+final-reset case and Release 129/129 (14.24s) passed after correction.
+
 CTest covers:
 
 | Test | Contract |
