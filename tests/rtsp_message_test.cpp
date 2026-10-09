@@ -103,4 +103,13 @@ int main() {
   assert(framedResponse.responsePacket().value() == duplicateHeaders);
   framedResponse.replaceBody(std::string(4096, 'x'));
   assert(framedResponse.responsePacket().error() == RtspMessage::FramingError::bodyTooLong);
+  RtspMessage metadata;
+  const char invalidMetadata[] = {'m', 'l', 'i', 't', 0, 0, 0, 20};
+  metadata.replaceBody(std::string_view(invalidMetadata, sizeof(invalidMetadata)));
+  assert(!metadata.containsCompleteMetadata());
+  const char validMetadata[] = {'m', 'l', 'i', 't', 0, 0, 0, 8, 'm', 'i', 'n', 'm', 0, 0, 0, 0};
+  metadata.replaceBody(std::string_view(validMetadata, sizeof(validMetadata)));
+  assert(metadata.containsCompleteMetadata());
+  metadata.replaceBody("volume: -15.0\r\nprogress: 0/1/2\r\n");
+  assert(metadata.parameterLines() == std::vector<std::string>({"volume: -15.0", "progress: 0/1/2"}));
 }
