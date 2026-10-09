@@ -21,8 +21,13 @@ asdf reshim clang
 
 This asdf plugin builds LLVM from source; the first installation is expensive in
 CPU, disk space and time. Subsequent builds reuse the installed toolchain.
-CI limits the plugin's Ninja invocation to two jobs because its default builds
-LLVM for all targets with host-derived parallelism. The toolchain resolves real
+CI instead downloads the official Linux x86_64 LLVM 23.1.3 binary archive,
+verifies its pinned SHA-256, and registers the compiler in asdf's install directory.
+It caches only Clang and its resource headers/runtimes (about 372 MB unpacked),
+without building LLVM or caching its development libraries and unrelated tools.
+The `.zst` archive requires `zstd --decompress --long=30` to decode its 1 GiB window.
+PR updates run once; pushes run on `master`, and newer commits cancel obsolete runs.
+The toolchain resolves real
 compiler paths through `asdf which` from the repository, so build directories
 outside the repository retain the selected version.
 Install the receiver dependencies listed below, then run:

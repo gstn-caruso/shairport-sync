@@ -105,8 +105,9 @@ configuration contract successfully configured in a temporary directory without
 global asdf selection, rejected missing pkg-config dependencies, removed provider
 options, GCC, unsupported platforms and incompatible C++ dialects. A clean
 `ubuntu:26.04` Docker container with CMake, Ninja, g++-15, g++ and Python3 configured
-LLVM successfully. CI limits the plugin's Ninja command to two jobs; its full
-remote execution remains pending. CMake Release keeps the C assertions active,
+LLVM successfully. The initial CI limited the plugin's Ninja command to two jobs;
+that source-build bootstrap was subsequently replaced as described below.
+CMake Release keeps the C assertions active,
 matching Autotools: preprocessing with `-DNDEBUG` disables them, while adding
 `-UNDEBUG` restores the checks.
 
@@ -117,7 +118,37 @@ which was not the installation's data directory. The correction sets the job's
 checkout and shims. Locally, installing the plugin with an isolated
 `ASDF_DATA_DIR` under `build/asdf-ci-check` made `asdf plugin list` report clang
 and the pinned Git checkout succeed at that exact path. The two-job patch applied
-and its Bash syntax check passed. Full corrected remote CI remains pending.
+and its Bash syntax check passed. Those source-build runs were subsequently
+cancelled in favor of the faster bootstrap below.
+
+## Faster GitHub Actions bootstrap
+
+Expectation: a cold CMake job installs Clang without compiling LLVM, preserves
+the pinned compiler/library/features, and each PR update starts only one run.
+The source-build baseline ran twice per commit (push and pull_request); both
+`Install pinned Clang` steps were still active after the shipper's 20-minute
+observation window. Runs 37869833166 and 37869830342 were cancelled when the user
+requested a faster pipeline, rather than dropping the receiver checks.
+
+CI now downloads the official `LLVM-23.1.3-Linux-X64.tar.zst` release artifact and
+checks SHA-256
+`14d2f701eb68fb799001bdea6231048f3990690fa2f406d563555ff8f744daba`.
+The same artifact downloaded locally in approximately 54 seconds and passed
+`sha256sum --check`. The default zstd decoder first rejected its 1 GiB window;
+`zstd --decompress --long=30` decoded it successfully. Selective extraction keeps
+Clang, resource headers/runtimes and the LLVM license, about 372 MB unpacked.
+The extracted compiler registered successfully in an isolated asdf data directory,
+reported Clang 23.1.3, and compiled/linked/executed the expected/span/format/jthread
+probe with libstdc++ 15. Building the receiver with that compiler passed all four
+CTest contracts in 10.19 seconds. Staged manual/sample content matched the source.
+
+The cache contains only this compiler installation, keyed by release/platform and
+artifact digest. A cache hit skips download and extraction. PR events trigger
+feature validation; push events target master, avoiding duplicate PR runs.
+Concurrency cancels older runs for the same PR/ref, and the CMake job has a
+15-minute cap. `actionlint` 1.7.12 (including shellcheck) accepted the workflow.
+Cold/warm remote duration and corrected CI results remain to be measured; local
+checks do not substitute for the GitHub run.
 
 Reproduce the pinned build with the CMake commands in BUILD.md. CTest passed
 RTSP dispatch and six ALAC/AAC formats including real ALAC encode/decode, NQPTP
