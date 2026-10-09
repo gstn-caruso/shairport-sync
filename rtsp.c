@@ -2891,11 +2891,6 @@ void handle_set_parameter_parameter(rtsp_conn_info *conn, rtsp_message *req,
       debug(3, "Connection %d: request to set AirPlay Volume to: %f.", conn->connection_number,
             volume);
       // if we are playing, go ahead and change the volume
-      // #ifdef CONFIG_DBUS_INTERFACE
-      //       if (dbus_service_is_running()) {
-      //         shairport_sync_set_volume(shairportSyncSkeleton, volume);
-      //       } else {
-      // #endif
       pthread_rwlock_rdlock(&principal_conn_lock); // don't let the principal_conn be changed
       pthread_cleanup_push(rwlock_unlock, (void *)&principal_conn_lock);
       if (principal_conn == conn) {
@@ -2916,9 +2911,6 @@ void handle_set_parameter_parameter(rtsp_conn_info *conn, rtsp_message *req,
         conn->own_airplay_volume_set = 1;
       }
       pthread_cleanup_pop(1); // release the principal_conn lock
-                              // #ifdef CONFIG_DBUS_INTERFACE
-                              //       }
-                              // #endif
     } else if (strncmp(cp, "progress: ", strlen("progress: ")) ==
                0) { // this can be sent even when metadata is not solicited
 

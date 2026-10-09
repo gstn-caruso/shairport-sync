@@ -60,12 +60,9 @@
 
 
 
-#include <openssl/aes.h> // needed for older AES stuff
-#include <openssl/bio.h> // needed for BIO_new_mem_buf
-#include <openssl/err.h> // needed for ERR_error_string, ERR_get_error
-#include <openssl/evp.h> // needed for EVP_PKEY_CTX_new, EVP_PKEY_sign_init, EVP_PKEY_sign
-#include <openssl/pem.h> // needed for PEM_read_bio_RSAPrivateKey, EVP_PKEY_CTX_set_rsa_padding
-#include <openssl/rsa.h> // needed for EVP_PKEY_CTX_set_rsa_padding
+#include <openssl/bio.h>
+#include <openssl/buffer.h>
+#include <openssl/evp.h>
 
 
 

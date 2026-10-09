@@ -1,5 +1,22 @@
 # Validation evidence
 
+## Post-removal cleanup
+
+Expectation: removing unused AirPlay 1 statistics profiles, RSA constants/headers,
+write-only decoder state and commented-out SoX/DBus code preserves the AirPlay 2
+receiver behavior. `rg` over C sources and headers found no callers of the three
+AP1 profiles or RSA constants, no reads of `decoders_supported` or the connection's
+`decoder_in_use`, and no uses of `use_negotiated_latencies`. The config-level
+`decoder_in_use` still controls FFmpeg cleanup and is retained.
+
+`make -C build/ap2-only check -j2` passed all four existing test programs before
+and after cleanup, including RTSP dispatch, the six retained audio formats,
+NQPTP startup validation and rejection of removed options. No tests were changed.
+RAOP discovery, shared realtime ALAC, pairing and feature masks are retained.
+The user reported successful AirPlay 2/iOS playback before this cleanup; device
+playback and multiroom timing were not repeated for this change. This audit does
+not establish that every remaining generic field or public setting is necessary.
+
 Expectation: default Autotools builds provide only the AirPlay 2 Linux PulseAudio receiver; unsupported configuration fails explicitly; missing/incompatible NQPTP fails before listening or discovery; AP1 cannot be negotiated; shared AP2 ALAC, volume and protocol metadata remain functional.
 
 ## Automated feedback
