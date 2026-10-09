@@ -8,6 +8,7 @@ extern "C" {
 
 /* Returned strings belong to the caller and must be released with free().
  * Allocation failures return NULL.
+ * An empty or NULL replacement token leaves the input unchanged.
  */
 char *str_replace(const char *string, const char *substr, const char *replacement);
 

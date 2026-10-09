@@ -23,6 +23,8 @@ static void checkExpansion() {
 }
 
 static void checkReplacement() {
+  assert(shairport::replaceOccurrences("stable", "", "") == "stable");
+  assert(shairport::replaceOccurrences("stable", "", "x") == "stable");
   assert(shairport::replaceOccurrences("plain", "absent", "x") == "plain");
   assert(shairport::replaceOccurrences("ab ab ab", "ab", "longer") == "longer longer longer");
   assert(shairport::replaceOccurrences("aaaaa", "aa", "b") == "bba");

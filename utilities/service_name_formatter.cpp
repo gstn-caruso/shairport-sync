@@ -6,6 +6,8 @@ namespace shairport {
 std::string replaceOccurrences(std::string_view text, std::string_view token,
                                std::string_view replacement) {
   std::string result(text);
+  if (token.empty())
+    return result;
   std::size_t position = 0;
   while ((position = result.find(token, position)) != std::string::npos) {
     result.replace(position, token.size(), replacement);
