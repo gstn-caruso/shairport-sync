@@ -126,6 +126,8 @@ SyncDecision PlaybackSync::observe(const SyncObservation &observation, SyncPolic
   return decision;
 }
 size_t PlaybackSync::skipFrom(size_t encodedFrames) {
+  if (!pendingSkip_)
+    return 0;
   const auto skipped = static_cast<size_t>(std::min(pendingSkip_, uint64_t(encodedFrames)));
   pendingSkip_ -= skipped;
   if (!pendingSkip_)
