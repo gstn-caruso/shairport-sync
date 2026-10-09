@@ -1,5 +1,6 @@
 #include "session_state.hpp"
 #include "audio_decoder.hpp"
+#include <gtest/gtest.h>
 #include <cassert>
 #include <string.h>
 #include <malloc.h>
@@ -40,8 +41,7 @@ extern "C" int __wrap_avcodec_send_packet(AVCodecContext *context, const AVPacke
   return __real_avcodec_send_packet(context, packet);
 }
 
-static void check_audio_formats(void) {
-  AudioDecoder decoder;
+static void checkPreparedFormatsThrough(AudioDecoder &decoder, ssrc_t lastEncoding) {
   const ssrc_t formats[] = {ALAC_44100_S16_2, ALAC_48000_S24_2, AAC_44100_F24_2,
                             AAC_48000_F24_2, AAC_48000_F24_5P1, AAC_48000_F24_7P1};
   for (size_t index = 0; index < sizeof(formats) / sizeof(formats[0]); index++) {
@@ -53,14 +53,24 @@ static void check_audio_formats(void) {
     assert(contextsOpened == opened && contextsReleased == released);
     assert(decoder.currentFormat()->sampleRate() == (formats[index] == ALAC_44100_S16_2 ||
                                 formats[index] == AAC_44100_F24_2 ? 44100U : 48000U));
+    if (formats[index] == lastEncoding)
+      break;
   }
+}
+
+static void checkUsedDecoderReset(AudioDecoder &decoder) {
+  checkPreparedFormatsThrough(decoder, AAC_48000_F24_7P1);
   const auto beforeReset = contextsReleased;
   decoder.reset();
   assert(contextsReleased == beforeReset + 1);
   decoder.reset();
   assert(contextsReleased == beforeReset + 1);
   assert(!decoder.currentFormat());
+}
 
+static void checkAlacRoundtripAndFrameLifetime() {
+  AudioDecoder decoder;
+  checkUsedDecoderReset(decoder);
   AVCodecContext *encoder = avcodec_alloc_context3(avcodec_find_encoder(AV_CODEC_ID_ALAC));
   assert(encoder != NULL);
   encoder->sample_fmt = AV_SAMPLE_FMT_S16P;
@@ -119,11 +129,11 @@ static void checkErrorsAndDestruction() {
 static void checkPlayerBoundary() {
   SessionState session{};
   prepare_decoding_chain(&session, ALAC_44100_S16_2);
-  assert(session.input_rate == 44100 && session.frames_per_packet == 352);
-  assert(session.input_format_is_valid);
+  assert(session.inputAudio.sampleRate() == 44100 && session.inputAudio.framesPerPacket() == 352);
+  assert(session.inputAudio.isDecodedFormatValid());
   prepare_decoding_chain(&session, static_cast<ssrc_t>(0xf00d));
   assert(session.decoder.currentFormat()->ssrc() == ALAC_44100_S16_2);
-  assert(session.input_rate == 44100);
+  assert(session.inputAudio.sampleRate() == 44100);
   std::array<uint8_t, 8> shortPacket{};
   assert(block_to_avframe(&session, shortPacket.data(), shortPacket.size()) == nullptr);
   std::array<uint8_t, 16> invalidPacket{};
@@ -132,8 +142,49 @@ static void checkPlayerBoundary() {
   clear_decoding_chain(&session);
   assert(!session.decoder.currentFormat());
 }
-int main() {
-  check_audio_formats();
+TEST(AudioDecoder, Alac44100StereoPreparationReusesUnchangedContext) {
+  AudioDecoder decoder;
+  checkPreparedFormatsThrough(decoder, ALAC_44100_S16_2);
+}
+
+TEST(AudioDecoder, Alac48000StereoPreparationReplacesPriorFormatAndReusesContext) {
+  AudioDecoder decoder;
+  checkPreparedFormatsThrough(decoder, ALAC_48000_S24_2);
+}
+
+TEST(AudioDecoder, Aac44100StereoPreparationReplacesPriorFormatAndReusesContext) {
+  AudioDecoder decoder;
+  checkPreparedFormatsThrough(decoder, AAC_44100_F24_2);
+}
+
+TEST(AudioDecoder, Aac48000StereoPreparationReplacesPriorFormatAndReusesContext) {
+  AudioDecoder decoder;
+  checkPreparedFormatsThrough(decoder, AAC_48000_F24_2);
+}
+
+TEST(AudioDecoder, Aac48000Surround51PreparationReplacesPriorFormatAndReusesContext) {
+  AudioDecoder decoder;
+  checkPreparedFormatsThrough(decoder, AAC_48000_F24_5P1);
+}
+
+TEST(AudioDecoder, Aac48000Surround71PreparationReplacesPriorFormatAndReusesContext) {
+  AudioDecoder decoder;
+  checkPreparedFormatsThrough(decoder, AAC_48000_F24_7P1);
+}
+
+TEST(AudioDecoder, ResetAfterFormatChangesReleasesContextOnce) {
+  AudioDecoder decoder;
+  checkUsedDecoderReset(decoder);
+}
+
+TEST(AudioDecoder, AlacRoundtripFrameOutlivesDecoderReset) {
+  checkAlacRoundtripAndFrameLifetime();
+}
+
+TEST(AudioDecoder, ShortUnpreparedAndInvalidPacketsPreserveFormatUntilDestruction) {
   checkErrorsAndDestruction();
+}
+
+TEST(AudioDecoder, PlayerBoundaryPreservesKnownFormatAndClearsIdempotently) {
   checkPlayerBoundary();
 }

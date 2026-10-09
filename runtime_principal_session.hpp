@@ -63,7 +63,7 @@ public:
     if (!current_)
       return {};
     return {current_->connection_number, current_->playbackRun.isActive(),
-            current_->airplay_stream_category, current_->input_rate, current_->type,
+            current_->airplay_stream_category, current_->inputAudio.sampleRate(), current_->type,
             current_->airplay_gid ? current_->airplay_gid : "",
             current_->groupContainsGroupLeader != 0};
   }

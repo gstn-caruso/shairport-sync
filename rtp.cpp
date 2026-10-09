@@ -325,7 +325,7 @@ int get_ptp_anchor_local_time_info(rtsp_conn_info *conn, uint32_t *anchorRTP,
         break;
       }
   }
-  if (auto frame = conn->clock.anchorFrame(conn->input_rate, config.audio_backend_latency_offset);
+  if (auto frame = conn->clock.anchorFrame(conn->inputAudio.sampleRate(), config.audio_backend_latency_offset);
       frame && anchorRTP)
     *anchorRTP = *frame;
   if (auto time = conn->clock.localAnchorTime(); time && anchorLocalTime)
@@ -338,10 +338,10 @@ int have_ptp_timing_information(rtsp_conn_info *conn) {
 }
 
 int frame_to_ptp_local_time(uint32_t timestamp, uint64_t *time, rtsp_conn_info *conn) {
-  if (conn->input_rate == 0)
+  if (conn->inputAudio.sampleRate() == 0)
     return -1;
   get_ptp_anchor_local_time_info(conn, NULL, NULL);
-  auto converted = conn->clock.localTimeForFrame(timestamp, conn->input_rate,
+  auto converted = conn->clock.localTimeForFrame(timestamp, conn->inputAudio.sampleRate(),
                                                 config.audio_backend_latency_offset);
   if (!converted)
     return -1;
@@ -350,10 +350,10 @@ int frame_to_ptp_local_time(uint32_t timestamp, uint64_t *time, rtsp_conn_info *
 }
 
 int local_ptp_time_to_frame(uint64_t time, uint32_t *frame, rtsp_conn_info *conn) {
-  if (conn->input_rate == 0)
+  if (conn->inputAudio.sampleRate() == 0)
     return -1;
   get_ptp_anchor_local_time_info(conn, NULL, NULL);
-  auto converted = conn->clock.frameForLocalTime(time, conn->input_rate,
+  auto converted = conn->clock.frameForLocalTime(time, conn->inputAudio.sampleRate(),
                                                 config.audio_backend_latency_offset);
   if (!converted)
     return -1;
@@ -519,7 +519,7 @@ void *rtp_ap2_control_receiver(void *arg) {
               // Note that it's in input-rate frames, not output-rate frames!
 
               net_source_latency = net_source_latency - (int32_t)(config.audio_backend_buffer_desired_length *
-                                                    conn->input_rate);
+                                                    conn->inputAudio.sampleRate());
 
               // Now we want to check the user-specified latency offset.
 
@@ -527,13 +527,13 @@ void *rtp_ap2_control_receiver(void *arg) {
               // one that would require packets to arrive before they actually do,
               // (which is about two seconds before they are to be played).
 
-              int32_t net_latency = net_source_latency + (int32_t)(config.audio_backend_latency_offset * conn->input_rate);
+              int32_t net_latency = net_source_latency + (int32_t)(config.audio_backend_latency_offset * conn->inputAudio.sampleRate());
 
               if (net_latency <= 0) {
                 if (conn->latency_warning_issued == 0) {
                   warn("The stream latency (%g seconds) is too short to accommodate an audio backend latency offset of "
                        "%g seconds and a backend buffer of %g seconds. The audio_backend_latency_offset has been set to zero.",
-                       ((stream_specified_latency + ap2_realttime_stream_latency_fudge_factor) * 1.0) / conn->input_rate,
+                       ((stream_specified_latency + ap2_realttime_stream_latency_fudge_factor) * 1.0) / conn->inputAudio.sampleRate(),
                        config.audio_backend_latency_offset,
                        config.audio_backend_buffer_desired_length);
                   config.audio_backend_latency_offset = 0.0;

@@ -1,10 +1,13 @@
 #include "session_state.hpp"
 #include "audio_player_adapter.hpp"
 #include "volume_runtime.hpp"
+#include <gtest/gtest.h>
 #include <cassert>
 #include <cerrno>
 #include <csignal>
 #include <format>
+#include <filesystem>
+#include <cstring>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -17,8 +20,13 @@ static void *setVolume(void *argument) {
   return nullptr;
 }
 static int chooseOutput(unsigned, unsigned, unsigned) { return 0; }
+static std::string selfExecutable;
 
 static void checkCancellation(const char *executable, bool startup) {
+  const auto savedCommand = config.cmd_set_volume;
+  const auto savedBlocking = config.cmd_blocking;
+  const auto savedOutput = config.output;
+  const auto savedSharedLevel = sharedVolumeLevel.current();
   int ready[2], release[2];
   assert(pipe(ready) == 0 && pipe(release) == 0);
   const auto command = std::format("{} --child {} {}", executable, ready[1], release[0]);
@@ -54,15 +62,30 @@ static void checkCancellation(const char *executable, bool startup) {
   assert(pthread_mutex_destroy(&session.flush_mutex) == 0);
   assert(joined == 0 && completion == PTHREAD_CANCELED);
   assert(session.volumeControl.pcmSnapshot().gainFixed16 == 65536);
+  config.cmd_set_volume = savedCommand;
+  config.cmd_blocking = savedBlocking;
+  config.output = savedOutput;
+  sharedVolumeLevel.remember(savedSharedLevel);
 }
+
+TEST(VolumeCommandCancellation, StartupCancellationLeavesAppliedGainAndReapsCommand) {
+  checkCancellation(selfExecutable.c_str(), true);
+}
+
+TEST(VolumeCommandCancellation, UpdateCancellationLeavesAppliedGainAndReapsCommand) {
+  checkCancellation(selfExecutable.c_str(), false);
+}
+
 int main(int argc, char **argv) {
-  if (argc > 1) {
+  if (argc > 1 && std::strcmp(argv[1], "--child") == 0) {
+    if (argc < 4) return 1;
     const int ready = std::atoi(argv[2]), release = std::atoi(argv[3]);
     const pid_t self = getpid();
     if (write(ready, &self, sizeof self) != sizeof self) return 1;
     char byte;
     return read(release, &byte, 1) == 1 ? 0 : 1;
   }
-  checkCancellation(argv[0], true);
-  checkCancellation(argv[0], false);
+  selfExecutable = std::filesystem::absolute(argv[0]).string();
+  testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
 }

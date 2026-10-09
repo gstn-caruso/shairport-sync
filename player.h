@@ -48,12 +48,15 @@ typedef struct {
   size_t size;
 } sized_buffer;
 
-typedef struct {
+typedef struct pair_cipher_bundle {
   struct pair_cipher_context *cipher_ctx;
   sized_buffer encrypted_read_buffer;
   sized_buffer plaintext_read_buffer;
   int is_encrypted;
   char *description;
+#ifdef __cplusplus
+  void release();
+#endif
 } pair_cipher_bundle; // cipher context and buffers
 
 typedef struct {

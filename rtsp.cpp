@@ -223,6 +223,17 @@ static void buf_drain(sized_buffer *buf, ssize_t len) {
   buf->length -= len;
 }
 
+void pair_cipher_bundle::release() {
+  buf_drain(&plaintext_read_buffer, -1);
+  buf_drain(&encrypted_read_buffer, -1);
+  if (description != nullptr)
+    free(description);
+  description = nullptr;
+  auto *cipher = cipher_ctx;
+  cipher_ctx = nullptr;
+  pair_cipher_free(cipher);
+}
+
 static size_t buf_remove(sized_buffer *buf, uint8_t *out, size_t out_len) {
   size_t bytes = (buf->length > out_len) ? out_len : buf->length;
   memcpy(out, buf->data, bytes);
@@ -2286,7 +2297,7 @@ void handle_setup_2(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
         plist_get_uint_val(item, &item_value);
         // see https://emanuelecozzi.net/docs/airplay2/audio/ for values
         debug(3, "Frames per packet (aka spf (\"samples per frame\"?): %" PRId64 ".", item_value);
-        conn->frames_per_packet = item_value;
+        conn->inputAudio.setSetupPacketFrames(item_value);
       } else {
         warn("No frames per packet (spf) property found in setup!");
       }
@@ -2356,8 +2367,8 @@ void handle_setup_2(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
         if (item != NULL) {
           plist_get_uint_val(item, &item_value);
           // see https://emanuelecozzi.net/docs/airplay2/audio/ for values
-          conn->input_rate = item_value;
-          debug(4, "Set conn->input_rate: %u.", conn->input_rate);
+          conn->inputAudio.setSetupSampleRate(item_value);
+          debug(4, "Set conn->input_rate: %u.", conn->inputAudio.sampleRate());
         } else {
           debug(1, "Connection %d. No sample rate (sr) property found in setup.",
                 conn->connection_number);
@@ -2366,8 +2377,8 @@ void handle_setup_2(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
         item = plist_dict_get_item(stream0, "spf"); // samples per frame
         if (item != NULL) {
           plist_get_uint_val(item, &item_value);
-          conn->frames_per_packet = item_value;
-          debug(4, "Set conn->frames_per_packet: %u.", conn->frames_per_packet);
+          conn->inputAudio.setSetupPacketFrames(item_value);
+          debug(4, "Set conn->frames_per_packet: %u.", conn->inputAudio.framesPerPacket());
         } else {
           debug(1, "Connection %d. No samples per frame (spf) property found in setup.",
                 conn->connection_number);
@@ -2703,23 +2714,9 @@ void rtsp_conversation_thread_cleanup_function(void *arg) {
     debug(3, "Connection %d: terminating  -- closing timing, control and audio sockets...",
           conn->connection_number);
 
-    buf_drain(&conn->ap2_pairing_context.control_cipher_bundle.plaintext_read_buffer, -1);
-    buf_drain(&conn->ap2_pairing_context.control_cipher_bundle.encrypted_read_buffer, -1);
-    if (conn->ap2_pairing_context.control_cipher_bundle.description != NULL)
-      free(conn->ap2_pairing_context.control_cipher_bundle.description);
-    pair_cipher_free(conn->ap2_pairing_context.control_cipher_bundle.cipher_ctx);
-
-    buf_drain(&conn->ap2_pairing_context.event_cipher_bundle.plaintext_read_buffer, -1);
-    buf_drain(&conn->ap2_pairing_context.event_cipher_bundle.encrypted_read_buffer, -1);
-    if (conn->ap2_pairing_context.event_cipher_bundle.description != NULL)
-      free(conn->ap2_pairing_context.event_cipher_bundle.description);
-    pair_cipher_free(conn->ap2_pairing_context.event_cipher_bundle.cipher_ctx);
-
-    buf_drain(&conn->ap2_pairing_context.data_cipher_bundle.plaintext_read_buffer, -1);
-    buf_drain(&conn->ap2_pairing_context.data_cipher_bundle.encrypted_read_buffer, -1);
-    if (conn->ap2_pairing_context.data_cipher_bundle.description != NULL)
-      free(conn->ap2_pairing_context.data_cipher_bundle.description);
-    pair_cipher_free(conn->ap2_pairing_context.data_cipher_bundle.cipher_ctx);
+    conn->ap2_pairing_context.control_cipher_bundle.release();
+    conn->ap2_pairing_context.event_cipher_bundle.release();
+    conn->ap2_pairing_context.data_cipher_bundle.release();
 
     pair_setup_free(conn->ap2_pairing_context.setup_ctx);
     pair_verify_free(conn->ap2_pairing_context.verify_ctx);

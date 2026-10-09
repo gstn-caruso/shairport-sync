@@ -22,7 +22,7 @@ jobs:
       - name: Install C++26 build dependencies
         run: |
           apt-get update
-          apt-get install -y ca-certificates curl git cmake ninja-build gcc-15 g++-15 g++ zstd pkg-config libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
+          apt-get install -y ca-certificates curl git cmake ninja-build gcc-15 g++-15 g++ zstd pkg-config libgtest-dev libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
       - uses: actions/checkout@v4
       - name: Install asdf
         run: |

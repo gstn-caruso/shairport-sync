@@ -25,7 +25,7 @@ The toolchain resolves compiler paths through `asdf which` from the repository.
 Install the receiver dependencies on Debian/Ubuntu, then build:
 
 ```sh
-sudo apt-get install pkg-config libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
+sudo apt-get install pkg-config libgtest-dev libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
 cmake -S . -B build/cmake -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=cmake/clang-toolchain.cmake \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_SYSCONFDIR=/etc
@@ -45,6 +45,23 @@ directory before configuring. To install on the host after checking the staged
 files, run `sudo cmake --install build/cmake`.
 
 ## Build checks
+
+Test builds require GoogleTest 1.17 or newer (`libgtest-dev`). Production-only
+builds configured with `-DBUILD_TESTING=OFF` do not require GoogleTest.
+All C++ suites register named scenarios with CTest. For a short feedback cycle,
+build the relevant executable and select one case:
+
+```sh
+cmake --build build/cmake --target volume-policy-test --parallel 2
+ctest --test-dir build/cmake -R '^VolumePolicy.MuteLevelRequestsMute$' --no-tests=error --output-on-failure
+```
+
+Use `ctest --test-dir build/cmake -N` to list cases, or a suite prefix such as
+`-R '^RtpClock\.'` to select a group. Keep `--no-tests=error` so a mistyped name
+fails. Full builds and CTest runs still cover the C adapters, linkage and shell
+contracts. Policy, clock, audio-format/mapping, PCM/samples and playback-timing
+targets use separate libraries; unrelated receiver changes do not relink their
+test executables. This improves targeted feedback rather than clean-build time.
 
 CI runs separate CMake Release, Debug, ASan+UBSan and TSan builds,
 all with the same pinned compiler and library. Every build runs its contracts

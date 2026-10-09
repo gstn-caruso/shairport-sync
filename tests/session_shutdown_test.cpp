@@ -1,5 +1,6 @@
 #include "session_registry.hpp"
 #include "cancellation_wait.hpp"
+#include <gtest/gtest.h>
 #include <cassert>
 #include <cerrno>
 #include <condition_variable>
@@ -143,6 +144,7 @@ static void *shutdownTwice(void *) {
 }
 static void checkDestructor(void *(*destroyer)(void *), bool cancelDestroyer,
                             bool cancelWhileWaiting = false) {
+  const auto savedScenario = scenario;
   ShutdownScenario current;
   scenario = &current;
   assert(socketpair(AF_UNIX, SOCK_STREAM, 0, current.sockets) == 0);
@@ -175,15 +177,41 @@ static void checkDestructor(void *(*destroyer)(void *), bool cancelDestroyer,
   assert(current.destructionReturned && current.cleanupFinished);
   assert(read(current.sockets[1], &byte, 1) == 0);
   close(current.sockets[1]);
+  scenario = savedScenario;
 }
-int main() {
+
+TEST(SessionShutdown, StackDestructionCancelsAndJoinsBeforeClosingSocket) {
   checkDestructor(destroyStack, false);
+}
+
+TEST(SessionShutdown, UniqueOwnershipDestructionCancelsAndJoinsBeforeClosingSocket) {
   checkDestructor(destroyUnique, false);
+}
+
+TEST(SessionShutdown, PendingCancellationIsDeliveredAfterStackDestructionReturns) {
   checkDestructor(destroyStack, true);
+}
+
+TEST(SessionShutdown, PendingCancellationIsDeliveredAfterUniqueOwnershipDestructionReturns) {
   checkDestructor(destroyUnique, true);
+}
+
+TEST(SessionShutdown, PendingCancellationDuringExceptionUnwindCompletesStackCleanup) {
   checkDestructor(unwindStack, true);
+}
+
+TEST(SessionShutdown, PendingCancellationDuringExceptionUnwindCompletesUniqueOwnershipCleanup) {
   checkDestructor(unwindUnique, true);
+}
+
+TEST(SessionShutdown, PthreadCancellationUnwindsStackOwnerAndJoinsWorker) {
   checkDestructor(cancelStack, true, true);
+}
+
+TEST(SessionShutdown, PthreadCancellationUnwindsUniqueOwnerAndJoinsWorker) {
   checkDestructor(cancelUnique, true, true);
+}
+
+TEST(SessionShutdown, ExplicitShutdownIsIdempotentAndRejectsNewSessions) {
   checkDestructor(shutdownTwice, false);
 }

@@ -199,8 +199,7 @@ static int setupSoftwareResampler(rtsp_conn_info *conn, ssrc_t ssrc,
         debug(2, "Connection %d: outgoing audio switching to: %s.", conn->connection_number,
               short_format_description(encoded));
       config.current_output_configuration = encoded;
-      conn->input_rate = format->sampleRate();
-      conn->frames_per_packet = format->framesPerPacket();
+      conn->inputAudio.recordPacketShape(*format);
       const auto shape = conn->resampler.outputShape();
       if (!conn->pcmEncoder.configure(
               {FORMAT_FROM_ENCODED_FORMAT(encoded), shape.channels()}, shape.effectiveBits()))
@@ -233,9 +232,7 @@ void prepareIncomingAudio(SessionState &session, ssrc_t ssrc) {
     if (config.statistics_requested && previousFormat)
       inform("Connection %d: Incoming Audio Encoding is switching to: \"%s\".",
              session.connection_number, format->name().data());
-    session.input_rate = format->sampleRate();
-    session.frames_per_packet = format->framesPerPacket();
-    session.input_format_is_valid = 1;
+    session.inputAudio.recordDecodedFormat(*format);
   }
   pthread_setcancelstate(previousState, nullptr);
 }
@@ -310,7 +307,7 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t timestamp, uint8
       static_cast<uint64_t>(config.resend_control_check_interval_time * 1000000000),
       static_cast<uint64_t>((config.resend_control_last_check_time +
                             config.audio_backend_buffer_desired_length) * 1000000000),
-      conn->input_rate ? uint64_t(conn->latency) * 1000000000 / conn->input_rate : 0};
+      conn->inputAudio.sampleRate() ? uint64_t(conn->latency) * 1000000000 / conn->inputAudio.sampleRate() : 0};
   auto admission = conn->packetBuffer.accept(seqno, now, [&] {
     prepareIncomingAudio(*conn, format->ssrc());
     auto packet = QueuedAudioPacket::decoded(*format, seqno, timestamp, timestamp_gap,
@@ -357,7 +354,7 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
     const auto observedRevision = conn->packetBuffer.revision();
     // debug(3, "buffer_get_frame is iterating");
     // we must have timing information before we can do anything here
-    if ((have_timestamp_timing_information(conn)) && (conn->input_format_is_valid != 0)) {
+    if ((have_timestamp_timing_information(conn)) && conn->inputAudio.isDecodedFormatValid()) {
 
       if (config.output->is_running && config.output->is_running() != 0)
         conn->packetBuffer.requestFlush(0);
@@ -428,7 +425,7 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
       wait = true;
       if (front) {
         const auto desiredFrames = static_cast<uint32_t>(
-            config.audio_backend_buffer_desired_length * conn->input_rate);
+            config.audio_backend_buffer_desired_length * conn->inputAudio.sampleRate());
         const auto target = conn->playbackTiming.releaseTargetFrame(
             front->packet.ready ? front->packet.timestamp : 0, desiredFrames);
         ReleaseObservation observation{get_absolute_time_in_ns(), {}};
@@ -451,11 +448,11 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
     }
     if (wait) {
       uint64_t time_to_wait_for_wakeup_ns = 10000000; // default
-      if (conn->input_format_is_valid != 0) {
+      if (conn->inputAudio.isDecodedFormatValid()) {
         time_to_wait_for_wakeup_ns =
-            1000000000 / conn->input_rate; // this is time period of one frame
+            1000000000 / conn->inputAudio.sampleRate(); // this is time period of one frame
         time_to_wait_for_wakeup_ns *=
-            4 * conn->frames_per_packet; // about 4 * 7 mS for 352 frames per second
+            4 * conn->inputAudio.framesPerPacket(); // about 4 * 7 mS for 352 frames per second
       }
 
       uint64_t time_of_wakeup_ns = get_realtime_in_ns() + time_to_wait_for_wakeup_ns;
@@ -615,7 +612,7 @@ void *player_thread_func(void *arg) {
   conn->playbackSync.resetForPlay();
   conn->playbackTiming.resetForPlay();
   conn->volumeControl.resetGainForPlay();
-  conn->frames_per_packet = 352; // for ALAC -- will be changed if necessary
+  conn->inputAudio.beginPlayback();
 
   conn->ap2_rate = 0;
   conn->ap2_play_enabled = 0;
@@ -714,7 +711,7 @@ void *player_thread_func(void *arg) {
                   conn->last_seqno_read + 1, play_number, 0u, 0u);
             conn->last_seqno_read++; // manage the packet out of sequence minder
 
-            auto silence = conn->pcmEncoder.silence(conn->frames_per_packet);
+            auto silence = conn->pcmEncoder.silence(conn->inputAudio.framesPerPacket());
             config.output->play(silence.bytes().data(), silence.frames(),
                                 play_samples_are_untimed, 0, 0);
             frames_played += silence.frames();
@@ -883,7 +880,7 @@ void *player_thread_func(void *arg) {
               observation.timestampGap = playback.timestampGap;
               observation.firstFrame = conn->playbackTiming.isFirstFrame(playback.timestamp);
               observation.measured = true;
-              observation.inputRate = conn->input_rate;
+              observation.inputRate = conn->inputAudio.sampleRate();
               observation.outputRate = RATE_FROM_ENCODED_FORMAT(config.current_output_configuration);
               observation.blockFrames = inbuflength;
               observation.playNumber = play_number;

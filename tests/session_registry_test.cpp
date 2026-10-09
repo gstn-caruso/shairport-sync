@@ -1,6 +1,7 @@
 #include "session_registry.hpp"
 #include "runtime_principal_session.hpp"
 #include "cancellation_wait.hpp"
+#include <gtest/gtest.h>
 #include <cassert>
 #include <cerrno>
 #include <condition_variable>
@@ -22,59 +23,70 @@ static_assert(!ExposesTakeMatching<SessionRegistry>);
 
 static int rejectThread(pthread_t *, void *(*)(void *), void *) { return EAGAIN; }
 static void *unusedThread(void *) { assert(false); return nullptr; }
-static SessionRegistry *activeRegistry;
-static std::mutex completionMutex;
-static std::condition_variable completionChanged;
-static bool finished;
-static RuntimePrincipalSession *activePrincipal;
-static bool cleanupEntered;
-static int cleanupCount;
-static bool permitCleanup;
-static bool cleanupFinished;
-static CancellationWait cancellation;
+struct RegistryScenario {
+  SessionRegistry *activeRegistry = nullptr;
+  RuntimePrincipalSession *activePrincipal = nullptr;
+  std::mutex completionMutex;
+  std::condition_variable completionChanged;
+  bool finished = false, cleanupEntered = false;
+  int cleanupCount = 0;
+  bool permitCleanup = false, cleanupFinished = false;
+  CancellationWait cancellation;
+};
+static RegistryScenario *scenario;
 static void finishCancelled(void *argument) {
+  auto &current = *scenario;
   auto *session = static_cast<SessionState *>(argument);
   {
-    std::unique_lock lock(completionMutex);
-    cleanupEntered = true;
-    ++cleanupCount;
-    completionChanged.notify_all();
-    completionChanged.wait(lock, [] { return permitCleanup; });
+    std::unique_lock lock(current.completionMutex);
+    current.cleanupEntered = true;
+    ++current.cleanupCount;
+    current.completionChanged.notify_all();
+    current.completionChanged.wait(lock, [&] { return current.permitCleanup; });
   }
-  activePrincipal->releaseIfCurrent(session->connection_number);
-  activeRegistry->markFinished(session->connection_number);
+  current.activePrincipal->releaseIfCurrent(session->connection_number);
+  current.activeRegistry->markFinished(session->connection_number);
   {
-    std::lock_guard lock(completionMutex);
-    cleanupFinished = true;
+    std::lock_guard lock(current.completionMutex);
+    current.cleanupFinished = true;
   }
-  completionChanged.notify_all();
+  current.completionChanged.notify_all();
 }
 static void *waitForCancellation(void *argument) {
   pthread_cleanup_push(finishCancelled, argument);
-  cancellation.block();
+  scenario->cancellation.block();
   pthread_cleanup_pop(1);
   return nullptr;
 }
 static void *retireSession(void *) {
-  assert(activeRegistry->cancelAndJoin(5));
+  assert(scenario->activeRegistry->cancelAndJoin(5));
   return nullptr;
 }
 static void *retireAll(void *) {
-  activeRegistry->cancelAndJoinMatching(unspecified_stream_category, 0);
+  scenario->activeRegistry->cancelAndJoinMatching(unspecified_stream_category, 0);
   return nullptr;
 }
 static void *finishImmediately(void *argument) {
+  auto &current = *scenario;
   auto *session = static_cast<SessionState *>(argument);
-  activeRegistry->markFinished(session->connection_number);
+  current.activeRegistry->markFinished(session->connection_number);
   {
-    std::lock_guard lock(completionMutex);
-    finished = true;
+    std::lock_guard lock(current.completionMutex);
+    current.finished = true;
   }
-  completionChanged.notify_one();
+  current.completionChanged.notify_one();
   return nullptr;
 }
 
-int main() {
+static void withScenario(void (*check)(RegistryScenario &)) {
+  const auto savedScenario = scenario;
+  RegistryScenario current;
+  scenario = &current;
+  check(current);
+  scenario = savedScenario;
+}
+
+static void checkFailedThreadCreation() {
   int sockets[2];
   assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
   auto session = std::make_unique<SessionState>();
@@ -86,23 +98,30 @@ int main() {
   char byte;
   assert(read(sockets[1], &byte, 1) == 0);
   close(sockets[1]);
+}
+
+static void checkImmediateCompletion(RegistryScenario &current) {
+  int sockets[2];
+  char byte;
   SessionRegistry successful;
-  activeRegistry = &successful;
+  current.activeRegistry = &successful;
   auto immediate = std::make_unique<SessionState>();
   assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
   immediate->fd = sockets[0];
   immediate->connection_number = 2;
   assert(successful.start(std::move(immediate), finishImmediately) == 0);
   {
-    std::unique_lock lock(completionMutex);
-    completionChanged.wait(lock, [] { return finished; });
+    std::unique_lock lock(current.completionMutex);
+    current.completionChanged.wait(lock, [&] { return current.finished; });
   }
   successful.joinFinished();
   successful.joinFinished();
   assert(!successful.cancelAndJoin(2));
   assert(read(sockets[1], &byte, 1) == 0);
   close(sockets[1]);
-  RuntimePrincipalSession principal;
+}
+
+static void checkPrincipalReplacement(RuntimePrincipalSession &principal) {
   SessionState first{}, replacement{};
   first.connection_number = 3;
   replacement.connection_number = 4;
@@ -115,9 +134,15 @@ int main() {
   assert(principal.snapshot().id == 4);
   assert(principal.clear() == 4);
   assert(!principal.isCurrent(4));
-  SessionRegistry cancellation;
-  activeRegistry = &cancellation;
-  activePrincipal = &principal;
+}
+
+static void checkCancelledRetirement(RegistryScenario &current, SessionRegistry &cancellation,
+                                     RuntimePrincipalSession &principal) {
+  checkPrincipalReplacement(principal);
+  int sockets[2];
+  char byte;
+  current.activeRegistry = &cancellation;
+  current.activePrincipal = &principal;
   assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
   auto cancellable = std::make_unique<SessionState>();
   cancellable->connection_number = 5;
@@ -127,28 +152,46 @@ int main() {
   pthread_t retiring;
   assert(pthread_create(&retiring, nullptr, retireSession, nullptr) == 0);
   {
-    std::unique_lock lock(completionMutex);
-    completionChanged.wait(lock, [] { return cleanupEntered; });
+    std::unique_lock lock(current.completionMutex);
+    current.completionChanged.wait(lock, [&] { return current.cleanupEntered; });
   }
   assert(!cancellation.cancelAndJoin(5));
   assert(pthread_cancel(retiring) == 0);
   assert(recv(sockets[1], &byte, 1, MSG_DONTWAIT) == -1 && errno == EAGAIN);
   {
-    std::lock_guard lock(completionMutex);
-    permitCleanup = true;
+    std::lock_guard lock(current.completionMutex);
+    current.permitCleanup = true;
   }
-  completionChanged.notify_all();
+  current.completionChanged.notify_all();
   void *result;
   assert(pthread_join(retiring, &result) == 0);
   assert(result == PTHREAD_CANCELED);
-  assert(cleanupFinished);
+  assert(current.cleanupFinished);
   assert(!principal.isCurrent(5));
   cancellation.joinFinished();
   assert(!cancellation.cancelAndJoin(5));
   assert(read(sockets[1], &byte, 1) == 0);
   close(sockets[1]);
-  permitCleanup = false;
-  cleanupCount = 0;
+}
+
+static void checkRetirementScenario(RegistryScenario &current) {
+  RuntimePrincipalSession principal;
+  SessionRegistry cancellation;
+  checkCancelledRetirement(current, cancellation, principal);
+}
+
+static void checkBatchRetirement(RegistryScenario &current) {
+  RuntimePrincipalSession principal;
+  SessionRegistry cancellation;
+  checkCancelledRetirement(current, cancellation, principal);
+  {
+    std::lock_guard lock(current.completionMutex);
+    current.permitCleanup = false;
+    current.cleanupCount = 0;
+  }
+  int sockets[2];
+  char byte;
+  pthread_t retiring;
   int secondSockets[2];
   assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
   assert(socketpair(AF_UNIX, SOCK_STREAM, 0, secondSockets) == 0);
@@ -162,14 +205,35 @@ int main() {
   assert(cancellation.start(std::move(two), waitForCancellation) == 0);
   assert(pthread_create(&retiring, nullptr, retireAll, nullptr) == 0);
   {
-    std::unique_lock lock(completionMutex);
-    completionChanged.wait(lock, [] { return cleanupCount == 2; });
-    permitCleanup = true;
+    std::unique_lock lock(current.completionMutex);
+    current.completionChanged.wait(lock, [&] { return current.cleanupCount == 2; });
+    current.permitCleanup = true;
   }
-  completionChanged.notify_all();
+  current.completionChanged.notify_all();
   assert(pthread_join(retiring, nullptr) == 0);
   assert(read(sockets[1], &byte, 1) == 0);
   assert(read(secondSockets[1], &byte, 1) == 0);
   close(sockets[1]);
   close(secondSockets[1]);
+}
+
+TEST(SessionRegistry, FailedThreadCreationClosesOwnedSocket) {
+  checkFailedThreadCreation();
+}
+
+TEST(SessionRegistry, ImmediateCompletionIsRetainedForOneJoin) {
+  withScenario(checkImmediateCompletion);
+}
+
+TEST(SessionRegistry, ReplacementPreservesNewPrincipalUntilExplicitClear) {
+  RuntimePrincipalSession principal;
+  checkPrincipalReplacement(principal);
+}
+
+TEST(SessionRegistry, CallerCancellationDuringRetirementKeepsSessionOwnedUntilWorkerJoin) {
+  withScenario(checkRetirementScenario);
+}
+
+TEST(SessionRegistry, BatchCancellationSignalsAllWorkersBeforeJoiningBlockedCleanup) {
+  withScenario(checkBatchRetirement);
 }

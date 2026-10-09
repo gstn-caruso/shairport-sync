@@ -4,6 +4,7 @@
 #include "rtsp_message.hpp"
 #include "utilities/rtsp_message_utilities.h"
 #include "utilities/debug.h"
+#include <gtest/gtest.h>
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
@@ -128,6 +129,7 @@ static void checkCancellationReleasesRequest() {
 }
 
 static void checkLoggingReleasesParsedPlist() {
+  const auto previousDebugLevel = debug_level();
   RtspMessage message;
   auto plist = plist_new_dict();
   plist_dict_set_item(plist, "value", plist_new_uint(7));
@@ -138,14 +140,30 @@ static void checkLoggingReleasesParsedPlist() {
   _debug_log_rtsp_message(nullptr, __FILE__, __LINE__, 4, "owned plist", &message);
   set_debug_level(0);
   assert(releasedPlists == previousReleases + 1);
+  set_debug_level(previousDebugLevel);
 }
 
-int main() {
+TEST(RtspMessage, CancellationReleasesPartiallyReadRequest) {
   checkCancellationReleasesRequest();
+}
+
+TEST(RtspMessage, LoggingReleasesParsedPlistExactlyOnce) {
   checkLoggingReleasesParsedPlist();
+}
+
+TEST(RtspMessage, RequestParsingTruncatesFieldsAndRejectsMalformedLines) {
   checkRequestParsing();
+}
+
+TEST(RtspMessage, HeaderLimitPreservesFirstCaseInsensitiveDuplicate) {
   checkHeaderLimitAndDuplicates();
+}
+
+TEST(RtspMessage, SocketResponsePreservesDuplicateHeaderOrderAndBinaryBody) {
   checkBinaryResponseFraming();
+}
+
+TEST(RtspMessage, OwnedRequestBodyPreservesBorrowedBytesAndSupportsEmptyReplacement) {
   RtspMessage owned;
   assert(owned.readLine("OPTIONS /info RTSP/1.0") == -1);
   assert(owned.requestsMethod("OPTIONS"));
@@ -159,6 +177,9 @@ int main() {
   assert(owned.bodyData()[3] == '\0');
   owned.replaceBody("");
   assert(owned.bodyLength() == 0);
+}
+
+TEST(RtspMessage, ResponseFramingPreservesDuplicatesAndRejectsOversizedBody) {
   RtspMessage framedResponse;
   framedResponse.respondWith(200);
   assert(framedResponse.responsePacket().value() == "RTSP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n");
@@ -170,6 +191,9 @@ int main() {
   assert(framedResponse.responsePacket().value() == duplicateHeaders);
   framedResponse.replaceBody(std::string(4096, 'x'));
   assert(framedResponse.responsePacket().error() == RtspMessage::FramingError::bodyTooLong);
+}
+
+TEST(RtspMessage, MetadataCompletenessAndParameterLinesFollowBodyReplacements) {
   RtspMessage metadata;
   const char invalidMetadata[] = {'m', 'l', 'i', 't', 0, 0, 0, 20};
   metadata.replaceBody(std::string_view(invalidMetadata, sizeof(invalidMetadata)));
