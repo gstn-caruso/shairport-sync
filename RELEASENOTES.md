@@ -185,7 +185,6 @@ This release consists of enhancements and bug fixes to Version 4.1. For informat
 * Fix a long-standing bug which didn't close the socket used for the RTSP connection, potentially exhausting the sockets available.
 * Fix a bug in `audio_alsa.c` when there is no hardware device name.
 * Add a configuration check for the `xxd` program when building for AirPlay 2.
-* Fix a compilation bug on certain platforms by trying to use `AC_CHECK_LIB` to find `libavcodec` if the `PKG_CHECK_MODULES` check fails.
 
 **Documentation**
 * Include and reference the HTML version of the man page.

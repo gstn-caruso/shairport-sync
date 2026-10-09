@@ -100,6 +100,12 @@ four-job workflow. A tracked-file search found no retired build entry points,
 instructions or provider flags. No service was restarted or installed on the
 host. Existing compiler warnings remain outside this cleanup's scope.
 
+Independent review repeated CTest (8/8, 11.33 seconds), workflow validation and
+diff/secret checks. It found one residual build-macro entry in historical notes;
+that entry was removed and the broader macro/reference search repeated. The
+review did not reconstruct every earlier commit or repeat sanitizer/hardware
+checks.
+
 ## Hardware limits
 
 Realtime/buffered playback, output negotiation, volume/mute, pause/resume,
