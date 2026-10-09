@@ -78,7 +78,11 @@ typedef enum {
 
 // ensure sps_format_sample_size_array and sps_format_description_string_array are in sync with
 // this!
-typedef enum {
+typedef enum sps_format_type
+#ifdef __cplusplus
+    : uint32_t
+#endif
+{
   SPS_FORMAT_UNKNOWN = 0,
   SPS_FORMAT_S8,
   SPS_FORMAT_LOWEST = SPS_FORMAT_S8,

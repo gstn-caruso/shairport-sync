@@ -7,6 +7,7 @@ CTest covers:
 
 | Test | Contract |
 | --- | --- |
+| `receiver-encoding-cpp` | Unsupported output encodings and wire SSRC values remain representable with the C ABI |
 | `activity-state` | Activation, immediate inactivity, timeout waiting, reactivation, expiration and stopping |
 | `activity-monitor` | C monitor linkage, synchronous state transitions and DAC standby effects without timing races |
 | `string-utilities-cpp` | Service-name expansion, UTF-8 truncation and explicit errors |
