@@ -294,7 +294,7 @@ void *rtp_buffered_audio_processor(void *arg) {
           if (payloadFormat) {
             new_audio_block_needed = 0; // a valid block has been read.
             // if necessary, set the input rate...
-            if (conn->input_rate == 0) {
+            if (conn->inputAudio.sampleRate() == 0) {
               debug(2, "Preparing initial decoding chain for %s.", get_ssrc_name(payload_ssrc));
               prepareIncomingAudio(*conn, payload_ssrc);
               sequence_number_for_player =
@@ -561,7 +561,7 @@ void *rtp_buffered_audio_processor(void *arg) {
                       // now, fill in the 7-byte ADTS information, which seems to be needed by the
                       // decoder we made room for it in the front of the buffer by filling from m
                       // + 7.
-                      addADTStoPacket(payload_pointer, payload_length, conn->input_rate,
+                      addADTStoPacket(payload_pointer, payload_length, conn->inputAudio.sampleRate(),
                                       payloadFormat->aacChannelConfiguration());
                     }
                     int mute =
@@ -590,7 +590,7 @@ void *rtp_buffered_audio_processor(void *arg) {
                               "type: \"%s\".",
                               conn->connection_number, seq_no, timestamp, expected_timestamp,
                               timestamp_difference,
-                              1000.0 * timestamp_difference / conn->input_rate,
+                              1000.0 * timestamp_difference / conn->inputAudio.sampleRate(),
                               first_timestamp_in_this_sequence, get_ssrc_name(payload_ssrc));
                         // mute the first packet after a discontinuity
                         if (payloadFormat->isAac()) {
@@ -665,7 +665,7 @@ void *rtp_buffered_audio_processor(void *arg) {
                     seq_no, 1.0 * lead_time * 1E-9, config.audio_decoded_buffer_desired_length);
               very_early_packets_signalled = 1;
             }
-            usleep(((1000000 * conn->frames_per_packet) / conn->input_rate) *
+            usleep(((1000000 * conn->inputAudio.framesPerPacket()) / conn->inputAudio.sampleRate()) *
                    2); // wait for approximately the length of two packets
           }
         } else {

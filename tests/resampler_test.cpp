@@ -213,10 +213,10 @@ static OwnedAudioFrame checkPlayerNegotiationAndMapping() {
   assert(result[0] == 6 && result[1] == 0);
   mapped.reset();
   backend.get_configuration = rejectOutput;
-  const auto previousRate = session.input_rate, previousFrames = session.frames_per_packet;
+  const auto previousRate = session.inputAudio.sampleRate(), previousFrames = session.inputAudio.framesPerPacket();
   const auto previousConfiguration = config.current_output_configuration;
   setup_software_resampler(&session, ALAC_48000_S24_2);
-  assert(session.input_rate == previousRate && session.frames_per_packet == previousFrames);
+  assert(session.inputAudio.sampleRate() == previousRate && session.inputAudio.framesPerPacket() == previousFrames);
   assert(config.current_output_configuration == previousConfiguration);
   clear_software_resampler(&session);
   config.output = nullptr;

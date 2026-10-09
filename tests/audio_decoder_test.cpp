@@ -129,11 +129,11 @@ static void checkErrorsAndDestruction() {
 static void checkPlayerBoundary() {
   SessionState session{};
   prepare_decoding_chain(&session, ALAC_44100_S16_2);
-  assert(session.input_rate == 44100 && session.frames_per_packet == 352);
-  assert(session.input_format_is_valid);
+  assert(session.inputAudio.sampleRate() == 44100 && session.inputAudio.framesPerPacket() == 352);
+  assert(session.inputAudio.isDecodedFormatValid());
   prepare_decoding_chain(&session, static_cast<ssrc_t>(0xf00d));
   assert(session.decoder.currentFormat()->ssrc() == ALAC_44100_S16_2);
-  assert(session.input_rate == 44100);
+  assert(session.inputAudio.sampleRate() == 44100);
   std::array<uint8_t, 8> shortPacket{};
   assert(block_to_avframe(&session, shortPacket.data(), shortPacket.size()) == nullptr);
   std::array<uint8_t, 16> invalidPacket{};

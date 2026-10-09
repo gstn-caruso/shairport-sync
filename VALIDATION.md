@@ -127,6 +127,19 @@ AAC 48000/1024 input, the leaf resets only packet frames to 352, matching the
 existing player rule, and preserves sample rate/validity. All twelve relevant
 cases and 235 Release CTest entries passed (14.87s). Criterion #77 applies;
 session integration, sanitizers and device playback remain unverified here.
+The separate structural integration embeds `inputAudio` in SessionState and
+removes its three public primitives. The same 38 owner/decoder/resampler/player
+wait/RTSP dispatch cases passed before (0.58s) and after (0.60s), without a
+manufactured red phase. Existing success/change conditions, SETUP unsigned
+narrowing, debug output and locking/cancellation order are preserved; migrated
+test assertions retain their numeric values. Only historical comments and
+debug strings retain the old names. All 235 Release CTest entries passed
+(14.79s), including C adapters and native linkage/configuration contracts.
+Staged installation, installed binary `--version`, and manual/configuration
+byte comparisons passed. Native logs are in ignored
+`build/redesign-release/audio-input-integration-*.log`. Feature Envy (#77)
+places input transitions with their state; sanitizers/device playback were not
+rerun.
 
 The first discovery acceptance check was
 `ctest --test-dir build/cmake -R '^VolumePolicy\.' --no-tests=error`.
