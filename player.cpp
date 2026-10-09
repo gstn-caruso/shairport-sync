@@ -387,10 +387,10 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
       }
 
       uint32_t should_be_frame;
-      local_time_to_frame(get_absolute_time_in_ns(), &should_be_frame, conn);
-      const auto discarded = conn->packetBuffer.discardPacketsStartingBefore(should_be_frame);
-      if (discarded)
-        conn->last_seqno_valid = 0;
+      if (local_time_to_frame(get_absolute_time_in_ns(), &should_be_frame, conn) == 0) {
+        const auto discarded = conn->packetBuffer.discardPacketsStartingBefore(should_be_frame);
+        if (discarded) conn->last_seqno_valid = 0;
+      }
       front = conn->packetBuffer.front();
       if (front) {
         snapshot = front->packet;
@@ -408,10 +408,11 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
 
           if (curframe != NULL) {
             uint64_t should_be_time;
-            frame_to_local_time(curframe->timestamp, &should_be_time, conn);
+            if (frame_to_local_time(curframe->timestamp, &should_be_time, conn) == 0) {
             int64_t time_difference = should_be_time - get_absolute_time_in_ns();
             debug(4, "Check packet from buffer %u, timestamp %u, %f seconds ahead.", snapshot.sequence,
                   curframe->timestamp, 0.000000001 * time_difference);
+            }
           } else {
             debug(3, "Check packet from buffer %u, empty.", snapshot.sequence);
           }
@@ -437,10 +438,12 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
                       get_ssrc_name(curframe->encoding));
                 setupSoftwareResampler(conn, curframe->encoding, front->sampleFormat);
                 uint64_t should_be_time;
-                frame_to_local_time(conn->first_packet_timestamp, // this will go modulo 2^32
-                                    &should_be_time, conn);
-
-                conn->first_packet_time_to_play = should_be_time;
+                if (frame_to_local_time(conn->first_packet_timestamp, &should_be_time, conn) == 0)
+                  conn->first_packet_time_to_play = should_be_time;
+                else {
+                  conn->first_packet_time_to_play = 0;
+                  conn->first_packet_timestamp = 0;
+                }
 
                 int64_t lt = conn->first_packet_time_to_play - get_absolute_time_in_ns();
 
@@ -463,7 +466,7 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
                   uint64_t should_be_time;
 
                   // readjust first packet time to play
-                  frame_to_local_time(conn->first_packet_timestamp, &should_be_time, conn);
+                  if (frame_to_local_time(conn->first_packet_timestamp, &should_be_time, conn) == 0) {
 
                   int64_t change_in_should_be_time =
                       (int64_t)(should_be_time - conn->first_packet_time_to_play);
@@ -554,6 +557,7 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
                       }
                     }
                   }
+                  }
                 } else {
                   // if the output device doesn't have a delay, we simply send the lead-in
                   int64_t lead_time = conn->first_packet_time_to_play -
@@ -611,7 +615,7 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
 
           uint32_t desired_buffer_latency =
               (uint32_t)(config.audio_backend_buffer_desired_length * conn->input_rate);
-          frame_to_local_time(curframe->timestamp - desired_buffer_latency, &time_to_play, conn);
+          if (frame_to_local_time(curframe->timestamp - desired_buffer_latency, &time_to_play, conn) == 0) {
           uint64_t current_buffer_delay = 0;
           int resp = -1;
           if (config.output->delay) {
@@ -662,6 +666,7 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
           }
         }
       }
+          }
       if (do_wait == 0)
         // wait if the buffer is empty
         if (!front) { // the buffer is empty!

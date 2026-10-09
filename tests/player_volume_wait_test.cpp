@@ -13,6 +13,7 @@ static std::condition_variable changed;
 static bool waiting = false, played = false;
 static bool waitingAfterPacket = false;
 static bool waitingWithArrival = false, referenceAvailable = true;
+static bool frameTimeAvailable = true;
 static int prerollFrames = 0;
 static SessionState *activeSession = nullptr;
 static uint64_t expectedFrameTime = 999000000;
@@ -36,7 +37,7 @@ extern "C" uint64_t __wrap_get_absolute_time_in_ns() { return 1000000000; }
 extern "C" int __wrap_have_timestamp_timing_information(rtsp_conn_info *) { return referenceAvailable; }
 extern "C" int __wrap_frame_to_local_time(uint32_t, uint64_t *time, rtsp_conn_info *) {
   *time = expectedFrameTime;
-  return 0;
+  return frameTimeAvailable ? 0 : -1;
 }
 extern "C" int __wrap_local_time_to_frame(uint64_t, uint32_t *frame, rtsp_conn_info *) {
   *frame = 0;
@@ -102,9 +103,10 @@ static std::vector<uint8_t> encodedConstant() {
 }
 static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames, bool submit,
                           bool mute = false, bool waitOnly = false, bool anchor = true,
-                          int expectedPreroll = 0) {
+                          int expectedPreroll = 0, bool conversion = true) {
   waiting = played = waitingAfterPacket = waitingWithArrival = false;
   referenceAvailable = anchor;
+  frameTimeAvailable = conversion;
   prerollFrames = 0;
   expectedFrameTime = frameTime;
   outputFrames = 0;
@@ -174,4 +176,5 @@ int main() {
   checkPlayback(false, 0, 0, false, false, true);
   checkPlayback(false, 1150000000, 0, false, false, true, true, 6615);
   checkPlayback(true, 1050000000, 0, false, false, true, true, 2205);
+  checkPlayback(false, 999000000, 0, false, false, true, true, 0, false);
 }
