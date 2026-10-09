@@ -43,6 +43,16 @@ have a five-second timeout. The full Release regression passed all 54 entries
 (14.05s), including native cancellation, C ABI and shell checks. This migration
 leaves production behavior unchanged; sanitizer builds and device checks were not rerun.
 
+For channel mapping, the legacy `channel-mapping` entry passed before migration.
+`ctest --test-dir build/redesign-release -R '^ChannelMapping\.' --no-tests=error`
+failed with no matching tests (exit 8), then passed nine independently initialized
+scenarios (0.15s). All original helper checks, numeric expectations, signed mono
+mixing, incomplete-name and untouched-output checks remain. The signed mono case
+also passed in isolation; all nine generated entries have five-second timeouts.
+The full Release regression passed all 62 entries (13.42s), retaining native
+cancellation, C ABI and shell checks. Production is unchanged; sanitizer builds
+and device checks were not rerun for this migration.
+
 CTest covers:
 
 | Test | Contract |
