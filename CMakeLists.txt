@@ -5,7 +5,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
   message(FATAL_ERROR "Linux is the only supported platform")
 endif()
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR OR EXISTS "${CMAKE_SOURCE_DIR}/config.h")
-  message(FATAL_ERROR "Use an out-of-tree build; run make distclean after an in-tree Autotools build")
+  message(FATAL_ERROR "Use an out-of-tree build and remove any config.h from the source directory")
 endif()
 if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" OR
    NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR
@@ -81,7 +81,6 @@ target_compile_definitions(receiver PRIVATE HAVE_CONFIG_H "SYSCONFDIR=\"${CMAKE_
 target_link_libraries(receiver PUBLIC receiver-text pair_ap)
 if(CONFIG_USE_GIT_VERSION_STRING)
   add_dependencies(receiver git-version)
-  target_compile_definitions(receiver PRIVATE "SHAIRPORT_GIT_VERSION_HEADER=\"cmake-gitversion.h\"")
 endif()
 add_executable(shairport-sync main.c)
 target_link_libraries(shairport-sync PRIVATE receiver)

@@ -1,4 +1,3 @@
-/INSTALL
 /shairport-sync
 /shairport-sync.exe
 /shairport-sync-dbus-test-client
@@ -7,32 +6,9 @@
 *.o
 /*~
 *.xml~
-/config.mk
-/config.h
-Makefile
-Makefile.in
-aclocal.m4
-autom4te.cache
-compile
-/config.*
-configure
-depcomp
-install-sh
-missing
-stamp-h1
-.dirstamp
-.deps
-man/Makefile
-man/Makefile.in
 scripts/shairport-sync.service
 scripts/shairport-sync
 shairport-sync.core
-gitversion-stamp
-gitversion.*
-plist_xml_strings.*
-plists/*.c
-plists/*.h
-plists/*.x
 
 #Some dbus files that are automatically generated
 /org.gnome.ShairportSync.service
@@ -56,11 +32,4 @@ build
 
 # IntelliJ/JetBrains
 .idea/
-/test-driver
-/rtsp-dispatch-test
 *.log
-*.trs
-/test-suite.log
-/shairport-sync-*.tar.gz
-/shairport-sync-*.tar.xz
-/shairport-sync-5.5.1/

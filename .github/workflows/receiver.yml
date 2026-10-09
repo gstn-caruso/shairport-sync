@@ -15,14 +15,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [Release, Debug, ASan-UBSan, TSan, Autotools]
+        build: [Release, Debug, ASan-UBSan, TSan]
     env:
       ASDF_DATA_DIR: /opt/asdf
     steps:
       - name: Install C++26 build dependencies
         run: |
           apt-get update
-          apt-get install -y ca-certificates curl git cmake ninja-build autoconf automake gcc-15 g++-15 g++ zstd pkg-config libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
+          apt-get install -y ca-certificates curl git cmake ninja-build gcc-15 g++-15 g++ zstd pkg-config libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
       - uses: actions/checkout@v4
       - name: Install asdf
         run: |
@@ -51,7 +51,6 @@ jobs:
           asdf exec clang++ --version
           echo /opt/asdf/shims >> "$GITHUB_PATH"
       - name: CMake build, contracts and staged install
-        if: matrix.build != 'Autotools'
         env:
           BUILD: ${{ matrix.build }}
         run: |
@@ -80,23 +79,3 @@ jobs:
           test -f build/cmake/stage/etc/shairport-sync.conf.sample
           cmp man/shairport-sync.1 build/cmake/stage/usr/local/share/man/man1/shairport-sync.1
           cmp scripts/shairport-sync.conf build/cmake/stage/etc/shairport-sync.conf.sample
-      - name: Out-of-tree build and contracts
-        if: matrix.build == 'Autotools'
-        run: |
-          autoreconf -fi
-          mkdir build
-          cd build
-          ../configure --sysconfdir=/etc
-          make -j2
-          make check -j2
-          make DESTDIR="$PWD/stage" install
-          test -f stage/usr/local/bin/shairport-sync
-          test -f stage/etc/shairport-sync.conf.sample
-          cmp ../man/shairport-sync.1 stage/usr/local/share/man/man1/shairport-sync.1
-          cmp ../scripts/shairport-sync.conf stage/etc/shairport-sync.conf.sample
-      - name: In-tree build
-        if: matrix.build == 'Autotools'
-        run: |
-          ./configure
-          make -j2
-          make check -j2
