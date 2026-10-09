@@ -20,6 +20,7 @@ public:
 
   void setSetupSampleRate(unsigned rate) { sampleRate_ = rate; }
   void setSetupPacketFrames(unsigned frames) { framesPerPacket_ = frames; }
+  void beginPlayback() { framesPerPacket_ = 352; }
 
 private:
   unsigned sampleRate_ = 0;

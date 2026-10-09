@@ -121,6 +121,12 @@ frames to 352 preserves rate/validity. Each unsigned assignment owns only its
 field, without normalization or validation. The eleven relevant cases and all
 234 Release CTest entries passed (14.84s). Session integration, sanitizers and
 device playback were not exercised in this criterion #77 cycle.
+The playback-start contract first failed compilation on missing
+`beginPlayback()` (`audio-input-state-playback-red.log`). After valid decoded
+AAC 48000/1024 input, the leaf resets only packet frames to 352, matching the
+existing player rule, and preserves sample rate/validity. All twelve relevant
+cases and 235 Release CTest entries passed (14.87s). Criterion #77 applies;
+session integration, sanitizers and device playback remain unverified here.
 
 The first discovery acceptance check was
 `ctest --test-dir build/cmake -R '^VolumePolicy\.' --no-tests=error`.
