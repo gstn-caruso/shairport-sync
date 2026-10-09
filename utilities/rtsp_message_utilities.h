@@ -8,9 +8,6 @@ extern "C" {
 #endif
 
 rtsp_message *msg_init(void);
-int msg_handle_line(rtsp_message **pmsg, char *line);
-int msg_add_header(rtsp_message *msg, const char *name, const char *value);
-char *msg_get_header(rtsp_message *msg, const char *name);
 
 void _debug_log_rtsp_message(rtsp_conn_info *conn, const char *filename, const int linenumber,
                              int level, const char *prompt, rtsp_message *message);
@@ -29,9 +26,10 @@ void _debug_print_msg_headers(rtsp_conn_info *conn, const char *filename, const 
 #define debug_print_msg_headers_conn(level, message)                                               \
   _debug_print_msg_headers(conn, __FILE__, __LINE__, level, message)
 
-int rtsp_message_contains_plist(rtsp_message *message);
-plist_t plist_from_rtsp_content(rtsp_message *message);
-
 #ifdef __cplusplus
 }
+
+plist_t plistFromMessageBody(const RtspMessage &message);
+void replaceBodyFromAllocation(RtspMessage &message, char *bytes, size_t length);
+void replaceBodyWithPlist(RtspMessage &message, plist_t plist);
 #endif

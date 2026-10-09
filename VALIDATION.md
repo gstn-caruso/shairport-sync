@@ -7,6 +7,8 @@ CTest covers:
 
 | Test | Contract |
 | --- | --- |
+| `rtsp-message` | Owned request parsing, header order/duplicates, binary framing, payload interpretation and socket output |
+| `rtsp-message-c` | Opaque C message allocation and cleanup linkage |
 | `receiver-encoding-cpp` | Unsupported output encodings and wire SSRC values remain representable with the C ABI |
 | `activity-state` | Activation, immediate inactivity, timeout waiting, reactivation, expiration and stopping |
 | `activity-monitor` | C monitor linkage, synchronous state transitions and DAC standby effects without timing races |

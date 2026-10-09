@@ -89,6 +89,10 @@ void RtspMessage::replaceBody(std::string_view bytes) {
 std::string_view RtspMessage::bodyText() const noexcept { return body_; }
 const char *RtspMessage::bodyData() const noexcept { return body_.c_str(); }
 uint32_t RtspMessage::bodyLength() const noexcept { return static_cast<uint32_t>(body_.size()); }
+bool RtspMessage::bodyStartsWith(std::string_view prefix) const noexcept { return body_.starts_with(prefix); }
+bool RtspMessage::requestsVolume() const noexcept {
+  return body_.size() == 8 && body_.starts_with("volume");
+}
 
 void RtspMessage::respondWith(int code) noexcept { responseCode_ = code; }
 int RtspMessage::responseCode() const noexcept { return responseCode_; }

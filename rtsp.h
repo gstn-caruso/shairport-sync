@@ -4,31 +4,28 @@
 #include "player.h"
 
 #ifdef __cplusplus
+class RtspMessage;
+using rtsp_message = RtspMessage;
 extern "C" {
+#else
+typedef struct rtsp_message rtsp_message;
 #endif
-
-typedef struct {
-  int index_number;
-  uint32_t referenceCount; // we might start using this...
-  unsigned int nheaders;
-  char *name[16];
-  char *value[16];
-
-  uint32_t contentlength;
-  char *content;
-
-  // for requests
-  char method[16];
-  char path[256];
-
-  // for responses
-  int respcode;
-} rtsp_message;
 
 void rtsp_dispatch_request(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp);
 
-void msg_retain(rtsp_message *msg);
 void msg_free(rtsp_message **msgh);
+
+enum rtsp_read_request_response {
+  rtsp_read_request_response_ok,
+  rtsp_read_request_response_pending,
+  rtsp_read_request_response_immediate_shutdown_requested,
+  rtsp_read_request_response_bad_packet,
+  rtsp_read_request_response_channel_closed,
+  rtsp_read_request_response_read_error,
+  rtsp_read_request_response_error
+};
+enum rtsp_read_request_response rtsp_read_request(rtsp_conn_info *conn, rtsp_message **message);
+int msg_write_response(rtsp_conn_info *conn, rtsp_message *message);
 
 void *rtsp_listen_loop(__attribute((unused)) void *arg);
 

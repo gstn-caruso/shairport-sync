@@ -55,6 +55,8 @@
 #include "config.h"
 #include "utilities/network_utilities.h"
 #include "utilities/rtsp_message_utilities.h"
+#include "rtsp_message.hpp"
+#include <format>
 
 #include <openssl/evp.h>
 #include <openssl/md5.h>
@@ -92,15 +94,6 @@
 #include "mdns.h"
 #include "utilities/network_utilities.h"
 
-enum rtsp_read_request_response {
-  rtsp_read_request_response_ok,
-  rtsp_read_request_response_pending,
-  rtsp_read_request_response_immediate_shutdown_requested,
-  rtsp_read_request_response_bad_packet,
-  rtsp_read_request_response_channel_closed,
-  rtsp_read_request_response_read_error,
-  rtsp_read_request_response_error
-};
 
 rtsp_conn_info *principal_conn = NULL;
 rtsp_conn_info **conns = NULL;
@@ -545,11 +538,10 @@ void set_client_as_ptp_clock(rtsp_conn_info *conn) {
   ptp_send_control_message_string(timing_list_message);
 }
 
-enum rtsp_read_request_response rtsp_read_request(rtsp_conn_info *conn, rtsp_message **the_packet) {
+enum rtsp_read_request_response rtsp_read_request(rtsp_conn_info *conn, RtspMessage **the_packet) {
   enum rtsp_read_request_response reply = rtsp_read_request_response_pending;
-  *the_packet = NULL; // need this for error handling
+  *the_packet = msg_init();
   ssize_t buflen = 4096;
-  int release_buffer = 0;         // on exit, don't deallocate the buffer if everything was okay
   char *buf = static_cast<char *>(malloc(buflen + 1));
   if (buf == NULL) {
     debug(1, "Connection %d: rtsp_read_request: can't get a buffer.", conn->connection_number);
@@ -617,7 +609,13 @@ enum rtsp_read_request_response rtsp_read_request(rtsp_conn_info *conn, rtsp_mes
           char *next;
           while ((reply == rtsp_read_request_response_pending) && (msg_size < 0) &&
                  (next = nextline(buf, inbuf))) {
-            msg_size = msg_handle_line(the_packet, buf);
+            if (!*the_packet)
+              *the_packet = msg_init();
+            auto parsed = (*the_packet)->readLine(buf);
+            if (parsed)
+              msg_size = *parsed;
+            else
+              msg_free(the_packet);
             if (!(*the_packet)) {
               debug(1, "Connection %d: rtsp_read_request can't find an RTSP header.",
                     conn->connection_number);
@@ -721,11 +719,8 @@ enum rtsp_read_request_response rtsp_read_request(rtsp_conn_info *conn, rtsp_mes
     }
     if (reply == rtsp_read_request_response_pending) {
       reply = rtsp_read_request_response_ok;
-      rtsp_message *msg = *the_packet;
-      msg->contentlength = inbuf;
-      msg->content = buf;
-      char *jp = inbuf + buf;
-      *jp = '\0';
+      RtspMessage *msg = *the_packet;
+      msg->replaceBody(std::string_view(buf, inbuf));
       *the_packet = msg;
     }
 
@@ -735,123 +730,39 @@ enum rtsp_read_request_response rtsp_read_request(rtsp_conn_info *conn, rtsp_mes
         debug(3, "Freeing the_packet");
         msg_free(the_packet);
       }
-      release_buffer = 1; // allow the buffer to be released
     }
-    pthread_cleanup_pop(release_buffer);
+    pthread_cleanup_pop(1);
   }
+  if (reply != rtsp_read_request_response_ok)
+    msg_free(the_packet);
   return reply;
 }
 
-int msg_write_response(rtsp_conn_info *conn, rtsp_message *resp) {
-  char pkt[4096];
-  int pktfree = sizeof(pkt);
-  char *p = pkt;
-  int n;
-  unsigned int i;
+int msg_write_response(rtsp_conn_info *conn, RtspMessage *response) {
+  auto packet = response->responsePacket();
+  if (!packet)
+    return static_cast<int>(packet.error());
 
-  struct response_t {
-    int code;
-    const char *string;
-  };
-
-  struct response_t responses[] = {{200, "OK"},
-                                   {400, "Bad Request"},
-                                   {403, "Unauthorized"},
-                                   {404, "Not Found"},
-                                   {451, "Unavailable"},
-                                   {456, "Header Field Not Valid for Resource"},
-                                   {470, "Connection Authorization Required"},
-                                   {500, "Internal Server Error"},
-                                   {501, "Not Implemented"}};
-  // 451 is really "Unavailable For Legal Reasons"!
-  int found = 0;
-  const char *respcode_text = "Unauthorized";
-  for (i = 0; i < sizeof(responses) / sizeof(struct response_t); i++) {
-    if (resp->respcode == responses[i].code) {
-      found = 1;
-      respcode_text = responses[i].string;
-    }
-  }
-
-  if (found == 0)
-    debug(1, "can't find text for response code %d. Using \"%s\" instead.", resp->respcode,
-          respcode_text);
-
-  n = snprintf(p, pktfree, "RTSP/1.0 %d %s\r\n", resp->respcode, respcode_text);
-  pktfree -= n;
-  p += n;
-
-  for (i = 0; i < resp->nheaders; i++) {
-    //    debug(3, "    %s: %s.", resp->name[i], resp->value[i]);
-    n = snprintf(p, pktfree, "%s: %s\r\n", resp->name[i], resp->value[i]);
-    pktfree -= n;
-    p += n;
-    if (pktfree <= 1024) {
-      debug(1, "Attempted to write overlong RTSP packet 1");
-      return -1;
-    }
-  }
-
-  // Here, if there's content, write the Content-Length header ...
-
-  // if (resp->contentlength) {
-  {
-    // debug(2, "Responding with content of length %d", resp->contentlength);
-    n = snprintf(p, pktfree, "Content-Length: %d\r\n", resp->contentlength);
-    pktfree -= n;
-    p += n;
-    if (pktfree <= 1024) {
-      debug(1, "Attempted to write overlong RTSP packet 2");
-      return -2;
-    }
-  }
-
-  n = snprintf(p, pktfree, "\r\n");
-  pktfree -= n;
-  p += n;
-
-  if (resp->contentlength) {
-    memcpy(p, resp->content, resp->contentlength);
-    pktfree -= resp->contentlength;
-    p += resp->contentlength;
-  }
-
-  if (pktfree <= 1024) {
-    debug(1, "Attempted to write overlong RTSP packet 3");
-    return -3;
-  }
-
-  // here, if the link is encrypted, better do it
-
-  ssize_t reply;
-  if (conn->ap2_pairing_context.control_cipher_bundle.is_encrypted) {
-    reply =
-        write_encrypted(conn->fd, &conn->ap2_pairing_context.control_cipher_bundle, pkt, p - pkt);
-  } else {
-    reply = write(conn->fd, pkt, p - pkt);
-  }
-
-  if (reply == -1) {
-    char errorstring[1024];
-    strerror_r(errno, (char *)errorstring, sizeof(errorstring));
-    debug(1, "msg_write_response error %d: \"%s\".", errno, (char *)errorstring);
+  ssize_t written;
+  if (conn->ap2_pairing_context.control_cipher_bundle.is_encrypted)
+    written = write_encrypted(conn->fd, &conn->ap2_pairing_context.control_cipher_bundle,
+                              packet->data(), packet->size());
+  else
+    written = write(conn->fd, packet->data(), packet->size());
+  if (written < 0)
     return -4;
-  }
-  if (reply != p - pkt) {
-    debug(1, "msg_write_response error -- requested bytes: %zd not fully written: %zd.", p - pkt,
-          reply);
+  if (static_cast<size_t>(written) != packet->size())
     return -5;
-  }
   return 0;
 }
 
-void handle_record_2(rtsp_conn_info *conn, __attribute((unused)) rtsp_message *req,
-                     rtsp_message *resp) {
+void handle_record_2(rtsp_conn_info *conn, __attribute((unused)) RtspMessage *req,
+                     RtspMessage *resp) {
   debug(2, "Connection %d: RECORD (AP2) on %s", conn->connection_number,
         get_category_string(conn->airplay_stream_category));
   debug_log_rtsp_message_conn(conn, 2, "RECORD (AP2) incoming message", req);
-  msg_add_header(resp, "Audio-Latency", "0");
-  resp->respcode = 200;
+  resp->addHeader("Audio-Latency", "0");
+  resp->respondWith(200);
 }
 
 
@@ -1064,11 +975,11 @@ plist_t generateInfoPlist(rtsp_conn_info *conn) {
   return response_plist;
 }
 
-void handle_get_info(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
+void handle_get_info(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
   debug_log_rtsp_message(3, "GET /info:", req);
-  if (rtsp_message_contains_plist(req)) { // it's stage one
+  if (req->bodyStartsWith("bplist00")) { // it's stage one
     // get version of AirPlay -- it might be too old. Not using it yet.
-    char *hdr = msg_get_header(req, "User-Agent");
+    const char *hdr = req->headerValue("User-Agent");
     if (hdr) {
       if (strstr(hdr, "AirPlay/") == hdr) {
         hdr = hdr + strlen("AirPlay/");
@@ -1080,7 +991,7 @@ void handle_get_info(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp
     }
 
     // in Stage 1, look for the DACP and Active-Remote
-    char *ar = msg_get_header(req, "Active-Remote");
+    const char *ar = req->headerValue("Active-Remote");
     if (ar) {
       debug(3, "Connection %d: GET /info -- Active-Remote string seen: \"%s\".",
             conn->connection_number, ar);
@@ -1097,7 +1008,7 @@ void handle_get_info(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp
       }
     }
 
-    ar = msg_get_header(req, "DACP-ID");
+    ar = req->headerValue("DACP-ID");
     if (ar) {
       debug(3, "Connection %d: GET /info -- DACP-ID string seen: \"%s\".", conn->connection_number,
             ar);
@@ -1114,17 +1025,17 @@ void handle_get_info(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp
     }
 
     plist_t info_plist = NULL;
-    plist_from_memory(req->content, req->contentlength, &info_plist);
+    plist_from_memory(req->bodyData(), req->bodyLength(), &info_plist);
 
     plist_t qualifier = plist_dict_get_item(info_plist, "qualifier");
     if (qualifier == NULL) {
       debug(1, "GET /info Stage 1: plist->qualifier was NULL");
-      resp->respcode = 400;
+      resp->respondWith(400);
       return;
     }
     if (plist_array_get_size(qualifier) < 1) {
       debug(1, "GET /info Stage 1: plist->qualifier array length < 1");
-      resp->respcode = 400;
+      resp->respondWith(400);
       return;
     }
     plist_t qualifier_array_value = plist_array_get_item(qualifier, 0);
@@ -1132,7 +1043,7 @@ void handle_get_info(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp
     plist_get_string_val(qualifier_array_value, &qualifier_array_val_cstr);
     if (qualifier_array_val_cstr == NULL) {
       debug(1, "GET /info Stage 1: first item in qualifier array not a string");
-      resp->respcode = 400;
+      resp->respondWith(400);
       return;
     }
     debug(3, "GET /info Stage 1: qualifier: %s", qualifier_array_val_cstr);
@@ -1142,7 +1053,7 @@ void handle_get_info(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp
     plist_t response_plist = generateInfoPlist(conn);
 
     if (response_plist == NULL) {
-      resp->respcode = 400;
+      resp->respondWith(400);
       return;
     }
 
@@ -1151,16 +1062,16 @@ void handle_get_info(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp
     generateTxtDataValueInfo(conn, &txtData, &txtDataLength);
     plist_dict_set_item(response_plist, "txtAirPlay", plist_new_data(static_cast<const char *>(txtData), txtDataLength));
     free(txtData);
-    plist_to_bin(response_plist, &resp->content, &resp->contentlength);
-    if (resp->contentlength == 0)
+    replaceBodyWithPlist(*resp, response_plist);
+    if (resp->bodyLength() == 0)
       debug(1, "GET /info Stage 1: response bplist not created!");
     plist_free(response_plist);
     /*
         free(qualifier_response_data);
     */
 
-    msg_add_header(resp, "Content-Type", "application/x-apple-binary-plist");
-    resp->respcode = 200;
+    resp->addHeader("Content-Type", "application/x-apple-binary-plist");
+    resp->respondWith(200);
     debug_log_rtsp_message(3, "GET /info Stage 1 Response:", resp);
     return;
 
@@ -1168,7 +1079,7 @@ void handle_get_info(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp
     plist_t response_plist = generateInfoPlist(conn);
 
     if (response_plist == NULL) {
-      resp->respcode = 400;
+      resp->respondWith(400);
       return;
     }
 
@@ -1177,18 +1088,18 @@ void handle_get_info(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp
     generateTxtDataValueInfo(conn, &txtData, &txtDataLength);
     plist_dict_set_item(response_plist, "txtAirPlay", plist_new_data(static_cast<const char *>(txtData), txtDataLength));
     free(txtData);
-    plist_to_bin(response_plist, &resp->content, &resp->contentlength);
+    replaceBodyWithPlist(*resp, response_plist);
     plist_free(response_plist);
-    msg_add_header(resp, "Content-Type", "application/x-apple-binary-plist");
-    resp->respcode = 200;
+    resp->addHeader("Content-Type", "application/x-apple-binary-plist");
+    resp->respondWith(200);
     debug_log_rtsp_message(3, "GET /info Stage 2 Response", resp);
     return;
   }
 }
 
-void handle_flushbuffered(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
+void handle_flushbuffered(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
   debug(2, "Connection %d: FLUSHBUFFERED %s : Content-Length %d", conn->connection_number,
-        req->path, req->contentlength);
+        req->requestPath(), req->bodyLength());
   debug_log_rtsp_message(3, "FLUSHBUFFERED request", req);
 
   uint64_t flushFromSeq = 0;
@@ -1196,7 +1107,7 @@ void handle_flushbuffered(rtsp_conn_info *conn, rtsp_message *req, rtsp_message 
   uint64_t flushUntilSeq = 0;
   uint64_t flushUntilTS = 0;
   int flushFromValid = 0;
-  plist_t messagePlist = plist_from_rtsp_content(req);
+  plist_t messagePlist = plistFromMessageBody(*req);
   if (messagePlist != NULL) {
     plist_t item = plist_dict_get_item(messagePlist, "flushFromSeq");
     if (item == NULL) {
@@ -1286,22 +1197,22 @@ void handle_flushbuffered(rtsp_conn_info *conn, rtsp_message *req, rtsp_message 
     plist_free(messagePlist);
   }
 
-  resp->respcode = 200;
+  resp->respondWith(200);
 }
 
-void handle_setrate(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
-  debug(1, "Connection %d: SETRATE %s : Content-Length %d", conn->connection_number, req->path,
-        req->contentlength);
+void handle_setrate(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
+  debug(1, "Connection %d: SETRATE %s : Content-Length %d", conn->connection_number, req->requestPath(),
+        req->bodyLength());
   debug_log_rtsp_message(1, "SETRATE request -- unimplemented", req);
-  resp->respcode = 501; // Not Implemented
+  resp->respondWith(501); // Not Implemented
 }
 
 
-void handle_setrateanchori(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
+void handle_setrateanchori(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
   debug(2, "Connection %d: SETRATEANCHORI %s :: Content-Length %d", conn->connection_number,
-        req->path, req->contentlength);
+        req->requestPath(), req->bodyLength());
   debug_log_rtsp_message(3, "SETRATEANCHORI", req);
-  plist_t messagePlist = plist_from_rtsp_content(req);
+  plist_t messagePlist = plistFromMessageBody(*req);
 
   if (messagePlist != NULL) {
     pthread_cleanup_push(plist_cleanup, (void *)messagePlist);
@@ -1380,18 +1291,18 @@ void handle_setrateanchori(rtsp_conn_info *conn, rtsp_message *req, rtsp_message
   } else {
     debug(1, "missing plist!");
   }
-  resp->respcode = 200;
+  resp->respondWith(200);
 }
 
-void handle_get(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
-  debug(3, "Connection %d: GET %s :: Content-Length %d", conn->connection_number, req->path,
-        req->contentlength);
+void handle_get(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
+  debug(3, "Connection %d: GET %s :: Content-Length %d", conn->connection_number, req->requestPath(),
+        req->bodyLength());
   debug_log_rtsp_message(3, "GET request", req);
-  if (strcmp(req->path, "/info") == 0) {
+  if (req->requestsPath("/info")) {
     handle_get_info(conn, req, resp);
   } else {
-    debug(1, "Unhandled GET, path \"%s\".", req->path);
-    resp->respcode = 501; // Not Implemented
+    debug(1, "Unhandled GET, path \"%s\".", req->requestPath());
+    resp->respondWith(501); // Not Implemented
   }
 }
 
@@ -1472,10 +1383,10 @@ static void pairing_list_cb(pair_cb enum_cb, void *enum_cb_arg,
   }
 }
 
-void handle_pair_add(rtsp_conn_info *conn __attribute__((unused)), rtsp_message *req,
-                     rtsp_message *resp) {
+void handle_pair_add(rtsp_conn_info *conn __attribute__((unused)), RtspMessage *req,
+                     RtspMessage *resp) {
 
-  char *hdr = msg_get_header(req, "X-Apple-Client-Name");
+  const char *hdr = req->headerValue("X-Apple-Client-Name");
   if (hdr) {
     if (conn->ap2_client_name)
       free(conn->ap2_client_name);
@@ -1487,21 +1398,20 @@ void handle_pair_add(rtsp_conn_info *conn __attribute__((unused)), rtsp_message 
   uint8_t *body = NULL;
   size_t body_len = 0;
   int ret = pair_add(PAIR_SERVER_HOMEKIT, &body, &body_len, pairing_add_cb, NULL,
-                     (const uint8_t *)req->content, req->contentlength);
+                     (const uint8_t *)req->bodyData(), req->bodyLength());
   if (ret < 0) {
     debug(1, "pair-add returned an error");
-    resp->respcode = 451;
+    resp->respondWith(451);
     return;
   }
-  resp->content = (char *)body; // these will be freed when the data is sent
-  resp->contentlength = body_len;
-  msg_add_header(resp, "Content-Type", "application/octet-stream");
+  replaceBodyFromAllocation(*resp, reinterpret_cast<char *>(body), body_len);
+  resp->addHeader("Content-Type", "application/octet-stream");
   debug_log_rtsp_message_conn(conn, 1, "pair-add response", resp);
 }
 
-void handle_pair_list(rtsp_conn_info *conn __attribute__((unused)), rtsp_message *req,
-                      rtsp_message *resp) {
-  char *hdr = msg_get_header(req, "X-Apple-Client-Name");
+void handle_pair_list(rtsp_conn_info *conn __attribute__((unused)), RtspMessage *req,
+                      RtspMessage *resp) {
+  const char *hdr = req->headerValue("X-Apple-Client-Name");
   if (hdr) {
     if (conn->ap2_client_name)
       free(conn->ap2_client_name);
@@ -1512,22 +1422,21 @@ void handle_pair_list(rtsp_conn_info *conn __attribute__((unused)), rtsp_message
   uint8_t *body = NULL;
   size_t body_len = 0;
   int ret = pair_list(PAIR_SERVER_HOMEKIT, &body, &body_len, pairing_list_cb, NULL,
-                      (const uint8_t *)req->content, req->contentlength);
+                      (const uint8_t *)req->bodyData(), req->bodyLength());
   if (ret < 0) {
     debug(1, "pair-list returned an error");
-    resp->respcode = 451;
+    resp->respondWith(451);
     return;
   }
-  resp->content = (char *)body; // these will be freed when the data is sent
-  resp->contentlength = body_len;
-  msg_add_header(resp, "Content-Type", "application/octet-stream");
+  replaceBodyFromAllocation(*resp, reinterpret_cast<char *>(body), body_len);
+  resp->addHeader("Content-Type", "application/octet-stream");
   debug_log_rtsp_message_conn(conn, 1, "pair-list response", resp);
 }
 
-void handle_pair_remove(rtsp_conn_info *conn __attribute__((unused)), rtsp_message *req,
-                        rtsp_message *resp) {
+void handle_pair_remove(rtsp_conn_info *conn __attribute__((unused)), RtspMessage *req,
+                        RtspMessage *resp) {
 
-  char *hdr = msg_get_header(req, "X-Apple-Client-Name");
+  const char *hdr = req->headerValue("X-Apple-Client-Name");
   if (hdr) {
     if (conn->ap2_client_name)
       free(conn->ap2_client_name);
@@ -1538,34 +1447,33 @@ void handle_pair_remove(rtsp_conn_info *conn __attribute__((unused)), rtsp_messa
   uint8_t *body = NULL;
   size_t body_len = 0;
   int ret = pair_remove(PAIR_SERVER_HOMEKIT, &body, &body_len, pairing_remove_cb, NULL,
-                        (const uint8_t *)req->content, req->contentlength);
+                        (const uint8_t *)req->bodyData(), req->bodyLength());
   if (ret < 0) {
     debug(1, "pair-remove returned an error");
-    resp->respcode = 451;
+    resp->respondWith(451);
     return;
   }
-  resp->content = (char *)body; // these will be freed when the data is sent
-  resp->contentlength = body_len;
-  msg_add_header(resp, "Content-Type", "application/octet-stream");
+  replaceBodyFromAllocation(*resp, reinterpret_cast<char *>(body), body_len);
+  resp->addHeader("Content-Type", "application/octet-stream");
   debug_log_rtsp_message_conn(conn, 1, "pair-remove response", resp);
 }
 
-void handle_pair_verify(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
-  char *hdr = msg_get_header(req, "X-Apple-Client-Name");
+void handle_pair_verify(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
+  const char *hdr = req->headerValue("X-Apple-Client-Name");
   if (hdr) {
     if (conn->ap2_client_name)
       free(conn->ap2_client_name);
     conn->ap2_client_name = strdup(hdr);
   }
   // try to pick up the stages
-  uint8_t *b = (uint8_t *)req->content;
+  const uint8_t *b = reinterpret_cast<const uint8_t *>(req->bodyData());
   char mstage = '-';
-  if ((req->contentlength >= 3) && (b[0] == 6) && (b[1] == 1) && (b[1] <= 9)) {
+  if ((req->bodyLength() >= 3) && (b[0] == 6) && (b[1] == 1) && (b[1] <= 9)) {
     mstage = '0' + b[2];
   }
 
   debug(1, "Connection %d from \"%s\": handle_pair_verify, stage M%c, Content-Length %d",
-        conn->connection_number, conn->ap2_client_name, mstage, req->contentlength);
+        conn->connection_number, conn->ap2_client_name, mstage, req->bodyLength());
   debug_log_rtsp_message_conn(conn, 2, "pair-verify request", req);
   int ret;
   uint8_t *body = NULL;
@@ -1577,16 +1485,16 @@ void handle_pair_verify(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *r
         pair_verify_new(PAIR_SERVER_HOMEKIT, NULL, NULL, NULL, config.airplay_device_id);
     if (!conn->ap2_pairing_context.verify_ctx) {
       debug(1, "Error creating verify context");
-      resp->respcode = 500; // Internal Server Error
+      resp->respondWith(500); // Internal Server Error
       goto out;
     }
   }
 
   ret = pair_verify(&body, &body_len, conn->ap2_pairing_context.verify_ctx,
-                    (const uint8_t *)req->content, req->contentlength);
+                    (const uint8_t *)req->bodyData(), req->bodyLength());
   if (ret < 0) {
     debug(1, "%s", pair_verify_errmsg(conn->ap2_pairing_context.verify_ctx));
-    resp->respcode = 470; // Connection Authorization Required
+    resp->respondWith(470); // Connection Authorization Required
     goto out;
   }
 
@@ -1609,52 +1517,50 @@ void handle_pair_verify(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *r
   */
 
 out:
-  resp->content = (char *)body; // these will be freed when the data is sent
-  resp->contentlength = body_len;
+  replaceBodyFromAllocation(*resp, reinterpret_cast<char *>(body), body_len);
   if (body)
-    msg_add_header(resp, "Content-Type", "application/octet-stream");
+    resp->addHeader("Content-Type", "application/octet-stream");
   debug_log_rtsp_message_conn(conn, 2, "pair-verify response", resp);
 }
 
-void handle_pair_pin_start(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
+void handle_pair_pin_start(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
 
-  char *hdr = msg_get_header(req, "X-Apple-Client-Name");
+  const char *hdr = req->headerValue("X-Apple-Client-Name");
   if (hdr) {
     if (conn->ap2_client_name)
       free(conn->ap2_client_name);
     conn->ap2_client_name = strdup(hdr);
   }
   debug(4, "Connection %d from \"%s\": handle_pair_pin_start, Content-Length %d",
-        conn->connection_number, conn->ap2_client_name, req->contentlength);
+        conn->connection_number, conn->ap2_client_name, req->bodyLength());
   debug_log_rtsp_message_conn(conn, 4, "handle_pair_pin_start", req);
 
   uint8_t *body = NULL;
   size_t body_len = 0;
 
-  resp->content = (char *)body; // these will be freed when the data is sent
-  resp->contentlength = body_len;
+  replaceBodyFromAllocation(*resp, reinterpret_cast<char *>(body), body_len);
   if (body != NULL)
-    msg_add_header(resp, "Content-Type", "application/octet-stream");
+    resp->addHeader("Content-Type", "application/octet-stream");
   debug_log_rtsp_message(4, "pair-pin-start response", resp);
 }
 
-void handle_pair_setup(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
+void handle_pair_setup(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
 
-  char *hdr = msg_get_header(req, "X-Apple-Client-Name");
+  const char *hdr = req->headerValue("X-Apple-Client-Name");
   if (hdr) {
     if (conn->ap2_client_name)
       free(conn->ap2_client_name);
     conn->ap2_client_name = strdup(hdr);
   }
   debug(2, "Connection %d from \"%s\": handle_pair_setup, Content-Length %d",
-        conn->connection_number, conn->ap2_client_name, req->contentlength);
+        conn->connection_number, conn->ap2_client_name, req->bodyLength());
   debug_log_rtsp_message_conn(conn, 2, "pair-setup request", req);
 
   int ret;
   uint8_t *body = NULL;
   size_t body_len = 0;
   debug(3, "Connection %d: handle_pair_setup Content-Length %d", conn->connection_number,
-        req->contentlength);
+        req->bodyLength());
   debug_log_rtsp_message(3, "handle_pair_setup", req);
 
   if (!conn->ap2_pairing_context.setup_ctx) {
@@ -1662,16 +1568,16 @@ void handle_pair_setup(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *re
         pair_setup_new(PAIR_SERVER_HOMEKIT, config.password, NULL, NULL, config.airplay_device_id);
     if (!conn->ap2_pairing_context.setup_ctx) {
       debug(1, "Error creating setup context");
-      resp->respcode = 500; // Internal Server Error
+      resp->respondWith(500); // Internal Server Error
       goto out;
     }
   }
 
   ret = pair_setup(&body, &body_len, conn->ap2_pairing_context.setup_ctx,
-                   (const uint8_t *)req->content, req->contentlength);
+                   (const uint8_t *)req->bodyData(), req->bodyLength());
   if (ret < 0) {
     debug(1, "%s", pair_setup_errmsg(conn->ap2_pairing_context.setup_ctx));
-    resp->respcode = 470; // Connection Authorization Required
+    resp->respondWith(470); // Connection Authorization Required
     goto out;
   }
 
@@ -1701,17 +1607,16 @@ void handle_pair_setup(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *re
   }
 
 out:
-  resp->content = (char *)body; // these will be freed when the data is sent
-  resp->contentlength = body_len;
+  replaceBodyFromAllocation(*resp, reinterpret_cast<char *>(body), body_len);
   if (body)
-    msg_add_header(resp, "Content-Type", "application/octet-stream");
+    resp->addHeader("Content-Type", "application/octet-stream");
   debug_log_rtsp_message_conn(conn, 2, "pair-setup response", resp);
 }
 
-void handle_fp_setup(__attribute__((unused)) rtsp_conn_info *conn, rtsp_message *req,
-                     rtsp_message *resp) {
+void handle_fp_setup(__attribute__((unused)) rtsp_conn_info *conn, RtspMessage *req,
+                     RtspMessage *resp) {
 
-  char *hdr = msg_get_header(req, "X-Apple-Client-Name");
+  const char *hdr = req->headerValue("X-Apple-Client-Name");
   if (hdr) {
     if (conn->ap2_client_name)
       free(conn->ap2_client_name);
@@ -1761,7 +1666,7 @@ void handle_fp_setup(__attribute__((unused)) rtsp_conn_info *conn, rtsp_message 
 
   static uint8_t server_fp_header[] = "\x46\x50\x4c\x59\x03\x01\x04\x00\x00\x00\x00\x14";
 
-  resp->respcode = 200; // assume it's handled
+  resp->respondWith(200); // assume it's handled
 
   // uint8_t *out;
   // size_t out_len;
@@ -1777,37 +1682,37 @@ void handle_fp_setup(__attribute__((unused)) rtsp_conn_info *conn, rtsp_message 
 
   // response and len are dummy values and can be ignored
 
-  // debug(1, "Version: %02x, mode: %02x, type: %02x, seq: %02x", req->content[version_pos],
-  //       req->content[mode_pos], req->content[type_pos], req->content[seq_pos]);
+  // debug(1, "Version: %02x, mode: %02x, type: %02x, seq: %02x", req->bodyData()[version_pos],
+  //       req->bodyData()[mode_pos], req->bodyData()[type_pos], req->bodyData()[seq_pos]);
 
-  if (req->content[version_pos] != 3 || req->content[type_pos] != setup_message_type) {
+  if (req->bodyData()[version_pos] != 3 || req->bodyData()[type_pos] != setup_message_type) {
     debug(1, "Unsupported FP version.");
   }
 
   char *response = NULL;
   size_t len = 0;
 
-  if (req->content[seq_pos] == setup1_message_seq) {
+  if (req->bodyData()[seq_pos] == setup1_message_seq) {
     // All replies are the same length. -1 to account for the NUL byte at the end.
     len = sizeof(server_fp_reply1) - 1;
 
-    if (req->content[mode_pos] == 0)
+    if (req->bodyData()[mode_pos] == 0)
       response = static_cast<char *>(memdup(server_fp_reply1, len));
-    if (req->content[mode_pos] == 1)
+    if (req->bodyData()[mode_pos] == 1)
       response = static_cast<char *>(memdup(server_fp_reply2, len));
-    if (req->content[mode_pos] == 2)
+    if (req->bodyData()[mode_pos] == 2)
       response = static_cast<char *>(memdup(server_fp_reply3, len));
-    if (req->content[mode_pos] == 3)
+    if (req->bodyData()[mode_pos] == 3)
       response = static_cast<char *>(memdup(server_fp_reply4, len));
 
-  } else if (req->content[seq_pos] == setup2_message_seq) {
+  } else if (req->bodyData()[seq_pos] == setup2_message_seq) {
     // -1 to account for the NUL byte at the end.
     len = sizeof(server_fp_header) - 1 + setup2_suffix_len;
     response = static_cast<char *>(malloc(len));
     if (response) {
       memcpy(response, server_fp_header, sizeof(server_fp_header) - 1);
       memcpy(response + sizeof(server_fp_header) - 1,
-             req->content + req->contentlength - setup2_suffix_len, setup2_suffix_len);
+             req->bodyData() + req->bodyLength() - setup2_suffix_len, setup2_suffix_len);
     }
   }
 
@@ -1815,9 +1720,8 @@ void handle_fp_setup(__attribute__((unused)) rtsp_conn_info *conn, rtsp_message 
     debug(1, "Cannot create a response.");
   }
 
-  resp->content = response; // these will be freed when the data is sent
-  resp->contentlength = len;
-  msg_add_header(resp, "Content-Type", "application/octet-stream");
+  replaceBodyFromAllocation(*resp, response, len);
+  resp->addHeader("Content-Type", "application/octet-stream");
 }
 
 /*
@@ -1835,7 +1739,7 @@ void handle_fp_setup(__attribute__((unused)) rtsp_conn_info *conn, rtsp_message 
         <integer>0</integer>
 */
 void handle_configure(rtsp_conn_info *conn __attribute__((unused)),
-                      rtsp_message *req __attribute__((unused)), rtsp_message *resp) {
+                      RtspMessage *req __attribute__((unused)), RtspMessage *resp) {
 
   debug_log_rtsp_message_conn(conn, 1, "POST /configure req:", req);
 
@@ -1844,7 +1748,7 @@ void handle_configure(rtsp_conn_info *conn __attribute__((unused)),
   plist_t response_plist = plist_new_dict();
 
   // look for a configuration dictionary
-  plist_t messagePlist = plist_from_rtsp_content(req);
+  plist_t messagePlist = plistFromMessageBody(*req);
   if (messagePlist != NULL) {
     // look for the keyed dict "ConfigurationDictionary"
     plist_t configurationDict = plist_dict_get_item(messagePlist, "ConfigurationDictionary");
@@ -1891,17 +1795,17 @@ void handle_configure(rtsp_conn_info *conn __attribute__((unused)),
       mdns_update(NULL, secondary_txt_records);
 
   }
-  plist_to_bin(response_plist, &resp->content, &resp->contentlength);
+  replaceBodyWithPlist(*resp, response_plist);
   plist_free(response_plist);
 
-  msg_add_header(resp, "Content-Type", "application/x-apple-binary-plist");
+  resp->addHeader("Content-Type", "application/x-apple-binary-plist");
   debug_log_rtsp_message_conn(conn, 1, "POST /configure response:", resp);
 }
 
-void handle_feedback(rtsp_conn_info *conn, __attribute__((unused)) rtsp_message *req,
-                     __attribute__((unused)) rtsp_message *resp) {
-  debug(4, "Connection %d: POST %s Content-Length %d", conn->connection_number, req->path,
-        req->contentlength);
+void handle_feedback(rtsp_conn_info *conn, __attribute__((unused)) RtspMessage *req,
+                     __attribute__((unused)) RtspMessage *resp) {
+  debug(4, "Connection %d: POST %s Content-Length %d", conn->connection_number, req->requestPath(),
+        req->bodyLength());
   debug_log_rtsp_message(4, NULL, req);
 
   int is_playing = 0;
@@ -1938,28 +1842,28 @@ void handle_feedback(rtsp_conn_info *conn, __attribute__((unused)) rtsp_message 
     plist_t response_plist = plist_new_dict();
     plist_dict_set_item(response_plist, "streams", array_plist);
 
-    plist_to_bin(response_plist, &resp->content, &resp->contentlength);
+    replaceBodyWithPlist(*resp, response_plist);
     plist_free(response_plist);
     // plist_free(array_plist);
     // plist_free(payload_plist);
 
-    msg_add_header(resp, "Content-Type", "application/x-apple-binary-plist");
+    resp->addHeader("Content-Type", "application/x-apple-binary-plist");
     debug_log_rtsp_message(4, "FEEDBACK response:", resp);
   }
 }
 
-void handle_command(rtsp_conn_info *conn, rtsp_message *req,
-                    __attribute__((unused)) rtsp_message *resp) {
-  debug(3, "Connection %d: POST %s Content-Length %d", conn->connection_number, req->path,
-        req->contentlength);
+void handle_command(rtsp_conn_info *conn, RtspMessage *req,
+                    __attribute__((unused)) RtspMessage *resp) {
+  debug(3, "Connection %d: POST %s Content-Length %d", conn->connection_number, req->requestPath(),
+        req->bodyLength());
   debug_log_rtsp_message(3, NULL, req);
-  if (rtsp_message_contains_plist(req)) {
+  if (req->bodyStartsWith("bplist00")) {
     // we are not going to load the plist here because we don't wamt
     // to incur the memory and processing cost. So we'll just send it to the
     // metadata handling code and it can be dealt with there.
     /*
     plist_t command_dict = NULL;
-    plist_from_memory(req->content, req->contentlength, &command_dict);
+    plist_from_memory(req->bodyData(), req->bodyLength(), &command_dict);
     if (command_dict != NULL) {
       // we have a plist -- try to get the dict item keyed to "updateMRSupportedCommands"
       plist_t item = plist_dict_get_item(command_dict, "type");
@@ -2012,7 +1916,7 @@ void handle_command(rtsp_conn_info *conn, rtsp_message *req,
           } else {
             debug(1, "Connection %d: POST /command no params dict.", conn->connection_number);
           }
-          resp->respcode = 200;
+          resp->respondWith(200);
         }
         if (typeValue != NULL)
           free(typeValue);
@@ -2030,48 +1934,48 @@ void handle_command(rtsp_conn_info *conn, rtsp_message *req,
   }
 }
 
-void handle_audio_mode(rtsp_conn_info *conn, rtsp_message *req,
-                       __attribute__((unused)) rtsp_message *resp) {
-  debug(2, "Connection %d: POST %s Content-Length %d", conn->connection_number, req->path,
-        req->contentlength);
+void handle_audio_mode(rtsp_conn_info *conn, RtspMessage *req,
+                       __attribute__((unused)) RtspMessage *resp) {
+  debug(2, "Connection %d: POST %s Content-Length %d", conn->connection_number, req->requestPath(),
+        req->bodyLength());
   debug_log_rtsp_message(3, NULL, req);
 }
 
-void handle_post(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
-  resp->respcode = 200;
-  if (strcmp(req->path, "/pair-setup") == 0) {
+void handle_post(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
+  resp->respondWith(200);
+  if (req->requestsPath("/pair-setup")) {
     handle_pair_setup(conn, req, resp);
-  } else if (strcmp(req->path, "/pair-verify") == 0) {
+  } else if (req->requestsPath("/pair-verify")) {
     handle_pair_verify(conn, req, resp);
-  } else if (strcmp(req->path, "/pair-add") == 0) {
+  } else if (req->requestsPath("/pair-add")) {
     handle_pair_add(conn, req, resp);
-  } else if (strcmp(req->path, "/pair-remove") == 0) {
+  } else if (req->requestsPath("/pair-remove")) {
     handle_pair_remove(conn, req, resp);
-  } else if (strcmp(req->path, "/pair-list") == 0) {
+  } else if (req->requestsPath("/pair-list")) {
     handle_pair_list(conn, req, resp);
-  } else if (strcmp(req->path, "/pair-pin-start") == 0) {
+  } else if (req->requestsPath("/pair-pin-start")) {
     handle_pair_pin_start(conn, req, resp);
-  } else if (strcmp(req->path, "/fp-setup") == 0) {
+  } else if (req->requestsPath("/fp-setup")) {
     handle_fp_setup(conn, req, resp);
-  } else if (strcmp(req->path, "/configure") == 0) {
+  } else if (req->requestsPath("/configure")) {
     handle_configure(conn, req, resp);
-  } else if (strcmp(req->path, "/feedback") == 0) {
+  } else if (req->requestsPath("/feedback")) {
     handle_feedback(conn, req, resp);
-  } else if (strcmp(req->path, "/command") == 0) {
+  } else if (req->requestsPath("/command")) {
     handle_command(conn, req, resp);
-  } else if (strcmp(req->path, "/audioMode") == 0) {
+  } else if (req->requestsPath("/audioMode")) {
     handle_audio_mode(conn, req, resp);
   } else {
     debug(1, "Connection %d: Unhandled POST %s Content-Length %d", conn->connection_number,
-          req->path, req->contentlength);
+          req->requestPath(), req->bodyLength());
     debug_log_rtsp_message(2, "POST request", req);
-    resp->respcode = 501;
+    resp->respondWith(501);
   }
 }
 
-void handle_setpeers(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
-  debug(2, "Connection %d: SETPEERS %s Content-Length %d", conn->connection_number, req->path,
-        req->contentlength);
+void handle_setpeers(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
+  debug(2, "Connection %d: SETPEERS %s Content-Length %d", conn->connection_number, req->requestPath(),
+        req->bodyLength());
   debug_log_rtsp_message(3, "SETPEERS request", req);
   /*
     char timing_list_message[4096];
@@ -2084,7 +1988,7 @@ void handle_setpeers(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp
     *)&conn->client_ip_string, sizeof(timing_list_message) - 1 - strlen(timing_list_message));
 
     plist_t addresses_array = NULL;
-    plist_from_memory(req->content, req->contentlength, &addresses_array);
+    plist_from_memory(req->bodyData(), req->bodyLength(), &addresses_array);
     uint32_t items = plist_array_get_size(addresses_array);
     if (items) {
       uint32_t item;
@@ -2105,67 +2009,67 @@ void handle_setpeers(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp
     plist_free(addresses_array);
   */
   // set_client_as_ptp_clock(conn);
-  resp->respcode = 200;
+  resp->respondWith(200);
 }
-void handle_setpeersx(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
-  debug(2, "Connection %d: SETPEERSX %s Content-Length %d", conn->connection_number, req->path,
-        req->contentlength);
+void handle_setpeersx(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
+  debug(2, "Connection %d: SETPEERSX %s Content-Length %d", conn->connection_number, req->requestPath(),
+        req->bodyLength());
   debug_log_rtsp_message(2, "SETPEERS Xrequest", req);
-  resp->respcode = 200;
+  resp->respondWith(200);
 }
 
 
 
-void handle_options_2(rtsp_conn_info *conn, __attribute__((unused)) rtsp_message *req,
-                      rtsp_message *resp) {
+void handle_options_2(rtsp_conn_info *conn, __attribute__((unused)) RtspMessage *req,
+                      RtspMessage *resp) {
   debug_log_rtsp_message_conn(conn, 3, "OPTIONS request", req);
   debug(3, "Connection %d: OPTIONS", conn->connection_number);
-  resp->respcode = 200;
-  msg_add_header(resp, "Public",
+  resp->respondWith(200);
+  resp->addHeader("Public",
                  "OPTIONS, SETUP, RECORD, FLUSH, FLUSHBUFFERED, TEARDOWN, "
                  "GET_PARAMETER, SET_PARAMETER, POST, GET, SETPEERS, SETPEERSX, "
                  "SETRATEANCHORTI, SETRATE");
 }
 
-void handle_teardown_2(rtsp_conn_info *conn, __attribute__((unused)) rtsp_message *req,
-                       rtsp_message *resp) {
+void handle_teardown_2(rtsp_conn_info *conn, __attribute__((unused)) RtspMessage *req,
+                       RtspMessage *resp) {
 
-  debug(4, "Connection %d from \"%s\": TEARDOWN (AP2 %s) %s Content-Length %d", conn->connection_number, conn->ap2_client_name, get_category_string(conn->airplay_stream_category), req->path, req->contentlength);
+  debug(4, "Connection %d from \"%s\": TEARDOWN (AP2 %s) %s Content-Length %d", conn->connection_number, conn->ap2_client_name, get_category_string(conn->airplay_stream_category), req->requestPath(), req->bodyLength());
   debug_log_rtsp_message_conn(conn, 4, "TEARDOWN (AP2)", req);
   // look for a configuration dictionary
 
-  plist_t messagePlist = plist_from_rtsp_content(req);
+  plist_t messagePlist = plistFromMessageBody(*req);
   if (messagePlist != NULL) {
     plist_t streams = plist_dict_get_item(messagePlist, "streams");
     if (streams != NULL) {
       // just drop the player, leave the connection open
       if (conn->player_thread) {
-        debug(4, "Connection %d from \"%s\": TEARDOWN (AP2 %s) %s Content-Length %d is stopping a player thread", conn->connection_number, conn->ap2_client_name, get_category_string(conn->airplay_stream_category), req->path, req->contentlength);
+        debug(4, "Connection %d from \"%s\": TEARDOWN (AP2 %s) %s Content-Length %d is stopping a player thread", conn->connection_number, conn->ap2_client_name, get_category_string(conn->airplay_stream_category), req->requestPath(), req->bodyLength());
         player_stop(conn);                    // this nulls the player_thread and cancels the threads...
         activity_monitor_signify_activity(0); // inactive, and should be after command_stop()
       }
     } else {
       if (plist_dict_get_size(messagePlist) != 0) {
-        debug(1, "Connection %d from \"%s\": TEARDOWN (AP2 %s) %s Content-Length %d plist is non-empty but contains no \"streams\" item.", conn->connection_number, conn->ap2_client_name, get_category_string(conn->airplay_stream_category), req->path, req->contentlength);
+        debug(1, "Connection %d from \"%s\": TEARDOWN (AP2 %s) %s Content-Length %d plist is non-empty but contains no \"streams\" item.", conn->connection_number, conn->ap2_client_name, get_category_string(conn->airplay_stream_category), req->requestPath(), req->bodyLength());
         debug_log_rtsp_message_conn(conn, 4, "Contents follow:", req);
       }
-      msg_add_header(resp, "Connection", "close");
-      debug(4, "Connection %d from \"%s\": TEARDOWN (AP2 %s) %s Content-Length %d is asking to terminate the connection.", conn->connection_number, conn->ap2_client_name, get_category_string(conn->airplay_stream_category), req->path, req->contentlength);
+      resp->addHeader("Connection", "close");
+      debug(4, "Connection %d from \"%s\": TEARDOWN (AP2 %s) %s Content-Length %d is asking to terminate the connection.", conn->connection_number, conn->ap2_client_name, get_category_string(conn->airplay_stream_category), req->requestPath(), req->bodyLength());
       conn->stop = 1;
     }
     plist_free(messagePlist);
   } else {
-    debug(1, "Connection %d from \"%s\": TEARDOWN (AP2 %s) %s Content-Length %d has no plist -- nothing done.", conn->connection_number, conn->ap2_client_name, get_category_string(conn->airplay_stream_category), req->path, req->contentlength);
+    debug(1, "Connection %d from \"%s\": TEARDOWN (AP2 %s) %s Content-Length %d has no plist -- nothing done.", conn->connection_number, conn->ap2_client_name, get_category_string(conn->airplay_stream_category), req->requestPath(), req->bodyLength());
   }
-  resp->respcode = 200;
+  resp->respondWith(200);
 }
 
-void handle_flush(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
+void handle_flush(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
   debug_log_rtsp_message(2, "FLUSH request", req);
   debug(3, "Connection %d: FLUSH", conn->connection_number);
-  char *p = NULL;
+  const char *p = NULL;
   uint32_t rtptime = 0;
-  char *hdr = msg_get_header(req, "RTP-Info");
+  const char *hdr = req->headerValue("RTP-Info");
 
   if (hdr) {
     // debug(1,"FLUSH message received: \"%s\".",hdr);
@@ -2181,24 +2085,24 @@ void handle_flush(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
   if ((conn != NULL) && (conn == principal_conn)) {
 
     player_flush(rtptime, conn); // will not crash even it there is no player thread.
-    resp->respcode = 200;
+    resp->respondWith(200);
 
   } else {
     warn("Connection %d FLUSH %u received without having the player", conn->connection_number,
          rtptime);
-    resp->respcode = 451;
+    resp->respondWith(451);
   }
 }
 
 
 
-void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
+void handle_setup_2(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
   int err;
 
-  debug(4, "Connection %d from \"%s\": SETUP (AP2) %s Content-Length %d", conn->connection_number, conn->ap2_client_name, req->path, req->contentlength);
+  debug(4, "Connection %d from \"%s\": SETUP (AP2) %s Content-Length %d", conn->connection_number, conn->ap2_client_name, req->requestPath(), req->bodyLength());
   debug_log_rtsp_message_conn(conn, 4, "SETUP (AP2)", req);
 
-  plist_t messagePlist = plist_from_rtsp_content(req);
+  plist_t messagePlist = plistFromMessageBody(*req);
 
   if (messagePlist != NULL) {
     // if (conn->sessionPlist)
@@ -2206,7 +2110,7 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
     conn->sessionPlist = messagePlist;
   }
   plist_t setupResponsePlist = plist_new_dict();
-  resp->respcode = 501;
+  resp->respondWith(501);
 
   // see if we can get a name for the client
 
@@ -2246,7 +2150,7 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
   plist_free(setupResponsePlist);
   plist_free(messagePlist);
   conn->sessionPlist = NULL;
-  resp->respcode = 400;
+  resp->respondWith(400);
   return;
 } else if (strcmp(timingProtocolString, "None") == 0) {
           debug(3,
@@ -2460,7 +2364,7 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
               plist_dict_set_item(setupResponsePlist, "timingPort", plist_new_uint(0)); // dummy
               // cancel_all_RTSP_threads(ptp_stream,
               //                         conn->connection_number); // kill all the other listeners
-              resp->respcode = 200;
+              resp->respondWith(200);
             } else {
               debug(1, "SETUP on Connection %d: PTP setup -- no timingPeerInfo plist.",
                     conn->connection_number);
@@ -2478,7 +2382,7 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
             // this should never happen!
             debug(1, "SETUP on Connection %d: could not become principal conn.",
                   conn->connection_number);
-            resp->respcode = 453;
+            resp->respondWith(453);
           }
         } else if (conn->airplay_stream_category == remote_control_stream) {
 
@@ -2520,7 +2424,7 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
           //     remote_control_stream,
           //     conn->connection_number); // kill all the other remote control listeners
 
-          resp->respcode = 200;
+          resp->respondWith(200);
         } else {
           debug(1, "SETUP on Connection %d: an unrecognised \"%s\" setup detected.",
                 conn->connection_number, timingProtocolString);
@@ -2618,7 +2522,7 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
 
       // get the DACP-ID and Active Remote for remote control stuff
 
-      char *ar = msg_get_header(req, "Active-Remote");
+      const char *ar = req->headerValue("Active-Remote");
       if (ar) {
         debug(3, "Connection %d: SETUP AP2 -- Active-Remote string seen: \"%s\".",
               conn->connection_number, ar);
@@ -2635,7 +2539,7 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
         }
       }
 
-      ar = msg_get_header(req, "DACP-ID");
+      ar = req->headerValue("DACP-ID");
       if (ar) {
         debug(3, "Connection %d: SETUP AP2 -- DACP-ID string seen: \"%s\".",
               conn->connection_number, ar);
@@ -2772,7 +2676,7 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
       plist_array_append_item(streams_array, stream0dict);
       plist_dict_set_item(setupResponsePlist, "streams", streams_array);
 
-      resp->respcode = 200;
+      resp->respondWith(200);
     } else if (conn->airplay_stream_category == remote_control_stream) {
       debug(3, "Connection %d (RC): SETUP: Remote Control Only with stream received from %s.",
             conn->connection_number, conn->client_ip_string);
@@ -2841,55 +2745,34 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
       plist_array_append_item(coreResponseArray, coreResponseDict);
       plist_dict_set_item(setupResponsePlist, "streams", coreResponseArray);
 
-      resp->respcode = 200;
+      resp->respondWith(200);
     } else {
       debug(1, "Connection %d: SETUP: Stream received but no airplay category set. Nothing done.",
             conn->connection_number);
     }
   }
 
-  if (resp->respcode == 200) {
-    plist_to_bin(setupResponsePlist, &resp->content, &resp->contentlength);
+  if (resp->hasResponseCode(200)) {
+    replaceBodyWithPlist(*resp, setupResponsePlist);
     plist_free(setupResponsePlist);
-    msg_add_header(resp, "Content-Type", "application/x-apple-binary-plist");
+    resp->addHeader("Content-Type", "application/x-apple-binary-plist");
   }
   plist_free(messagePlist);
 }
 
 
 /*
-static void handle_ignore(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
+static void handle_ignore(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
   debug(1, "Connection thread %d: IGNORE", conn->connection_number);
-  resp->respcode = 200;
+  resp->respondWith(200);
 }
 */
 
-void handle_set_parameter_parameter(rtsp_conn_info *conn, rtsp_message *req,
-                                    __attribute__((unused)) rtsp_message *resp) {
+void handle_set_parameter_parameter(rtsp_conn_info *conn, RtspMessage *req,
+                                    __attribute__((unused)) RtspMessage *resp) {
 
-  char *cp = req->content;
-  int cp_left = req->contentlength;
-  /*
-  int k = cp_left;
-  if (k>max_bytes)
-    k = max_bytes;
-  for (i = 0; i < k; i++)
-    snprintf((char *)buf + 2 * i, 3, "%02x", cp[i]);
-  debug(1, "handle_set_parameter_parameter: \"%s\".",buf);
-  */
-
-  char *next;
-  while (cp_left && cp) {
-    next = nextline(cp, cp_left);
-    // note: "next" will return NULL if there is no \r or \n or \r\n at the end of this
-    // but we are always guaranteed that if cp is not null, it will be pointing to something
-    // NUL-terminated
-
-    if (next)
-      cp_left -= (next - cp);
-    else
-      cp_left = 0;
-
+  for (const auto &parameter : req->parameterLines()) {
+    const char *cp = parameter.c_str();
     if (!strncmp(cp, "volume: ", strlen("volume: "))) {
       float volume = atof(cp + strlen("volume: "));
       debug(3, "Connection %d: request to set AirPlay Volume to: %f.", conn->connection_number,
@@ -2922,69 +2805,42 @@ void handle_set_parameter_parameter(rtsp_conn_info *conn, rtsp_message *req,
     } else {
       debug(1, "Connection %d, unrecognised parameter: \"%s\"\n", conn->connection_number, cp);
     }
-    cp = next;
   }
 }
 
 
-static void handle_get_parameter(__attribute__((unused)) rtsp_conn_info *conn, rtsp_message *req,
-                                 rtsp_message *resp) {
+static void handle_get_parameter(__attribute__((unused)) rtsp_conn_info *conn, RtspMessage *req,
+                                 RtspMessage *resp) {
   // debug(1, "Connection %d: GET_PARAMETER", conn->connection_number);
   // debug_print_msg_headers(1,req);
   // debug_print_msg_content(1,req);
 
-  if ((req->content) && (req->contentlength == strlen("volume\r\n")) &&
-      strstr(req->content, "volume") == req->content) {
+  if (req->requestsVolume()) {
     debug(2, "Connection %d: current volume (%.6f) requested", conn->connection_number,
           suggested_volume(conn));
 
-    char *p = static_cast<char *>(malloc(128));
-    if (p) {
-      resp->content = p;
-      resp->contentlength = snprintf(p, 128, "\r\nvolume: %.6f\r\n", suggested_volume(conn));
-    } else {
-      debug(1, "Couldn't allocate space for a response.");
-    }
+    resp->replaceBody(std::format("\r\nvolume: {:.6f}\r\n", suggested_volume(conn)));
   }
-  resp->respcode = 200;
+  resp->respondWith(200);
 }
 
-static int protocol_metadata_is_complete(const rtsp_message *message) {
-  if (message->content == NULL || message->contentlength < 8)
-    return 0;
-  uint32_t length;
-  memcpy(&length, message->content + 4, sizeof(length));
-  if (ntohl(length) != message->contentlength - 8)
-    return 0;
-  uint32_t offset = 8;
-  while (message->contentlength - offset >= 8) {
-    memcpy(&length, message->content + offset + 4, sizeof(length));
-    length = ntohl(length);
-    offset += 8;
-    if (length > message->contentlength - offset)
-      return 0;
-    offset += length;
-  }
-  return offset == message->contentlength;
-}
-
-static void handle_set_parameter(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
+static void handle_set_parameter(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
   debug(4, "Connection %d: SET_PARAMETER", conn->connection_number);
-  // if (!req->contentlength)
+  // if (!req->bodyLength())
   //    debug(1, "received empty SET_PARAMETER request.");
 
   // debug_print_msg_headers(1,req);
 
-  char *ct = msg_get_header(req, "Content-Type");
+  const char *ct = req->headerValue("Content-Type");
 
   if (ct) {
     // debug(2, "SET_PARAMETER Content-Type:\"%s\".", ct);
 
     if (!strncmp(ct, "application/x-dmap-tagged", 25)) {
-      resp->respcode = protocol_metadata_is_complete(req) ? 200 : 400;
+      resp->respondWith(req->containsCompleteMetadata() ? 200 : 400);
       return;
     } else if (!strncmp(ct, "image/", 6)) {
-      resp->respcode = 200;
+      resp->respondWith(200);
       return;
     } else if (!strncmp(ct, "text/parameters", 15)) {
       debug(3, "received parameters in SET_PARAMETER request.");
@@ -2998,13 +2854,13 @@ static void handle_set_parameter(rtsp_conn_info *conn, rtsp_message *req, rtsp_m
     debug(1, "Connection %d: missing Content-Type header in SET_PARAMETER request.",
           conn->connection_number);
   }
-  resp->respcode = 200;
+  resp->respondWith(200);
 }
 
 
 static const struct method_handler {
   const char *method;
-  void (*handler)(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp);
+  void (*handler)(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp);
 } method_handlers[] = {{"OPTIONS", handle_options_2},
                        {"FLUSH", handle_flush},
                        {"TEARDOWN", handle_teardown_2},
@@ -3021,10 +2877,10 @@ static const struct method_handler {
                        {"SETRATE", handle_setrate},
                        {NULL, NULL}};
 
-void rtsp_dispatch_request(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
-  resp->respcode = 501;
+void rtsp_dispatch_request(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
+  resp->respondWith(501);
   for (const struct method_handler *method = method_handlers; method->method; method++) {
-    if (strcmp(method->method, req->method) == 0) {
+    if (req->requestsMethod(method->method)) {
       method->handler(conn, req, resp);
       return;
     }
@@ -3145,7 +3001,7 @@ void rtsp_conversation_thread_cleanup_function(void *arg) {
 
 void msg_cleanup_function(void *arg) {
   debug(4, "msg_cleanup_function called 0x%" PRIxPTR ".", (uintptr_t)arg);
-  msg_free((rtsp_message **)arg);
+  msg_free((RtspMessage **)arg);
 }
 
 static void *rtsp_conversation_thread_func(void *pconn) {
@@ -3180,12 +3036,12 @@ static void *rtsp_conversation_thread_func(void *pconn) {
   pthread_cleanup_push(rtsp_conversation_thread_cleanup_function, (void *)conn);
 
   rtp_initialise(conn);
-  char *hdr = NULL;
+  const char *hdr = NULL;
 
   enum rtsp_read_request_response reply;
 
   // int rtsp_read_request_attempt_count = 1; // 1 means exit immediately
-  rtsp_message *req = NULL, *resp = NULL;
+  RtspMessage *req = NULL, *resp = NULL;
 
   conn->ap2_audio_buffer_size = 1024 * 1024 * 8;
 
@@ -3209,24 +3065,24 @@ static void *rtsp_conversation_thread_func(void *pconn) {
       pthread_cleanup_push(msg_cleanup_function, (void *)&req);
       resp = msg_init();
       pthread_cleanup_push(msg_cleanup_function, (void *)&resp);
-      resp->respcode = 501; // Not Implemented
+      resp->respondWith(501); // Not Implemented
       int dl = debug_level;
-      // if ((strcmp(req->method, "OPTIONS") == 0) ||
-      //    (strcmp(req->method, "POST") ==
+      // if ((strcmp(req->methodName(), "OPTIONS") == 0) ||
+      //    (strcmp(req->methodName(), "POST") ==
       //     0)) // the options message is very common, so don't log it until level 3
       //  dl = 3;
       debug(dl,
             "Connection %d: (%s) received an RTSP Packet of type \"%s\":", conn->connection_number,
-            get_category_string(conn->airplay_stream_category), req->method);
+            get_category_string(conn->airplay_stream_category), req->methodName());
       debug_log_rtsp_message(dl, NULL, req);
 
-      hdr = msg_get_header(req, "CSeq");
+      hdr = req->headerValue("CSeq");
       if (hdr)
-        msg_add_header(resp, "CSeq", hdr);
-      //      msg_add_header(resp, "Audio-Jack-Status", "connected; type=analog");
+        resp->addHeader("CSeq", hdr);
+      //      resp->addHeader("Audio-Jack-Status", "connected; type=analog");
       char server_string[128];
       snprintf(server_string, sizeof(server_string), "AirTunes/%s", config.srcvers);
-      msg_add_header(resp, "Server", server_string);
+      resp->addHeader("Server", server_string);
 
       rtsp_dispatch_request(conn, req, resp);
       debug(dl, "Connection %d: (%s) RTSP response:", conn->connection_number,

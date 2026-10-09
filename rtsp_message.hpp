@@ -27,6 +27,8 @@ public:
   std::string_view bodyText() const noexcept;
   const char *bodyData() const noexcept;
   uint32_t bodyLength() const noexcept;
+  bool bodyStartsWith(std::string_view prefix) const noexcept;
+  bool requestsVolume() const noexcept;
   void respondWith(int code) noexcept;
   int responseCode() const noexcept;
   bool hasResponseCode(int code) const noexcept;
