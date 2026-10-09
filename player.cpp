@@ -180,7 +180,6 @@ static int setupSoftwareResampler(rtsp_conn_info *conn, ssrc_t ssrc,
     char *deviceMap = nullptr;
     if (config.output->configure)
       config.output->configure(encoded, &deviceMap);
-    std::unique_ptr<char, decltype(&free)> ownedDeviceMap(deviceMap, &free);
     OutputFormat output{RATE_FROM_ENCODED_FORMAT(encoded), CHANNELS_FROM_ENCODED_FORMAT(encoded)};
     output.inputLayout = format->channels() == 6 ? config.six_channel_layout :
                          format->channels() == 8 ? config.eight_channel_layout : AV_CH_LAYOUT_STEREO;
@@ -189,8 +188,8 @@ static int setupSoftwareResampler(rtsp_conn_info *conn, ssrc_t ssrc,
     output.mapping.enabled = config.output_channel_mapping_enable != 0;
     for (unsigned index = 0; index < config.output_channel_map_size; ++index)
       output.mapping.names.emplace_back(config.output_channel_map[index]);
-    if (ownedDeviceMap)
-      output.mapping.deviceNames = ownedDeviceMap.get();
+    if (deviceMap)
+      output.mapping.deviceNames = deviceMap;
     const auto decoded = decodedFormat != AV_SAMPLE_FMT_NONE ? decodedFormat :
         format->isAac() ? AV_SAMPLE_FMT_FLTP :
         conn->decoder.decodedSampleFormat().value_or(AV_SAMPLE_FMT_FLTP);

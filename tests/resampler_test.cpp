@@ -157,6 +157,11 @@ static int32_t chooseStereo(unsigned, unsigned, unsigned) {
          FORMAT_TO_ENCODED_FORMAT(SPS_FORMAT_S16_LE);
 }
 static int32_t rejectOutput(unsigned, unsigned, unsigned) { return 0; }
+static int configureBorrowedChannelMap(int32_t, char **channelMap) {
+  static char channels[] = "FR FL";
+  *channelMap = channels;
+  return 0;
+}
 
 int main() {
   audio_output backend{};
@@ -184,6 +189,15 @@ int main() {
   assert(result[0] == 5 && result[1] == 9);
   initial.reset();
   config.output_channel_mapping_enable = 1;
+  backend.configure = configureBorrowedChannelMap;
+  for (unsigned attempt = 0; attempt < 2; ++attempt) {
+    assert(setup_software_resampler(&session, ALAC_44100_S16_2) == 0);
+    auto deviceMapped = convertIncomingAudio(session, *frame);
+    assert(deviceMapped.frames() == 64);
+    auto *samples = reinterpret_cast<const int16_t *>(deviceMapped.bytes().data());
+    assert(samples[0] == 9 && samples[1] == 5);
+  }
+  backend.configure = nullptr;
   config.output_channel_map_size = 2;
   config.output_channel_map[0] = "FM";
   config.output_channel_map[1] = "--";
