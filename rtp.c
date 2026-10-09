@@ -813,4 +813,3 @@ void reset_anchor_info(rtsp_conn_info *conn) {
 int have_timestamp_timing_information(rtsp_conn_info *conn) {
   return have_ptp_timing_information(conn);
 }
-

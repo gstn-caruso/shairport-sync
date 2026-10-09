@@ -1798,4 +1798,3 @@ int named_pthread_create_with_priority(pthread_t *thread, int priority,
   }
   return ret;
 }
-
