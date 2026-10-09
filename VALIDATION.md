@@ -200,6 +200,16 @@ Group (0.18s), exact roundtrip case, two shuffled in-process repetitions and Rel
 and all four FFmpeg wrap flags remain. C ABI, cancellation and shell checks remain
 green; production is unchanged and sanitizers/devices were not rerun.
 
+Resampler discovery (`ctest --test-dir build/redesign-release -R '^Resampler\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Ten independent cases retain all six format/rate rows, used-state resets, pending
+flush counts, negotiation/mapping rejection and direct-FFmpeg silence continuity.
+Group (0.17s), exact continuity case, two shuffled in-process repetitions and Release
+189/189 (15.23s) passed; each entry has timeout 5. Negotiation restores its output
+globals; lifetime counters still use local baselines. Native assertions, both swr
+wrap flags, C ABI/cancellation/shell checks are preserved; production is unchanged
+and sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |

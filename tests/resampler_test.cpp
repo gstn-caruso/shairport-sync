@@ -1,6 +1,7 @@
 #include "session_state.hpp"
 #include "resampler.hpp"
 #include "audio_player_adapter.hpp"
+#include <gtest/gtest.h>
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
@@ -43,44 +44,40 @@ static OwnedAudioFrame samplesFor(AudioFormat format, AVSampleFormat sampleForma
   return frame;
 }
 
-static void checkNativeFormats() {
-  const std::array encodings{ALAC_44100_S16_2, ALAC_48000_S24_2, AAC_44100_F24_2,
-                             AAC_48000_F24_2, AAC_48000_F24_5P1, AAC_48000_F24_7P1};
-  for (auto encoding : encodings) {
-    auto format = *AudioFormat::fromSsrc(encoding);
-    const auto sampleFormat = format.isAac() ? AV_SAMPLE_FMT_FLTP :
-        encoding == ALAC_44100_S16_2 ? AV_SAMPLE_FMT_S16P : AV_SAMPLE_FMT_S32P;
-    auto frame = samplesFor(format, sampleFormat);
-    for (unsigned rate : {format.sampleRate(), format.sampleRate() == 44100 ? 48000U : 44100U}) {
-      Resampler resampler;
-      OutputFormat output{rate, format.channels()};
-      assert(resampler.configure(format, sampleFormat, output));
-      auto converted = resampler.convert(*frame);
-      assert(converted && converted->frames() > 0);
-      assert(converted->shape() == NativePcmShape(output.channels, resampler.sampleBits(),
-                                                 resampler.effectiveSampleBits()));
-      assert(converted->bytes().size() == converted->frames() * output.channels *
-                                         resampler.sampleBits() / 8);
-      assert(resampler.effectiveSampleBits() == (format.isAac() ? 32 : format.sampleBits()));
-      if (rate == format.sampleRate()) {
-        assert(converted->frames() == 256 && converted->retainedFrames() == 0);
-        if (resampler.sampleBits() == 16)
-          assert(reinterpret_cast<const int16_t *>(converted->bytes().data())[0] == 512);
-        else
-          assert(reinterpret_cast<const int32_t *>(converted->bytes().data())[0] ==
-                 (format.isAac() ? 0x8000000 : 0x1000000));
-      } else {
-        assert(converted->retainedFrames() > 0);
-        const auto previousInitialization = initialized;
-        const auto retained = resampler.retainedFrames();
-        assert(resampler.configure(format, sampleFormat, output) == ResamplerChange::unchanged);
-        assert(initialized == previousInitialization && resampler.retainedFrames() == retained);
-        observeFlush = true;
-        auto pending = resampler.flush();
-        observeFlush = false;
-        assert(pending && *pending == static_cast<size_t>(pendingBeforeReset));
-        assert(*pending > 0 && resampler.retainedFrames() == 0);
-      }
+static void checkNativeFormat(ssrc_t encoding) {
+  auto format = *AudioFormat::fromSsrc(encoding);
+  const auto sampleFormat = format.isAac() ? AV_SAMPLE_FMT_FLTP :
+      encoding == ALAC_44100_S16_2 ? AV_SAMPLE_FMT_S16P : AV_SAMPLE_FMT_S32P;
+  auto frame = samplesFor(format, sampleFormat);
+  for (unsigned rate : {format.sampleRate(), format.sampleRate() == 44100 ? 48000U : 44100U}) {
+    Resampler resampler;
+    OutputFormat output{rate, format.channels()};
+    assert(resampler.configure(format, sampleFormat, output));
+    auto converted = resampler.convert(*frame);
+    assert(converted && converted->frames() > 0);
+    assert(converted->shape() == NativePcmShape(output.channels, resampler.sampleBits(),
+                                               resampler.effectiveSampleBits()));
+    assert(converted->bytes().size() == converted->frames() * output.channels *
+                                       resampler.sampleBits() / 8);
+    assert(resampler.effectiveSampleBits() == (format.isAac() ? 32 : format.sampleBits()));
+    if (rate == format.sampleRate()) {
+      assert(converted->frames() == 256 && converted->retainedFrames() == 0);
+      if (resampler.sampleBits() == 16)
+        assert(reinterpret_cast<const int16_t *>(converted->bytes().data())[0] == 512);
+      else
+        assert(reinterpret_cast<const int32_t *>(converted->bytes().data())[0] ==
+               (format.isAac() ? 0x8000000 : 0x1000000));
+    } else {
+      assert(converted->retainedFrames() > 0);
+      const auto previousInitialization = initialized;
+      const auto retained = resampler.retainedFrames();
+      assert(resampler.configure(format, sampleFormat, output) == ResamplerChange::unchanged);
+      assert(initialized == previousInitialization && resampler.retainedFrames() == retained);
+      observeFlush = true;
+      auto pending = resampler.flush();
+      observeFlush = false;
+      assert(pending && *pending == static_cast<size_t>(pendingBeforeReset));
+      assert(*pending > 0 && resampler.retainedFrames() == 0);
     }
   }
 }
@@ -163,7 +160,16 @@ static int configureBorrowedChannelMap(int32_t, char **channelMap) {
   return 0;
 }
 
-int main() {
+static OwnedAudioFrame checkPlayerNegotiationAndMapping() {
+  const auto savedOutput = config.output;
+  const auto savedOutputConfiguration = config.current_output_configuration;
+  const auto savedMappingEnabled = config.output_channel_mapping_enable;
+  const auto savedMapSize = config.output_channel_map_size;
+  std::array<const char *, 8> savedChannelMap;
+  std::copy(std::begin(config.output_channel_map), std::end(config.output_channel_map),
+             savedChannelMap.begin());
+  config.output_channel_mapping_enable = 0;
+  config.output_channel_map_size = 0;
   audio_output backend{};
   backend.get_configuration = chooseStereo;
   config.output = &backend;
@@ -214,6 +220,16 @@ int main() {
   assert(config.current_output_configuration == previousConfiguration);
   clear_software_resampler(&session);
   config.output = nullptr;
+  config.output = savedOutput;
+  config.current_output_configuration = savedOutputConfiguration;
+  config.output_channel_mapping_enable = savedMappingEnabled;
+  config.output_channel_map_size = savedMapSize;
+  std::copy(savedChannelMap.begin(), savedChannelMap.end(), std::begin(config.output_channel_map));
+  return frame;
+}
+
+static void checkConversionAndUsedStateReset() {
+  auto frame = checkPlayerNegotiationAndMapping();
   Resampler resampler;
   auto format = *AudioFormat::fromSsrc(ALAC_44100_S16_2);
   OutputFormat output{44100, 2};
@@ -229,7 +245,44 @@ int main() {
   resampler.reset();
   resampler.reset();
   assert(!resampler.configuredFor(format));
-  checkNativeFormats();
+}
+
+TEST(Resampler, Alac44100StereoPreservesNativeSamplesRetentionAndPendingResetCount) {
+  checkNativeFormat(ALAC_44100_S16_2);
+}
+
+TEST(Resampler, Alac48000StereoPreservesNative24BitShapeRetentionAndPendingResetCount) {
+  checkNativeFormat(ALAC_48000_S24_2);
+}
+
+TEST(Resampler, Aac44100StereoPreservesNativeSamplesRetentionAndPendingResetCount) {
+  checkNativeFormat(AAC_44100_F24_2);
+}
+
+TEST(Resampler, Aac48000StereoPreservesNativeSamplesRetentionAndPendingResetCount) {
+  checkNativeFormat(AAC_48000_F24_2);
+}
+
+TEST(Resampler, Aac48000Surround51PreservesShapeRetentionAndPendingResetCount) {
+  checkNativeFormat(AAC_48000_F24_5P1);
+}
+
+TEST(Resampler, Aac48000Surround71PreservesShapeRetentionAndPendingResetCount) {
+  checkNativeFormat(AAC_48000_F24_7P1);
+}
+
+TEST(Resampler, PlayerNegotiationPreservesMappingAndOwnedStateOnRejection) {
+  checkPlayerNegotiationAndMapping();
+}
+
+TEST(Resampler, UnchangedConfigurationPreservesSamplesAndUsedStateResetIsIdempotent) {
+  checkConversionAndUsedStateReset();
+}
+
+TEST(Resampler, MonoSilenceAndInvalidConfigurationPreserveOwnedContextUntilReset) {
   checkSilenceAndErrors();
+}
+
+TEST(Resampler, SilenceKeepsRateConversionContinuousWithDirectFfmpegReference) {
   checkSilenceContinuity();
 }
