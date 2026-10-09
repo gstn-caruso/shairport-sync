@@ -255,6 +255,17 @@ Group/exact selection (0.02s), two in-process repetitions and Release 199/199
 the mutex wrap flag and C ABI/cancellation/shell checks remain. Production is
 unchanged and sanitizers/devices were not rerun.
 
+Volume-command discovery (`ctest --test-dir build/redesign-release -R '^VolumeCommandCancellation\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Custom GoogleTest main preserves `--child` pipe-worker dispatch, including the
+trailing volume appended by `command_set_volume`; list-tests only lists both cases.
+An initial exact-argc guard timed out both cases, then was corrected to preserve
+that existing command contract. Startup/update group (0.07s), exact update case,
+two shuffled repetitions and Release 200/200 (15.40s) passed; timeout is 5.
+Native cancellation/join/reaping/assertions and the PTP wrap flag remain; command/
+backend globals restore per run. Production is unchanged; sanitizers/devices were
+not rerun.
+
 CTest covers:
 
 | Test | Contract |
