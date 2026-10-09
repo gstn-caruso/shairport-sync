@@ -11,6 +11,7 @@ static std::mutex observation;
 static std::condition_variable changed;
 static bool waiting = false, played = false;
 static int16_t outputSample = 0;
+static int outputFrames = 0;
 extern "C" int __real_pthread_cond_timedwait(pthread_cond_t *, pthread_mutex_t *, const timespec *);
 extern "C" int __wrap_pthread_cond_timedwait(pthread_cond_t *condition, pthread_mutex_t *mutex,
                                              const timespec *deadline) {
@@ -37,6 +38,10 @@ static int32_t chooseOutput(unsigned, unsigned, unsigned) {
   return CHANNELS_TO_ENCODED_FORMAT(2) | RATE_TO_ENCODED_FORMAT(44100) |
          FORMAT_TO_ENCODED_FORMAT(SPS_FORMAT_S16_LE);
 }
+static int underrunDelay(long *frames) {
+  *frames = -100;
+  return 0;
+}
 static int play(void *buffer, int frames, int type, uint32_t timestamp, uint64_t) {
   if (type == play_samples_are_timed && timestamp == 1000) {
     assert(frames > 0);
@@ -44,6 +49,7 @@ static int play(void *buffer, int frames, int type, uint32_t timestamp, uint64_t
     {
       std::lock_guard lock(observation);
       outputSample = static_cast<int16_t>(uint16_t(bytes[0]) | uint16_t(bytes[1]) << 8);
+      outputFrames = frames;
       played = true;
     }
     changed.notify_one();
@@ -78,7 +84,9 @@ static std::vector<uint8_t> encodedConstant() {
   avcodec_free_context(&encoder);
   return bytes;
 }
-int main() {
+static void checkPlayback(bool hasDelay) {
+  waiting = played = false;
+  outputFrames = 0;
   auto packet = encodedConstant();
   SessionState session{};
   assert(pthread_mutex_init(&session.volume_control_mutex, nullptr) == 0);
@@ -89,6 +97,7 @@ int main() {
   audio_output backend{};
   backend.get_configuration = chooseOutput;
   backend.play = play;
+  backend.delay = hasDelay ? underrunDelay : nullptr;
   config.output = &backend;
   config.decoder_in_use = 1 << decoder_ffmpeg_alac;
   config.playback_mode = ST_stereo;
@@ -121,4 +130,9 @@ int main() {
   assert(pthread_mutex_destroy(&session.volume_control_mutex) == 0);
   const int expected = 6000 * gain / 65536;
   assert(outputSample >= expected - 1 && outputSample <= expected + 1);
+  assert(outputFrames == (hasDelay ? 308 : 352));
+}
+int main() {
+  checkPlayback(false);
+  checkPlayback(true);
 }
