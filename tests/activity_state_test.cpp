@@ -2,6 +2,7 @@
 #include <cassert>
 
 int main() {
+  assert(activity_status() == am_inactive);
   ActivityState activity;
   assert(activity.status() == am_inactive);
   assert(activity.signifyActivity(false, 0.0) == ActivityState::Effect::none);
