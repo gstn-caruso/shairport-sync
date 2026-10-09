@@ -80,6 +80,14 @@ snapshot check. Group (0.10s), exact concurrent case and full Release 77/77
 (13.66s) passed; all six entries have timeout 5. Native cancellation, C ABI and
 shell checks remain green. Production is unchanged; sanitizers/devices were not rerun.
 
+Formatter discovery (`ctest --test-dir build/redesign-release -R '^StatisticsFormatter\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Fourteen independent cases retain all 16 header combinations, four row strings
+and two session strings. Group (0.23s), exact elapsed-time/output-rate session case
+and full Release 90/90 (13.97s) passed; all entries have timeout 5. Native
+cancellation, C ABI and shell checks remain green. Production is unchanged;
+sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
