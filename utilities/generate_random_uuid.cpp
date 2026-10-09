@@ -37,7 +37,7 @@ char *generate_random_uuid() {
   uuid_t binuuid;
   uuid_generate_random(binuuid);
 
-  char *uuid = malloc(UUID_STR_LEN + 1); // leave space for the NUL at the end
+  char *uuid = static_cast<char *>(malloc(UUID_STR_LEN + 1));
   // Produces a UUID string at uuid consisting of lower-case letters
   uuid_unparse_lower(binuuid, uuid);
   return uuid;

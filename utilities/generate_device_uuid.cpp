@@ -39,7 +39,7 @@ char *generate_device_uuid(const char *device_id) {
   uuid_parse(SHAIRPORT_SYNC_DEVICE_NAMESPACE, namespace_uuid);
   uuid_generate_sha1(derived_uuid, namespace_uuid, device_id, strlen(device_id));
 
-  char *uuid = malloc(UUID_STR_LEN + 1);
+  char *uuid = static_cast<char *>(malloc(UUID_STR_LEN + 1));
   uuid_unparse_lower(derived_uuid, uuid);
   return uuid;
 }

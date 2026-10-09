@@ -69,9 +69,9 @@ target_compile_definitions(pair_ap PRIVATE CONFIG_GCRYPT)
 add_library(receiver STATIC shairport.c bonjour_strings.c mdns.c mdns_avahi.c common.c rtp.c
   player.c audio.c audio_pa.c activity_monitor.c activity_state.cpp rtsp.c ap2_buffered_audio_processor.c
   ap2_event_receiver.c ap2_event_message_handler.c ptp-utilities.c utilities/debug.c
-  utilities/network_utilities.c utilities/rtsp_message_utilities.c utilities/string_utilities.cpp
-  utilities/exit.c utilities/buffered_read.c utilities/structured_buffer.cpp utilities/mod23.c
-  utilities/generate_random_uuid.c utilities/generate_device_uuid.c "${CMAKE_BINARY_DIR}/plists/get_info_response.c")
+  utilities/network_utilities.cpp utilities/rtsp_message_utilities.c utilities/string_utilities.cpp
+  utilities/exit.cpp utilities/buffered_read.c utilities/structured_buffer.cpp utilities/mod23.cpp
+  utilities/generate_random_uuid.cpp utilities/generate_device_uuid.cpp "${CMAKE_BINARY_DIR}/plists/get_info_response.c")
 foreach(target pair_ap receiver)
   target_include_directories(${target} PUBLIC "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}")
   target_compile_options(${target} PRIVATE -include "${CMAKE_SOURCE_DIR}/utilities/debug.h" -Wall -Wextra -Wshadow -Wformat=2 -fno-common -Wno-multichar -UNDEBUG)
@@ -82,7 +82,7 @@ target_link_libraries(receiver PUBLIC receiver-text pair_ap)
 if(CONFIG_USE_GIT_VERSION_STRING)
   add_dependencies(receiver git-version)
 endif()
-add_executable(shairport-sync main.c)
+add_executable(shairport-sync main.cpp)
 target_link_libraries(shairport-sync PRIVATE receiver)
 install(TARGETS shairport-sync RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(FILES man/shairport-sync.1 DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")

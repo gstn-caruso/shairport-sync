@@ -5,7 +5,9 @@ extern "C" {
 #ifndef _COMMON_H
 #define _COMMON_H
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include <sys/types.h> // for mode_t
 #include <unistd.h>    // for useconds_t
@@ -411,10 +413,10 @@ int mkpath(const char *path, mode_t mode);
 
 
 
-int do_pthread_setname(pthread_t *__restrict thread, const char *format, ...);
+int do_pthread_setname(pthread_t *thread, const char *format, ...);
 
-int named_pthread_create(pthread_t *__restrict thread, const pthread_attr_t *__restrict attr,
-                         void *(*start_routine)(void *), void *__restrict arg, const char *format,
+int named_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
+                         void *(*start_routine)(void *), void *arg, const char *format,
                          ...);
 int named_pthread_create_with_priority(pthread_t *thread, int priority,
                                        void *(*start_routine)(void *), void *arg,
