@@ -772,7 +772,6 @@ void stream_success_cb(__attribute__((unused)) pa_stream *local_stream,
 }
 
 audio_output audio_pa = {.name = "pulseaudio",
-                         .help = NULL,
                          .init = &init,
                          .deinit = &deinit,
                          .start = NULL,
