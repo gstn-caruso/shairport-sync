@@ -601,6 +601,11 @@ int setup_software_resampler(rtsp_conn_info *conn, ssrc_t ssrc) {
           conn->output_channel_to_resampler_channel_map[cmi] = silent_channel_index;
           output_channels[cmi].allocated = 1;
           debug(1, "output device channel %u (\"--\") will be silent.", cmi);
+        } else if ((output_channels[cmi].name != NULL) &&
+                   (strcmp(output_channels[cmi].name, "FM") == 0) &&
+                   (resampler_channels_found >= 2)) {
+          conn->output_channel_to_resampler_channel_map[cmi] = front_mono_channel_index;
+          output_channels[cmi].allocated = 1;
         } else {
           int resampler_channel_index;
           int found = 0;

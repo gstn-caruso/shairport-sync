@@ -38,6 +38,15 @@ int main() {
   auto *result = reinterpret_cast<int16_t *>(bytes);
   assert(result[0] == 5 && result[1] == 9);
   free(bytes);
+  config.output_channel_mapping_enable = 1;
+  config.output_channel_map_size = 2;
+  config.output_channel_map[0] = "FM";
+  config.output_channel_map[1] = "--";
+  assert(setup_software_resampler(&session, ALAC_44100_S16_2) == 0);
+  avframe_to_audio(&session, frame.get(), &bytes, &length, &count);
+  result = reinterpret_cast<int16_t *>(bytes);
+  assert(result[0] == 6 && result[1] == 0);
+  free(bytes);
   clear_software_resampler(&session);
   config.output = nullptr;
 }
