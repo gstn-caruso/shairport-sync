@@ -23,11 +23,15 @@ public:
   };
   Acquisition acquire(SessionState &session, bool allowReplacement) {
     std::lock_guard lock(mutex_);
+    if (!session.mayAcquirePrincipal())
+      return {false, false, {}};
     if (current_ == &session)
       return {true, true, {}};
     if (current_ && !allowReplacement)
       return {false, false, {}};
     auto previous = current_ ? std::optional(current_->connection_number) : std::nullopt;
+    if (current_)
+      current_->beginRetirement();
     current_ = &session;
     return {true, false, previous};
   }
@@ -41,6 +45,8 @@ public:
   std::optional<int> clear() {
     std::lock_guard lock(mutex_);
     auto previous = current_ ? std::optional(current_->connection_number) : std::nullopt;
+    if (current_)
+      current_->beginRetirement();
     current_ = nullptr;
     return previous;
   }

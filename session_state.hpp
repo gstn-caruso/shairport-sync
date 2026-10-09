@@ -10,6 +10,8 @@ struct SessionState {
   SessionState(const SessionState &) = delete;
   SessionState &operator=(const SessionState &) = delete;
   ~SessionState();
+  bool mayAcquirePrincipal() const { return !retiring_.load(); }
+  void beginRetirement() { retiring_.store(true); }
   int connection_number;           // for debug ID purposes, nothing else...
   int is_playing;                  // set true by player_play, set false by player_stop
   int input_format_is_valid;       // set when the input format is known and set in this structure
@@ -274,4 +276,6 @@ struct SessionState {
   void *dapo_private_storage; // this is used for compatibility, if dacp stuff isn't enabled.
 
   int enable_dither; // needed for filling silences before play actually starts
+private:
+  std::atomic<bool> retiring_{false};
 };

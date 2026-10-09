@@ -7,6 +7,7 @@ CTest covers:
 
 | Test | Contract |
 | --- | --- |
+| `session-replacement` | A displaced session cannot reacquire selection and form a mutual join while cancellation is disabled; the previous implementation timed out with the same condition-variable interleaving |
 | `session-registry` | Failed thread creation closes its socket, immediate completion is retained for one join, replacement preserves the new principal, retirement owns until join despite caller cancellation, and batch cancellation precedes joins |
 | `rtp-clock` | Anchor validity, mastership windows, fallback, wraparound, latency and frame/time conversions |
 | `rtsp-message` | Owned request parsing, header order/duplicates, binary framing, payload interpretation and socket output |
