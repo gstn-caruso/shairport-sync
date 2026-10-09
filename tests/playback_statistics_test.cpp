@@ -55,4 +55,24 @@ int main() {
   auto concurrent = statistics.snapshot();
   assert(concurrent.missing == 1000 && concurrent.resends == 1000);
   assert(concurrent.minimumBufferedBytes == 12000 && concurrent.minimumDacQueue == 17);
+  statistics.recordPlaybackAttempt(3000000000);
+  statistics.recordSubmitted(0, 99, 20);
+  assert(statistics.snapshot().measurements == 0);
+  statistics.recordArrival(0, 0, ArrivalKind::late);
+  assert(statistics.snapshot().late == 1);
+  statistics.resetForPlay();
+  assert(!statistics.hasArrivals() && !statistics.hasPlaybackSinceFlush());
+  assert(!statistics.sessionSummary(0).hasObservedFrame);
+  for (unsigned i = 1; i < 510; ++i)
+    statistics.recordArrival(i, i, ArrivalKind::ahead);
+  statistics.recordArrival(510, 10, ArrivalKind::inOrder);
+  assert(!statistics.snapshot().inputRateAvailable);
+  statistics.recordArrival(1000000510, 44110, ArrivalKind::inOrder);
+  assert(statistics.snapshot().inputFramesPerSecond == 44100);
+  statistics.resetForPlay();
+  for (unsigned i = 1; i <= 510; ++i)
+    statistics.recordArrival(i, i, ArrivalKind::tooLate);
+  statistics.recordArrival(511, 511, ArrivalKind::inOrder);
+  statistics.recordArrival(512, 512, ArrivalKind::inOrder);
+  assert(!statistics.snapshot().inputRateAvailable);
 }

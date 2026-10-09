@@ -72,7 +72,6 @@
 #include "nqptp-shm-structures.h"
 
 config_t config_file_stuff;
-uint64_t minimum_dac_queue_size;
 
 unsigned int sps_format_sample_size_array[] = {
     0,       // unknown

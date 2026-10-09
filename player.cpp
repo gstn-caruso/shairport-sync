@@ -31,6 +31,7 @@
 #include "session_state.hpp"
 #include "audio_format.hpp"
 #include "audio_player_adapter.hpp"
+#include "statistics_formatter.hpp"
 #include <algorithm>
 #include <bit>
 #include <assert.h>
@@ -86,9 +87,7 @@ void ab_resync(rtsp_conn_info *conn) {
 }
 
 void reset_input_flow_metrics(rtsp_conn_info *conn) {
-  conn->play_number_after_flush = 0;
-  conn->packet_count_since_flush = 0;
-  conn->input_frame_rate_starting_point_is_valid = 0;
+  conn->statistics.resetInputEpoch();
   conn->initial_reference_time = 0;
   conn->initial_reference_timestamp = 0;
 }
@@ -303,12 +302,9 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t timestamp, uint8
     return 0;
   int previousState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
-  if (conn->packet_count == 0)
+  if (!conn->statistics.hasArrivals())
     conn->packetBuffer.reset();
   const uint64_t now = get_absolute_time_in_ns();
-  ++conn->packet_count;
-  ++conn->packet_count_since_flush;
-  conn->time_of_last_audio_packet = now;
   RetryPolicy policy{
       static_cast<uint64_t>(config.resend_control_first_check_time * 1000000000),
       static_cast<uint64_t>(config.resend_control_check_interval_time * 1000000000),
@@ -330,25 +326,12 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t timestamp, uint8
       conn->last_seqno_valid = 0;
     }
   }
-  if (admission.kind == ArrivalKind::late)
-    ++conn->late_packets;
-  else if (admission.kind == ArrivalKind::tooLate)
-    ++conn->too_late_packets;
-  if (admission.kind == ArrivalKind::first || admission.kind == ArrivalKind::inOrder) {
-    if (!conn->input_frame_rate_starting_point_is_valid &&
-        conn->packet_count_since_flush >= 500 && conn->packet_count_since_flush <= 510) {
-      conn->frames_inward_measurement_start_time = now;
-      conn->frames_inward_frames_received_at_measurement_start_time = timestamp;
-      conn->input_frame_rate_starting_point_is_valid = 1;
-    }
-    conn->frames_inward_measurement_time = now;
-    conn->frames_inward_frames_received_at_measurement_time = timestamp;
-  }
+  conn->statistics.recordArrival(now, timestamp, admission.kind);
   pthread_setcancelstate(previousState, nullptr);
   for (const auto range : admission.resendRanges) {
     if (!config.disable_resend_requests) {
       rtp_request_resend(range.first, range.count, conn);
-      ++conn->resend_requests;
+      conn->statistics.recordResendRequested();
     }
   }
   return admission.samples;
@@ -726,7 +709,7 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
       } else if (auto packet = std::get_if<QueuedAudioPacket>(&*extracted)) {
         result = std::move(*packet);
       } else {
-        ++conn->missing_packets;
+        conn->statistics.recordMissingPlayback();
         auto format = conn->decoder.currentFormat();
         if (format) {
           result = QueuedAudioPacket::decoded(*format,
@@ -758,52 +741,6 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
   return result;
 }
 
-char line_of_stats[1024];
-int statistics_row; // statistics_line 0 means print the headings; anything else 1 means print the
-                    // values. Set to 0 the first time out.
-int statistics_column; // used to index through the statistics_print_profile array to check if it
-                       // should be printed
-int was_a_previous_column;
-int *statistics_print_profile;
-
-// these arrays specify which of the statistics specified by the statistics_item calls will actually
-// be printed -- 2 means print, 1 means print only in a debug mode, 0 means skip
-
-// clang-format off
-int ap2_realtime_synced_stream_statistics_print_profile[] =  {2, 1, 2, 2, 0, 2, 1, 1, 2, 1, 1, 1, 0, 0, 1, 2, 2};
-int ap2_realtime_nosync_stream_statistics_print_profile[] =  {2, 0, 0, 0, 0, 2, 1, 1, 2, 1, 1, 1, 0, 0, 1, 0, 0};
-int ap2_realtime_nodelay_stream_statistics_print_profile[] = {0, 0, 0, 0, 0, 2, 1, 1, 2, 0, 1, 1, 0, 0, 1, 0, 0};
-
-int ap2_buffered_synced_stream_statistics_print_profile[] =  {2, 2, 2, 1, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 2, 2};
-int ap2_buffered_nosync_stream_statistics_print_profile[] =  {2, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0};
-int ap2_buffered_nodelay_stream_statistics_print_profile[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0};
-// clang-format on
-
-void statistics_item(const char *heading, const char *format, ...) {
-  if (((statistics_print_profile[statistics_column] == 1) && (debug_level() != 0)) ||
-      (statistics_print_profile[statistics_column] == 2)) { // include this column?
-    if (was_a_previous_column != 0) {
-      if (statistics_row == 0)
-        strcat(line_of_stats, " | ");
-      else
-        strcat(line_of_stats, "   ");
-    }
-    if (statistics_row == 0) {
-      strcat(line_of_stats, heading);
-    } else {
-      char b[1024];
-      b[0] = 0;
-      va_list args;
-      va_start(args, format);
-      vsnprintf(b, sizeof(b), format, args);
-      va_end(args);
-      strcat(line_of_stats, b);
-    }
-    was_a_previous_column = 1;
-  }
-  statistics_column++;
-}
-
 double suggested_volume(rtsp_conn_info *conn) {
   double response = config.airplay_volume;
   if ((conn != NULL) && (conn->own_airplay_volume_set != 0)) {
@@ -829,23 +766,10 @@ void player_thread_cleanup_handler(void *arg) {
   debug(3, "Connection %d: player thread main loop exit via player_thread_cleanup_handler.",
         conn->connection_number);
 
-  if ((conn->at_least_one_frame_seen_this_session != 0) && (config.statistics_requested)) {
-    int64_t time_playing = get_absolute_time_in_ns() - conn->playstart;
-    time_playing = time_playing / 1000000000;
-    int64_t elapsedHours = time_playing / 3600;
-    int64_t elapsedMin = (time_playing / 60) % 60;
-    int64_t elapsedSec = time_playing % 60;
-    if (conn->frame_rate_valid)
-      inform("Connection %d: Playback stopped. Total playing time %02" PRId64 ":%02" PRId64
-             ":%02" PRId64 ". "
-             "Output: %0.2f (raw), %0.2f (corrected) "
-             "frames per second.",
-             conn->connection_number, elapsedHours, elapsedMin, elapsedSec, conn->raw_frame_rate,
-             conn->corrected_frame_rate);
-    else
-      inform("Connection %d: Playback stopped. Total playing time %02" PRId64 ":%02" PRId64
-             ":%02" PRId64 ".",
-             conn->connection_number, elapsedHours, elapsedMin, elapsedSec);
+  const auto summary = conn->statistics.sessionSummary(get_absolute_time_in_ns());
+  if (summary.hasObservedFrame && config.statistics_requested) {
+    StatisticsFormatter formatter({StatisticsStream::realtime, false, false, false});
+    inform("%s", formatter.session(conn->connection_number, summary).c_str());
   }
 
 
@@ -919,17 +843,9 @@ void *player_thread_func(void *arg) {
   // at this time).
 
 
-  uint64_t previous_frames_played = 0; // initialised to avoid a "possibly uninitialised" warning
-  uint64_t previous_raw_measurement_time =
-      0; // initialised to avoid a "possibly uninitialised" warning
-  uint64_t previous_corrected_measurement_time =
-      0; // initialised to avoid a "possibly uninitialised" warning
-  int previous_frames_played_valid = 0;
-
   conn->latency_warning_issued =
       0; // be permitted to generate a warning each time a play is attempted
-  conn->packet_count = 0;
-  conn->packet_count_since_flush = 0;
+  conn->statistics.resetForPlay();
   conn->pcmEncoder.reset();
   conn->playbackSync.resetForPlay();
   conn->ab_buffering = 1;
@@ -953,38 +869,9 @@ void *player_thread_func(void *arg) {
 
   // conn->connection_state_to_output = get_requested_connection_state_to_output();
 
-  int number_of_statistics, oldest_statistic, newest_statistic;
-  uint32_t frames_since_last_stats_logged = 0;
-  int at_least_one_frame_seen = 0;
-  int64_t tsum_of_sync_errors, tsum_of_corrections, tsum_of_insertions_and_deletions;
-  size_t tsum_of_frames;
-  minimum_dac_queue_size = UINT64_MAX;
-  int64_t tsum_of_gaps;
-  int32_t minimum_buffer_occupancy = INT32_MAX;
-  int32_t maximum_buffer_occupancy = INT32_MIN;
-
-  conn->ap2_audio_buffer_minimum_size = -1;
-
-  conn->at_least_one_frame_seen_this_session = 0;
-  conn->raw_frame_rate = 0.0;
-  conn->corrected_frame_rate = 0.0;
-  conn->frame_rate_valid = 0;
-
-  conn->input_frame_rate = 0.0;
-  conn->input_frame_rate_starting_point_is_valid = 0;
-
-  conn->buffer_occupancy = 0;
-
   int play_samples = 0;
   uint64_t current_delay;
-  int play_number = 0;
-  conn->play_number_after_flush = 0;
-  conn->time_of_last_audio_packet = 0;
-  // conn->shutdown_requested = 0;
-  number_of_statistics = oldest_statistic = newest_statistic = 0;
-  tsum_of_sync_errors = tsum_of_corrections = tsum_of_insertions_and_deletions = 0;
-  tsum_of_frames = 0;
-  tsum_of_gaps = 0;
+  bool statisticsHeaderPrinted = false;
 
   // I think it's useful to keep this prime to prevent it from falling into a pattern with some
   // other process.
@@ -1004,40 +891,6 @@ void *player_thread_func(void *arg) {
     config.output->start(44100, SPS_FORMAT_S16_LE);
 
   conn->first_packet_timestamp = 0;
-  conn->missing_packets = conn->late_packets = conn->too_late_packets = conn->resend_requests = 0;
-
-  // conn->statistics = malloc(sizeof(stats_t) * trend_samples);
-  // if (conn->statistics == NULL)
-  //   die("Failed to allocate a statistics buffer");
-
-  statistics_row = 0; // statistics_line 0 means print the headings; anything else 1 means print the
-                      // values. Set to 0 the first time out.
-
-  // decide on what statistics profile to use, if requested
-
-    if (conn->airplay_stream_type == realtime_stream) {
-      if (config.output->delay) {
-        // if (config.no_sync == 0)
-        statistics_print_profile = ap2_realtime_synced_stream_statistics_print_profile;
-        // else
-        // statistics_print_profile = ap2_realtime_nosync_stream_statistics_print_profile;
-      } else {
-        statistics_print_profile = ap2_realtime_nodelay_stream_statistics_print_profile;
-      }
-    } else {
-      if (config.output->delay) {
-        // if (config.no_sync == 0)
-        statistics_print_profile = ap2_buffered_synced_stream_statistics_print_profile;
-        // else
-        //   statistics_print_profile = ap2_buffered_nosync_stream_statistics_print_profile;
-      } else {
-        statistics_print_profile = ap2_buffered_nodelay_stream_statistics_print_profile;
-      }
-    }
-
-
-
-
   pthread_cleanup_push(player_thread_cleanup_handler, arg); // undo what's been done so far
 
   // stop looking elsewhere for DACP stuff
@@ -1089,16 +942,12 @@ void *player_thread_func(void *arg) {
         int64_t sync_error = 0;
         int amount_to_stuff = 0;
         if (!inframe->audioBytes().empty()) {
-          if (play_number == 0)
-            conn->playstart = get_absolute_time_in_ns();
-          play_number++;
-          //        if (play_number % 100 == 0)
-          //          debug(3, "Play frame %d.", play_number);
-          conn->play_number_after_flush++;
+          const auto attempt = conn->statistics.recordPlaybackAttempt(get_absolute_time_in_ns());
+          const auto play_number = attempt.playNumber;
 
           if (playback.timestamp == 0) {
             debug(2,
-                  "Player has supplied a silent frame, (possibly frame %u) for play number %d, "
+"Player has supplied a silent frame, (possibly frame %u) for play number %" PRIu64 ", "
                   "status 0x%X after %u resend requests.",
                   conn->last_seqno_read + 1, play_number, 0u, 0u);
             conn->last_seqno_read++; // manage the packet out of sequence minder
@@ -1129,178 +978,35 @@ void *player_thread_func(void *arg) {
             // now, go back as far as the total latency less, say, 100 ms, and check the
             // presence of frames from then onwards
 
-            at_least_one_frame_seen = 1;
-
-            int16_t bo = conn->packetBuffer.occupancy(); // do this in 16 bits
-            conn->buffer_occupancy = bo;                 // 32 bits
-
-            if (conn->buffer_occupancy < minimum_buffer_occupancy)
-              minimum_buffer_occupancy = conn->buffer_occupancy;
-
-            if (conn->buffer_occupancy > maximum_buffer_occupancy)
-              maximum_buffer_occupancy = conn->buffer_occupancy;
-
-            // now, before outputting anything to the output device, check the stats
-
-            uint32_t stats_logging_interval_in_frames =
-                8 * RATE_FROM_ENCODED_FORMAT(config.current_output_configuration);
-            if ((stats_logging_interval_in_frames != 0) &&
-                (frames_since_last_stats_logged > stats_logging_interval_in_frames)) {
-
-              // here, calculate the input and output frame rates, where possible, even if
-              // statistics have not been requested this is to calculate them in case they are
-              // needed by the D-Bus interface or elsewhere.
-
-              if (conn->input_frame_rate_starting_point_is_valid) {
-                uint64_t elapsed_reception_time, frames_received;
-                elapsed_reception_time = conn->frames_inward_measurement_time -
-                                         conn->frames_inward_measurement_start_time;
-                frames_received = conn->frames_inward_frames_received_at_measurement_time -
-                                  conn->frames_inward_frames_received_at_measurement_start_time;
-                conn->input_frame_rate = (1.0E9 * frames_received) /
-                                         elapsed_reception_time; // an IEEE double calculation
-                                                                 // with two 64-bit integers
-              } else {
-                conn->input_frame_rate = 0.0;
+            const auto occupancy = conn->packetBuffer.occupancy();
+            const bool firstObservedFrame = conn->statistics.observeFrame(occupancy);
+            const unsigned outputRate = RATE_FROM_ENCODED_FORMAT(config.current_output_configuration);
+            if (conn->statistics.intervalDue(outputRate)) {
+              if (config.output->delay && config.output->stats) {
+                OutputReading reading{};
+                reading.status = config.output->stats(&reading.rawTime, &reading.correctedTime,
+                    &reading.queuedFrames, &reading.sentFrames);
+                conn->statistics.recordOutputReading(reading);
               }
-
-              int stats_status = 0;
-              if ((config.output->delay) && (config.output->stats)) {
-                uint64_t frames_sent_for_play;
-                uint64_t raw_measurement_time;
-                uint64_t corrected_measurement_time;
-                uint64_t actual_delay;
-                stats_status =
-                    config.output->stats(&raw_measurement_time, &corrected_measurement_time,
-                                         &actual_delay, &frames_sent_for_play);
-                // debug(1,"status: %d, actual_delay: %" PRIu64 ", frames_sent_for_play: %"
-                // PRIu64
-                // ", frames_played: %" PRIu64 ".", stats_status, actual_delay,
-                // frames_sent_for_play, frames_sent_for_play - actual_delay);
-                uint64_t frames_played_by_output_device = frames_sent_for_play - actual_delay;
-                // If the status is zero, it means that there were no output problems since the
-                // last time the stats call was made. Thus, the frame rate should be valid.
-                if ((stats_status == 0) && (previous_frames_played_valid != 0)) {
-                  uint64_t frames_played_in_this_interval =
-                      frames_played_by_output_device - previous_frames_played;
-                  int64_t raw_interval = raw_measurement_time - previous_raw_measurement_time;
-                  int64_t corrected_interval =
-                      corrected_measurement_time - previous_corrected_measurement_time;
-                  if (raw_interval != 0) {
-                    conn->raw_frame_rate = (1e9 * frames_played_in_this_interval) / raw_interval;
-                    conn->corrected_frame_rate =
-                        (1e9 * frames_played_in_this_interval) / corrected_interval;
-                    conn->frame_rate_valid = 1;
-                    // debug(1,"frames_played_in_this_interval: %" PRIu64 ", interval: %" PRId64
-                    // ", rate: %f.",
-                    //  frames_played_in_this_interval, interval, conn->frame_rate);
+              if (const auto interval = conn->statistics.takeIntervalIfDue(outputRate);
+                  interval && config.statistics_requested) {
+                if (interval->hasObservedFrame) {
+                  StatisticsFormatter formatter({conn->airplay_stream_type == realtime_stream ?
+                      StatisticsStream::realtime : StatisticsStream::buffered,
+                      config.output->delay != nullptr, config.output->stats != nullptr,
+                      debug_level() != 0});
+                  if (!statisticsHeaderPrinted) {
+                    inform("%s", formatter.header().c_str());
+                    statisticsHeaderPrinted = true;
                   }
-                }
-
-                // uncomment the if statement if your want to get as long a period for
-                // calculating the frame rate as possible without an output break or error
-                if ((stats_status != 0) || (previous_frames_played_valid == 0)) {
-                  // if we have just detected an outputting error, or if we have no
-                  // starting information
-                  if (stats_status != 0)
-                    conn->frame_rate_valid = 0;
-                  previous_frames_played = frames_played_by_output_device;
-                  previous_raw_measurement_time = raw_measurement_time;
-                  previous_corrected_measurement_time = corrected_measurement_time;
-                  previous_frames_played_valid = 1;
-                }
-              }
-
-              // we can now calculate running averages for sync error (frames), corrections
-              // (ppm), insertions plus deletions (ppm)
-              double average_sync_error = 0.0;
-              double average_gap_ms = 0.0;
-              double corrections_ppm = 0.0;
-              double insertions_plus_deletions_ppm = 0.0;
-              if (number_of_statistics == 0) {
-                debug(1, "number_of_statistics is zero!");
-              } else {
-                average_sync_error =
-                    (1000.0 * tsum_of_sync_errors) /
-                    (number_of_statistics *
-                     RATE_FROM_ENCODED_FORMAT(config.current_output_configuration));
-                average_gap_ms = ((1.0 * tsum_of_gaps) / number_of_statistics) * 0.000001;
-                if (tsum_of_frames != 0) {
-                  corrections_ppm = (1000000.0 * tsum_of_corrections) / tsum_of_frames;
-                  insertions_plus_deletions_ppm =
-                      (1000000.0 * tsum_of_insertions_and_deletions) / tsum_of_frames;
-                } else {
-                  debug(3, "tsum_of_frames: %zu.", tsum_of_frames);
-                }
-              }
-              if (config.statistics_requested) {
-                if (at_least_one_frame_seen) {
-                  do {
-                    line_of_stats[0] = '\0';
-                    statistics_column = 0;
-                    was_a_previous_column = 0;
-                    statistics_item("Av Sync Error (ms)", "%*.2f", 18, average_sync_error);
-                    statistics_item("Net Sync PPM", "%*.1f", 12, corrections_ppm);
-                    statistics_item("All Sync PPM", "%*.1f", 12, insertions_plus_deletions_ppm);
-                    statistics_item("Av Sync Window (ms)", "%*.2f", 19, average_gap_ms);
-                    statistics_item("    Packets", "%*d", 11, play_number);
-                    statistics_item("Missing", "%*" PRIu64 "", 7, conn->missing_packets);
-                    statistics_item("  Late", "%*" PRIu64 "", 6, conn->late_packets);
-                    statistics_item("Too Late", "%*" PRIu64 "", 8, conn->too_late_packets);
-                    statistics_item("Resend Reqs", "%*" PRIu64 "", 11, conn->resend_requests);
-                    if (minimum_dac_queue_size == UINT64_MAX) {
-                      statistics_item("Min DAC Queue", "          n/a"); // same size as below, right justified
-                    } else {
-                      statistics_item("Min DAC Queue", "%*" PRIu64 "", 13, minimum_dac_queue_size);
-                    }
-                    statistics_item("Min Buffers", "%*" PRIu32 "", 11, minimum_buffer_occupancy);
-                    statistics_item("Max Buffers", "%*" PRIu32 "", 11, maximum_buffer_occupancy);
-                    if (conn->ap2_audio_buffer_minimum_size > 10 * 1024)
-                      statistics_item("Min Buffer Size", "%*" PRIu32 "k", 14,
-                                      conn->ap2_audio_buffer_minimum_size / 1024);
-                    else
-                      statistics_item("Min Buffer Size", "%*" PRIu32 "", 15,
-                                      conn->ap2_audio_buffer_minimum_size);
-                    statistics_item("Nominal FPS", "%*.2f", 11, conn->remote_frame_rate);
-                    statistics_item("Received FPS", "%*.2f", 12, conn->input_frame_rate);
-                    // only make the next two columns appear if we are getting stats information
-                    // from the back end
-                    if (config.output->stats) {
-                      if (conn->frame_rate_valid) {
-                        statistics_item("Output FPS (r)", "%*.2f", 14, conn->raw_frame_rate);
-                        statistics_item("Output FPS (c)", "%*.2f", 14, conn->corrected_frame_rate);
-                      } else {
-                        statistics_item("Output FPS (r)", "           N/A");
-                        statistics_item("Output FPS (c)", "           N/A");
-                      }
-                    } else {
-                      statistics_column = statistics_column + 2;
-                    }
-                    statistics_row++;
-                    inform("%s", line_of_stats);
-                  } while (statistics_row < 2);
+                  inform("%s", formatter.row(*interval).c_str());
                 } else {
                   inform("No frames received in the last sampling interval.");
                 }
               }
-              tsum_of_sync_errors = 0;
-              tsum_of_corrections = 0;
-              tsum_of_insertions_and_deletions = 0;
-              number_of_statistics = 0;
-              tsum_of_frames = 0;
-              tsum_of_gaps = 0;
-              minimum_dac_queue_size = UINT64_MAX;  // hack reset
-              maximum_buffer_occupancy = INT32_MIN; // can't be less than this
-              minimum_buffer_occupancy = INT32_MAX; // can't be more than this
-              conn->ap2_audio_buffer_minimum_size = -1;
-              at_least_one_frame_seen = 0;
-              frames_since_last_stats_logged = 0;
             }
 
-            if (conn->at_least_one_frame_seen_this_session == 0) {
-              conn->at_least_one_frame_seen_this_session = 1;
-
-
+            if (firstObservedFrame) {
               char short_description[256];
               snprintf(short_description, sizeof(short_description), "%u/%s/%u",
                        RATE_FROM_ENCODED_FORMAT(config.current_output_configuration),
@@ -1369,9 +1075,7 @@ void *player_thread_func(void *arg) {
                   current_delay =
                       0; // could get a negative value if there was underrun, but ignore it.
                 }
-                if (current_delay < minimum_dac_queue_size) {
-                  minimum_dac_queue_size = current_delay; // update for display later
-                }
+                conn->statistics.recordDacQueue(current_delay);
               } else {
                 current_delay = 0;
                 if ((resp == sps_extra_code_output_stalled) &&
@@ -1427,7 +1131,7 @@ void *player_thread_func(void *arg) {
               const auto decision = conn->playbackSync.observe(observation, policy);
               sync_error = decision.errorFrames;
               amount_to_stuff = decision.correctionFrames;
-              tsum_of_gaps += decision.windowSpreadNs;
+              conn->statistics.recordSync(decision);
               if (decision.silenceFrames) {
                 auto silence = conn->pcmEncoder.silence(decision.silenceFrames);
                 config.output->play(silence.bytes().data(), silence.frames(),
@@ -1496,17 +1200,7 @@ void *player_thread_func(void *arg) {
 
 
           }
-          tsum_of_frames = tsum_of_frames + frames_played;
-          if (frames_played) {
-            number_of_statistics++;
-            frames_since_last_stats_logged += frames_played;
-            // stats accumulation. We want an average of sync error, drift, adjustment,
-            // number of additions+subtractions
-            tsum_of_sync_errors = tsum_of_sync_errors + sync_error;
-            tsum_of_corrections = tsum_of_corrections + amount_to_stuff;
-            tsum_of_insertions_and_deletions =
-                tsum_of_insertions_and_deletions + abs(amount_to_stuff);
-          }
+          conn->statistics.recordSubmitted(frames_played, sync_error, amount_to_stuff);
         }
       } else {
         debug(1, "audio block sequence number %u, ready status: %u with no data!",

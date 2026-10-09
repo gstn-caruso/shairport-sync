@@ -372,7 +372,6 @@ uint32_t uatoi(const char *nptr);
 extern shairport_cfg config;
 extern config_t config_file_stuff;
 
-extern uint64_t minimum_dac_queue_size;
 
 int config_lookup_non_empty_string(const config_t *cfg, const char *path, const char **value);
 int config_set_lookup_bool(config_t *cfg, const char *where, int *dst);

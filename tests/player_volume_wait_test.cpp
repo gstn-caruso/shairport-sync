@@ -21,7 +21,7 @@ extern "C" int __wrap_pthread_cond_timedwait(pthread_cond_t *condition, pthread_
   {
     std::lock_guard lock(observation);
     waiting = true;
-    if (activeSession && activeSession->play_number_after_flush != 0)
+    if (activeSession && activeSession->statistics.hasPlaybackSinceFlush())
       waitingAfterPacket = true;
   }
   changed.notify_one();
@@ -138,6 +138,11 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
   assert(pthread_mutex_destroy(&session.flush_mutex) == 0);
   assert(pthread_mutex_destroy(&session.volume_control_mutex) == 0);
   assert(played == submit);
+  const auto statistics = session.statistics.snapshot();
+  assert(statistics.packets == 1 && statistics.playNumber == 1);
+  assert(statistics.frames == (submit ? expectedFrames : 0));
+  assert(statistics.measurements == (submit && expectedFrames > 0 ? 1 : 0));
+  assert(session.statistics.sessionSummary(1000000000).hasObservedFrame);
   if (submit) {
     assert(outputFrames == expectedFrames);
     if (expectedFrames > 0) {

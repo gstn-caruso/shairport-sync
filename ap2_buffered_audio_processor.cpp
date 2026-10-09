@@ -250,9 +250,7 @@ void *rtp_buffered_audio_processor(void *arg) {
       data_len = ntohs(data_len);
 
       // diagnostic
-      if ((conn->ap2_audio_buffer_minimum_size < 0) ||
-          (bytes_remaining_in_buffer < (size_t)conn->ap2_audio_buffer_minimum_size))
-        conn->ap2_audio_buffer_minimum_size = bytes_remaining_in_buffer;
+      conn->statistics.observeBufferedBytes(bytes_remaining_in_buffer);
 
       if (nread > 0) {
         // get the block itself
@@ -261,9 +259,7 @@ void *rtp_buffered_audio_processor(void *arg) {
         // debug(1,"block read");
 
         // diagnostic
-        if ((conn->ap2_audio_buffer_minimum_size < 0) ||
-            (bytes_remaining_in_buffer < (size_t)conn->ap2_audio_buffer_minimum_size))
-          conn->ap2_audio_buffer_minimum_size = bytes_remaining_in_buffer;
+        conn->statistics.observeBufferedBytes(bytes_remaining_in_buffer);
         // debug(1, "buffered audio packet of size %u received.", nread);
 
         if (nread > 0) {

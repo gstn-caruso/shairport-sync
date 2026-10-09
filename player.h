@@ -29,12 +29,6 @@ typedef uint16_t seq_t;
 #include "audio_types.h"
 
 
-typedef struct stats { // statistics for running averages
-  uint32_t timestamp;  // timestamp (denominated in input frames)
-  size_t frames;       // number of audio frames in the block (denominated in output frames)
-  int64_t sync_error, correction, drift;
-} stats_t;
-
 // maximum number of frames that can be added or removed from a packet_count
 #define BUFFER_FRAMES 1024
 #define INTERPOLATION_LIMIT 20
@@ -93,7 +87,6 @@ typedef struct rtsp_conn_info rtsp_conn_info;
 extern "C" {
 #endif
 
-extern int statistics_row; // will be reset to zero when debug level changes or statistics enabled
 
 void reset_buffer(rtsp_conn_info *conn);
 

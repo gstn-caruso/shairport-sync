@@ -9,6 +9,7 @@
 #include "pcm_encoder.hpp"
 #include "playback_samples.hpp"
 #include "playback_sync.hpp"
+#include "playback_statistics.hpp"
 #include <cstdlib>
 #include <atomic>
 
@@ -22,7 +23,6 @@ struct SessionState {
   int connection_number;           // for debug ID purposes, nothing else...
   int is_playing;                  // set true by player_play, set false by player_stop
   int input_format_is_valid;       // set when the input format is known and set in this structure
-  int at_least_one_frame_seen_this_session; // set when the first frame is output
   int resend_interval;                      // this is really just for debugging
   char *UserAgent;                          // free this on teardown
   int AirPlayVersion; // zero if not an AirPlay session. Used to help calculate latency
@@ -37,44 +37,18 @@ struct SessionState {
   SOCKADDR remote, local;
   volatile int stop;
 
-  uint64_t playstart;
   uint64_t connection_start_time; // the time the device is selected, which could be a long time
                                   // before a play
   pthread_t thread;
 
-  // buffers to delete on exit
-
-  // for generating running statistics...
-
-  // stats_t *statistics;
-
-  // for holding the output rate information until printed out at the end of a session
-  double raw_frame_rate;
-  double corrected_frame_rate;
-  int frame_rate_valid;
-
-  // for holding input rate information until printed out at the end of a session
-
-  double input_frame_rate;
-  int input_frame_rate_starting_point_is_valid;
-
-  uint64_t frames_inward_measurement_start_time;
-  uint32_t frames_inward_frames_received_at_measurement_start_time;
-
-  uint64_t frames_inward_measurement_time;
-  uint32_t frames_inward_frames_received_at_measurement_time;
-
-  // other stuff...
+  PlaybackStatistics statistics;
   pthread_t *player_thread;
   AudioPacketBuffer packetBuffer;
   unsigned int frames_per_packet, input_rate;
-  uint64_t packet_count;
-  uint64_t packet_count_since_flush;
   // int connection_state_to_output;
   uint64_t first_packet_time_to_play;
   int64_t time_since_play_started; // nanoseconds
                                    // stats
-  uint64_t missing_packets, late_packets, too_late_packets, resend_requests;
   // debug variables
   int last_seqno_valid;
   seq_t last_seqno_read;
@@ -88,7 +62,6 @@ struct SessionState {
   int ab_buffering;
   uint32_t first_packet_timestamp;
   int flush_output_flushed; // true if the output device has been flushed.
-  uint64_t time_of_last_audio_packet;
 
 
 
@@ -141,7 +114,6 @@ struct SessionState {
   ap2_flush_request_t ap2_deferred_flush_requests[MAX_DEFERRED_FLUSH_REQUESTS];
 
   ssize_t ap2_audio_buffer_size;
-  ssize_t ap2_audio_buffer_minimum_size;
 
   int ap2_rate;         // protect with flush mutex, 0 means don't play, 1 means play
   int ap2_play_enabled; // protect with flush mutex
@@ -190,7 +162,6 @@ struct SessionState {
   // frames
   uint32_t initial_reference_timestamp;
   uint64_t initial_reference_time;
-  double remote_frame_rate;
 
   // the ratio of the following should give us the operating rate, nominally 44,100
   int64_t reference_to_previous_frame_difference;
@@ -205,9 +176,7 @@ struct SessionState {
   // int64_t play_segment_reference_frame;
   // uint64_t play_segment_reference_frame_remote_time;
 
-  int32_t buffer_occupancy; // allow it to be negative because seq_diff may be negative
 
-  int play_number_after_flush;
 
   // remote control stuff. The port to which to send commands is not specified, so you have to use
   // mdns to find it.
