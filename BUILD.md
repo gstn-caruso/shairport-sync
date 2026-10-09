@@ -2,8 +2,9 @@
 
 ## CMake / C++26 migration build
 
-The migration build runs alongside Autotools. The structured buffer is a C++
-object behind a C API; the other receiver sources remain C. CMake enables C++26
+The migration build runs alongside Autotools. The structured buffer and string
+utilities use C++ behind C APIs; the other receiver sources remain C. Returned
+strings retain their malloc/free ownership contract. CMake enables C++26
 and verifies real standard
 library support by compiling, linking and running an expected/span/format/jthread probe.
 Both compilers must be Clang 23.1.3, pinned in `.tool-versions`, with libstdc++ 15.

@@ -66,7 +66,7 @@ target_compile_definitions(pair_ap PRIVATE CONFIG_GCRYPT)
 add_library(receiver STATIC shairport.c bonjour_strings.c mdns.c mdns_avahi.c common.c rtp.c
   player.c audio.c audio_pa.c activity_monitor.c rtsp.c ap2_buffered_audio_processor.c
   ap2_event_receiver.c ap2_event_message_handler.c ptp-utilities.c utilities/debug.c
-  utilities/network_utilities.c utilities/rtsp_message_utilities.c utilities/string_utilities.c
+  utilities/network_utilities.c utilities/rtsp_message_utilities.c utilities/string_utilities.cpp
   utilities/exit.c utilities/buffered_read.c utilities/structured_buffer.cpp utilities/mod23.c
   utilities/generate_random_uuid.c utilities/generate_device_uuid.c "${CMAKE_BINARY_DIR}/plists/get_info_response.c")
 foreach(target pair_ap receiver)

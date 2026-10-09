@@ -12,7 +12,7 @@ lib_receiver_a_SOURCES = shairport.c bonjour_strings.c mdns.c mdns_avahi.c commo
   player.c audio.c audio_pa.c activity_monitor.c rtsp.c \
   ap2_buffered_audio_processor.c ap2_event_receiver.c ap2_event_message_handler.c ptp-utilities.c \
   utilities/debug.c utilities/network_utilities.c utilities/rtsp_message_utilities.c \
-  utilities/string_utilities.c utilities/exit.c utilities/buffered_read.c \
+  utilities/string_utilities.cpp utilities/exit.c utilities/buffered_read.c \
   utilities/structured_buffer.cpp utilities/mod23.c utilities/generate_random_uuid.c \
   utilities/generate_device_uuid.c plists/get_info_response.c
 BUILT_SOURCES = plists/get_info_response.h plists/get_info_response.c
