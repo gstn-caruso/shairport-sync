@@ -1,13 +1,17 @@
 #include "retransmission_planner.hpp"
 
-bool RetransmissionPlanner::Missing::isDue(uint64_t now, RetryPolicy policy) const {
+bool RetransmissionPlanner::Missing::requestIfDue(uint64_t now, RetryPolicy policy) {
   if (now < noticed)
     return false;
   const auto age = now - noticed;
   if (age < policy.firstCheckAfter || age > policy.playbackLatency ||
       policy.playbackLatency - age < policy.minimumRemaining)
     return false;
-  return attempts == 0 || (now >= lastRequest && now - lastRequest >= policy.repeatAfter);
+  if (attempts != 0 && (now < lastRequest || now - lastRequest < policy.repeatAfter))
+    return false;
+  lastRequest = now;
+  ++attempts;
+  return true;
 }
 void RetransmissionPlanner::noteMissing(uint16_t sequence, uint64_t now) {
   missing_[sequence % capacity] = Missing{sequence, now};
@@ -26,14 +30,12 @@ std::vector<ResendRange> RetransmissionPlanner::due(uint64_t now, RetryPolicy po
   for (unsigned offset = 0; offset < window.size(); ++offset) {
     const auto sequence = static_cast<uint16_t>(window.first + offset);
     auto &missing = missing_[sequence % capacity];
-    if (!missing || missing->sequence != sequence || !missing->isDue(now, policy))
+    if (!missing || missing->sequence != sequence || !missing->requestIfDue(now, policy))
       continue;
     if (!ranges.empty() && static_cast<uint16_t>(ranges.back().first + ranges.back().count) == sequence)
       ++ranges.back().count;
     else
       ranges.push_back({sequence, 1});
-    missing->lastRequest = now;
-    ++missing->attempts;
   }
   return ranges;
 }
