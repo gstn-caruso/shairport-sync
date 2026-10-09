@@ -1,11 +1,21 @@
 #include "session_state.hpp"
 #include "audio_player_adapter.hpp"
+#include "pcm_encoder.hpp"
 #include <array>
 #include <cassert>
 #include <cstring>
 #include <vector>
 
 int main() {
+  PcmEncoder encoder([] { return int64_t{0}; });
+  assert(encoder.configure({SPS_FORMAT_S16_LE, 2}, 16));
+  encoder.beginFrame(0x10000, false);
+  encoder.appendSample(0x12345678);
+  encoder.appendSample(-0x12345678);
+  auto encoded = encoder.finishFrame();
+  assert(encoded.frames() == 1);
+  const std::array<uint8_t, 4> expected{0x34, 0x12, 0xcb, 0xed};
+  assert(std::equal(encoded.bytes().begin(), encoded.bytes().end(), expected.begin(), expected.end()));
   struct Case { sps_format_t format; std::vector<uint8_t> positive, negative; };
   const std::array cases{
     Case{SPS_FORMAT_S8, {0x12}, {0xed}},
