@@ -1,5 +1,6 @@
 #include "session_registry.hpp"
 #include <algorithm>
+#include <exception>
 #include <unistd.h>
 
 SessionState::~SessionState() {
@@ -8,7 +9,9 @@ SessionState::~SessionState() {
 }
 
 int SessionRegistry::createThread(pthread_t *thread, void *(*routine)(void *), void *argument) {
-  return named_pthread_create(thread, nullptr, routine, argument, "rtsp_conversation");
+  auto *session = static_cast<SessionState *>(argument);
+  return named_pthread_create(thread, nullptr, routine, argument, "rtsp_conn_%d",
+                              session->connection_number);
 }
 
 int SessionRegistry::start(std::unique_ptr<SessionState> session, void *(*routine)(void *)) {
@@ -62,4 +65,66 @@ std::vector<std::unique_ptr<SessionState>> SessionRegistry::takeFinished() {
   }
   finished_.clear();
   return completed;
+}
+
+std::vector<std::unique_ptr<SessionState>>
+SessionRegistry::takeMatching(airplay_stream_c category, int exceptId) {
+  std::vector<std::unique_ptr<SessionState>> matching;
+  std::lock_guard lock(mutex_);
+  matching.reserve(sessions_.size());
+  for (auto position = sessions_.begin(); position != sessions_.end();) {
+    auto &session = *position;
+    if (session->connection_number == exceptId ||
+        (category != unspecified_stream_category && session->airplay_stream_category != category)) {
+      ++position;
+      continue;
+    }
+    std::erase(finished_, session->connection_number);
+    matching.push_back(std::move(session));
+    position = sessions_.erase(position);
+  }
+  return matching;
+}
+
+void SessionRegistry::joinSessions(std::vector<std::unique_ptr<SessionState>> sessions, bool cancel) {
+  if (cancel)
+    for (const auto &session : sessions)
+      pthread_cancel(session->thread);
+  for (const auto &session : sessions)
+    if (pthread_join(session->thread, nullptr) != 0)
+      std::terminate();
+}
+
+bool SessionRegistry::cancelAndJoin(int id) {
+  int previousState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+  bool found;
+  {
+    auto session = takeById(id);
+    found = session != nullptr;
+    if (session) {
+      pthread_cancel(session->thread);
+      if (pthread_join(session->thread, nullptr) != 0)
+        std::terminate();
+    }
+  }
+  pthread_setcancelstate(previousState, nullptr);
+  pthread_testcancel();
+  return found;
+}
+
+void SessionRegistry::cancelAndJoinMatching(airplay_stream_c category, int exceptId) {
+  int previousState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+  joinSessions(takeMatching(category, exceptId), true);
+  pthread_setcancelstate(previousState, nullptr);
+  pthread_testcancel();
+}
+
+void SessionRegistry::joinFinished() {
+  int previousState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+  joinSessions(takeFinished(), false);
+  pthread_setcancelstate(previousState, nullptr);
+  pthread_testcancel();
 }
