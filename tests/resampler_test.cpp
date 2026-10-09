@@ -1,4 +1,5 @@
 #include "session_state.hpp"
+#include "resampler.hpp"
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
@@ -49,4 +50,19 @@ int main() {
   free(bytes);
   clear_software_resampler(&session);
   config.output = nullptr;
+  Resampler resampler;
+  auto format = *AudioFormat::fromSsrc(ALAC_44100_S16_2);
+  OutputFormat output{44100, 2};
+  assert(resampler.configure(format, AV_SAMPLE_FMT_S16P, output) == ResamplerChange::changed);
+  auto converted = resampler.convert(*frame);
+  assert(converted && converted->frames() == 64 && converted->bytes().size() == 256);
+  assert(converted->retainedFrames() == 0);
+  auto pcm = reinterpret_cast<const int16_t *>(converted->bytes().data());
+  assert(pcm[0] == 5 && pcm[1] == 9);
+  assert(resampler.configure(format, AV_SAMPLE_FMT_S16P, output) == ResamplerChange::unchanged);
+  assert(resampler.configuredFor(format));
+  assert(resampler.sampleBits() == 16 && resampler.effectiveSampleBits() == 16);
+  resampler.reset();
+  resampler.reset();
+  assert(!resampler.configuredFor(format));
 }
