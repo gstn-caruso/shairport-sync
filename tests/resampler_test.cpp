@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <array>
+#include <algorithm>
+#include <vector>
 
 static unsigned initialized, released;
 static bool observeFlush;
@@ -105,6 +107,47 @@ static void checkSilenceAndErrors() {
   assert(released == previousRelease + 1);
 }
 
+static void checkSilenceContinuity() {
+  const auto format = *AudioFormat::fromSsrc(ALAC_44100_S16_2);
+  auto frame = samplesFor(format, AV_SAMPLE_FMT_S16P);
+  Resampler resampler;
+  assert(resampler.configure(format, AV_SAMPLE_FMT_S16P, {48000, 2}));
+  AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+  SwrContext *native = nullptr;
+  assert(swr_alloc_set_opts2(&native, &stereo, AV_SAMPLE_FMT_S16, 48000,
+                            &stereo, AV_SAMPLE_FMT_S16P, 44100, 0, nullptr) == 0);
+  const auto freeContext = [](SwrContext *context) { swr_free(&context); };
+  std::unique_ptr<SwrContext, decltype(freeContext)> reference(native, freeContext);
+  assert(swr_init(reference.get()) == 0);
+  const auto convertReference = [&](const uint8_t **input, int count) {
+    const int capacity = swr_get_out_samples(reference.get(), count);
+    assert(capacity >= 0);
+    std::vector<uint8_t> bytes(static_cast<size_t>(capacity) * 4);
+    uint8_t *output = bytes.data();
+    const int generated = swr_convert(reference.get(), &output, capacity, input, count);
+    assert(generated >= 0);
+    bytes.resize(static_cast<size_t>(generated) * 4);
+    return bytes;
+  };
+  const auto matches = [](const ConvertedAudio &actual, const std::vector<uint8_t> &expected) {
+    assert(actual.frames() == expected.size() / 4);
+    assert(std::equal(actual.bytes().begin(), actual.bytes().end(),
+                      expected.begin(), expected.end()));
+  };
+  std::array<const uint8_t *, 2> input{frame->extended_data[0], frame->extended_data[1]};
+  auto initial = resampler.convert(*frame);
+  assert(initial && initial->retainedFrames() > 0);
+  matches(*initial, convertReference(input.data(), frame->nb_samples));
+  assert(swr_inject_silence(reference.get(), 64) == 0);
+  std::array<const uint8_t *, 2> empty{};
+  auto silence = resampler.silence(64);
+  assert(silence);
+  matches(*silence, convertReference(empty.data(), 0));
+  auto following = resampler.convert(*frame);
+  assert(following);
+  matches(*following, convertReference(input.data(), frame->nb_samples));
+}
+
 int setup_software_resampler(rtsp_conn_info *, ssrc_t);
 void clear_software_resampler(rtsp_conn_info *);
 static int32_t chooseStereo(unsigned, unsigned, unsigned) {
@@ -172,4 +215,5 @@ int main() {
   assert(!resampler.configuredFor(format));
   checkNativeFormats();
   checkSilenceAndErrors();
+  checkSilenceContinuity();
 }

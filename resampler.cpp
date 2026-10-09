@@ -190,7 +190,8 @@ std::expected<ConvertedAudio, ResamplerFailure> Resampler::silence(size_t frames
   const int injected = swr_inject_silence(context_.get(), static_cast<int>(frames));
   if (injected < 0)
     return std::unexpected(ResamplerFailure{ResamplerFailure::Kind::conversionFailed, injected});
-  return convertSamples(nullptr, 0);
+  std::array<const uint8_t *, 8> emptyPlanes{};
+  return convertSamples(emptyPlanes.data(), 0);
 }
 
 std::expected<size_t, ResamplerFailure> Resampler::flush() {
