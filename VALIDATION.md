@@ -48,3 +48,12 @@ Final verification: both in-tree and out-of-tree `make check` passed all four te
 Review correction: seven legacy settings were still ignored inside supported groups. The added runtime test first failed because `sessioncontrol.daemonize_with_pid_file=false` reached the NQPTP check instead of reporting a removed option. Boundary validation now rejects both daemonization keys, the PID directory, SoX threshold, DBus/MPRIS bus selection and retained cover art. Tests cover false/true booleans, empty/nonempty strings and zero/nonzero thresholds; `make -C build/ap2-only check -j4` passed all four programs after the correction.
 
 Sample correction: the channel-map example previously used the unsupported string `"FL,FR"`. Manual comparison with the `general.output_channel_mapping` reader in `shairport.c` confirmed that explicit maps require a libconfig list. The sample now uses `("FL", "FR")`, matching the parser's documented accepted form; no parser behavior changed.
+
+## Shared receiver entry point
+
+Expectation: extracting the executable entry point preserves the receiver contracts
+while executable and RTSP test link the same receiver archive. Before and after
+the extraction, `make -C build/ap2-only check -j2` passed all four contracts.
+`main.c` delegates to `shairport_receiver_main`; the test no longer renames main
+through a compiler definition. This structural step uses responsibility-driven
+design and intention-revealing-selector (#4).

@@ -1,4 +1,3 @@
-#undef main
 #include "common.h"
 #include "rtsp.h"
 #include "utilities/rtsp_message_utilities.h"

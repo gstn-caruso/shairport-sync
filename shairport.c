@@ -43,6 +43,7 @@
 #include <unistd.h>
 
 #include "config.h"
+#include "receiver.h"
 
 #include <libavutil/log.h>
 
@@ -1421,7 +1422,7 @@ const char *av_channel_layout_name(uint64_t channel_layout) {
 */
 
 
-int main(int argc, char **argv) {
+int shairport_receiver_main(int argc, char **argv) {
   exit_init(); // initialise the exit handler to give us a clean safe exit on request
   // initialise debug messages stuff -- level 0, no elapsed time, relative time, file and line
   // debug_init(int level, int show_elapsed_time, int show_relative_time, int show_file_and_line)
