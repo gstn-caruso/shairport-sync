@@ -104,6 +104,14 @@ case and full Release 116/116 (13.99s) passed; each entry has timeout 5. The tes
 still links `receiver-text`; C adapter/null, cancellation and shell checks remain
 green. Production is unchanged; sanitizers/devices were not rerun.
 
+Structured-buffer discovery (`ctest --test-dir build/redesign-release -R '^StructuredBuffer\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Six independent cases preserve ownership static assertions, append/clear history,
+binary data, zero capacity and length-error checks. Group (0.10s), exact clear case
+and full Release 121/121 (13.94s) passed; each entry has timeout 5. The variadic
+helper retains `va_end` before assertions; C adapter, native cancellation and shell
+checks remain green. Production is unchanged; sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
