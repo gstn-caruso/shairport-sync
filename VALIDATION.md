@@ -29,6 +29,10 @@ hardware priority/range, mute and ignored-control assertions. Each scenario
 creates its own settings; `ctest -R '^VolumePolicy\.'` runs this group and an
 exact scenario name selects one case. Device validation remains separate below.
 
+The same acceptance check for `'^RtpClock\.'` initially failed with no tests.
+Eight independently initialized clock cases now preserve the original anchor,
+validity, latency, wraparound, fallback, reset and boundary checks.
+
 CTest covers:
 
 | Test | Contract |
