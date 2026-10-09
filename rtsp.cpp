@@ -2564,14 +2564,15 @@ void handle_set_parameter_parameter(rtsp_conn_info *conn, RtspMessage *req,
       float volume = atof(cp + strlen("volume: "));
       debug(3, "Connection %d: request to set AirPlay Volume to: %f.", conn->connection_number,
             volume);
-      int previousState;
-      pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
       conn->volumeControl.rememberLevel(volume);
       if (const auto ticket = principalSession.ticketFor(conn->connection_number)) {
-        applySessionVolume(volume, *conn);
+        command_set_volume(volume);
+        int previousState;
+        pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+        applySessionVolumeEffects(volume, *conn);
         principalSession.commitIfSelected(*ticket, [&] { sharedVolumeLevel.remember(volume); });
+        pthread_setcancelstate(previousState, nullptr);
       }
-      pthread_setcancelstate(previousState, nullptr);
     } else if (strncmp(cp, "progress: ", strlen("progress: ")) ==
                0) { // this can be sent even when metadata is not solicited
 

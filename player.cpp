@@ -1245,9 +1245,13 @@ static void applyVolumePlan(double level, rtsp_conn_info *conn) {
 }
 
 void applySessionVolume(double level, SessionState &session) {
+  command_set_volume(level);
+  applySessionVolumeEffects(level, session);
+}
+
+void applySessionVolumeEffects(double level, SessionState &session) {
   int previousState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
-  command_set_volume(level);
   applyVolumePlan(level, &session);
   pthread_setcancelstate(previousState, nullptr);
 }
@@ -1261,11 +1265,8 @@ void player_volume_without_notification(double level, rtsp_conn_info *conn) {
 }
 
 void player_volume(double level, rtsp_conn_info *conn) {
-  int previousState;
-  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
-  applySessionVolume(level, *conn);
-  sharedVolumeLevel.remember(level);
-  pthread_setcancelstate(previousState, nullptr);
+  command_set_volume(level);
+  player_volume_without_notification(level, conn);
 }
 
 void do_flush(uint32_t timestamp, rtsp_conn_info *conn) {
