@@ -40,11 +40,14 @@ ActivityState::Effect ActivityState::timeoutExpired() noexcept {
   return Effect::deactivate;
 }
 
+ActivityState::Effect ActivityState::prepareStop() const noexcept {
+  return state_ == am_inactive ? Effect::none : Effect::deactivate;
+}
+
 ActivityState::Effect ActivityState::stop() noexcept {
-  if (state_ == am_inactive)
-    return Effect::none;
+  Effect effect = prepareStop();
   state_ = am_inactive;
-  return Effect::deactivate;
+  return effect;
 }
 
 struct activity_state {
@@ -94,4 +97,8 @@ activity_effect activity_state_timeout_expired(activity_state *activity) {
 
 activity_effect activity_state_stop(activity_state *activity) {
   return monitorEffect(activity->value.stop());
+}
+
+activity_effect activity_state_prepare_stop(const activity_state *activity) {
+  return monitorEffect(activity->value.prepareStop());
 }

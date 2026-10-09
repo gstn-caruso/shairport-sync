@@ -47,8 +47,11 @@ static void checkExpiration() {
 
 static void checkStop() {
   ActivityState stopped;
+  assert(stopped.prepareStop() == ActivityState::Effect::none);
   assert(stopped.stop() == ActivityState::Effect::none);
   stopped.signifyActivity(true, 2.0);
+  assert(stopped.prepareStop() == ActivityState::Effect::deactivate);
+  assert(stopped.status() == am_active);
   assert(stopped.stop() == ActivityState::Effect::deactivate);
   assert(stopped.status() == am_inactive);
   assert(stopped.advance() == ActivityState::Wait::signal);
@@ -56,6 +59,8 @@ static void checkStop() {
   stopped.signifyActivity(true, 2.0);
   stopped.signifyActivity(false, 2.0);
   stopped.advance();
+  assert(stopped.prepareStop() == ActivityState::Effect::deactivate);
+  assert(stopped.status() == am_timing_out);
   assert(stopped.stop() == ActivityState::Effect::deactivate);
   assert(stopped.status() == am_inactive);
   assert(stopped.advance() == ActivityState::Wait::signal);

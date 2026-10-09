@@ -156,8 +156,9 @@ void activity_monitor_start() {
 void activity_monitor_stop() {
   if (activity_monitor_running) {
     debug(2, "activity_monitor_stop begin. state: %d.", activity_status());
-    if (activity_state_stop(activity_state_instance()) == activity_deactivate) {
+    if (activity_state_prepare_stop(activity_state_instance()) == activity_deactivate) {
       going_inactive(config.cmd_blocking);
+      activity_state_stop(activity_state_instance());
     }
     pthread_cancel(activity_monitor_thread);
     pthread_join(activity_monitor_thread, NULL);

@@ -11,6 +11,7 @@ public:
   Effect signifyActivity(bool active, double idleTimeout) noexcept;
   Wait advance() noexcept;
   Effect timeoutExpired() noexcept;
+  Effect prepareStop() const noexcept;
   Effect stop() noexcept;
 
 private:

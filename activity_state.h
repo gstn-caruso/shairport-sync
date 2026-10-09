@@ -17,6 +17,7 @@ enum activity_effect activity_state_signify(activity_state *activity, int active
 enum activity_wait activity_state_advance(activity_state *activity);
 enum activity_effect activity_state_timeout_expired(activity_state *activity);
 enum activity_effect activity_state_stop(activity_state *activity);
+enum activity_effect activity_state_prepare_stop(const activity_state *activity);
 
 #ifdef __cplusplus
 }
