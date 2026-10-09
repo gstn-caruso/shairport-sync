@@ -72,6 +72,14 @@ passed alone, and all four entries have timeout 5. Full Release passed 72/72
 (13.56s), including native cancellation, C ABI and shell checks; sanitizers/devices
 were not rerun. Production is unchanged.
 
+Volume-control discovery (`ctest --test-dir build/redesign-release -R '^VolumeControl\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Six independent cases retain shared/private level changes, software gain/mute,
+empty decisions, hardware mute and the original 10,000-iteration concurrent
+snapshot check. Group (0.10s), exact concurrent case and full Release 77/77
+(13.66s) passed; all six entries have timeout 5. Native cancellation, C ABI and
+shell checks remain green. Production is unchanged; sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
