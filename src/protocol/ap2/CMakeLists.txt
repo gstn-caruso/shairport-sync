@@ -1,0 +1,2 @@
+target_sources(receiver PRIVATE
+  ap2_buffered_audio_processor.cpp ap2_event_receiver.cpp ap2_event_message_handler.cpp)

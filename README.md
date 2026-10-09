@@ -9,6 +9,12 @@ The receiver's production code uses C++26; the bundled pairing dependency remain
 C. The supported stack is Linux, PulseAudio, Avahi, OpenSSL and FFmpeg.
 AirPlay 1 and alternative audio or discovery backends are not supported.
 
+Production sources live in `src` packages whose local `CMakeLists.txt` files
+own their source lists. Packets, audio formats, PCM, playback timing, volume
+policy, RTP clocks and text formatting have separate library targets. The
+remaining packages contribute to the shared receiver target. Root CMake owns
+toolchain checks, dependencies, generated code, tests and installation.
+
 ## Supported audio
 
 | Playback | Codec | Format |
