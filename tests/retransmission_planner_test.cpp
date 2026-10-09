@@ -99,3 +99,11 @@ TEST(RetransmissionPlanner, OversizedWindowPreservesMaximumWrappedRequest) {
   EXPECT_EQ(ranges[0].first, 65024);
   EXPECT_EQ(ranges[0].count, 1024);
 }
+
+TEST(PacketWindow, DeferredSequencesOutliveTemporaryWindowAcrossWraparound) {
+  const auto sequences = shairport::packets::PacketWindow{65535, 2}.sequences();
+  const std::vector<uint16_t> actual(std::from_range, sequences);
+  const std::vector<uint16_t> expected{65535, 0, 1};
+  EXPECT_EQ(actual, expected);
+  EXPECT_TRUE(std::ranges::empty(shairport::packets::PacketWindow{7, 7}.sequences()));
+}

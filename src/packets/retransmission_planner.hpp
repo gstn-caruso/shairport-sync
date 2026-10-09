@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <ranges>
 #include <vector>
 
 namespace shairport::packets {
@@ -13,8 +14,22 @@ struct RetryPolicy {
 struct PacketWindow {
   uint16_t first, end;
   uint16_t size() const { return static_cast<uint16_t>(end - first); }
+  auto sequences() const {
+    return std::views::iota(0u, static_cast<unsigned>(size())) |
+           std::views::transform([first = first](unsigned offset) {
+             return static_cast<uint16_t>(first + offset);
+           });
+  }
 };
-struct ResendRange { uint16_t first, count; };
+struct ResendRange {
+  uint16_t first, count;
+  bool extendIfAdjacent(uint16_t sequence) {
+    if (static_cast<uint16_t>(first + count) != sequence)
+      return false;
+    ++count;
+    return true;
+  }
+};
 
 class RetransmissionPlanner {
 public:
