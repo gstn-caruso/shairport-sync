@@ -12,7 +12,7 @@ TEST(VolumePolicy, ProfilesPreserveAttenuationAndFixedGain) {
     const double expected = profile == VolumeProfile::standard ? -1800 :
                             profile == VolumeProfile::flat ? -3000 : -1000;
     SCOPED_TRACE(static_cast<int>(profile));
-    EXPECT_NEAR(plan.softwareAttenuation, expected, 1e-9);
+    EXPECT_LT(std::abs(plan.softwareAttenuation - expected), 1e-9);
     EXPECT_EQ(plan.gainFixed16, int(65536 * std::pow(10, plan.softwareAttenuation / 2000)));
     EXPECT_EQ(VolumePolicy::plan(0, settings, {}).softwareAttenuation, 0);
     EXPECT_EQ(VolumePolicy::plan(-30, settings, {}).softwareAttenuation, -6000);
