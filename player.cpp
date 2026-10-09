@@ -31,6 +31,7 @@
 #include "session_state.hpp"
 #include "audio_format.hpp"
 #include "audio_player_adapter.hpp"
+#include <algorithm>
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -786,14 +787,10 @@ EncodedPcm encodeBasicPlaybackPcm(std::span<const int32_t> samples, unsigned cha
   const int length = samples.size() / channels;
   int tstuff = 0;
   if (length >= 3) {
-    tstuff = stuff;
+    tstuff = std::clamp(stuff, -1, 1);
     if (tstuff)
       debug(3, "basic frame adjustment %+d.", tstuff);
-    if (stuff > 1)
-      stuff = 1;
-    if (stuff < -1)
-      stuff = -1;
-    if ((stuff > 1) || (stuff < -1) || (length < 100)) {
+    if (length < 100) {
       // debug(1, "Stuff argument to stuff_buffer must be from -1 to +1 and length >100.");
       tstuff = 0; // if any of these conditions hold, don't stuff anything/
     }
@@ -817,7 +814,7 @@ EncodedPcm encodeBasicPlaybackPcm(std::span<const int32_t> samples, unsigned cha
         unsigned int channel;
         for (channel = 0; channel < channels; channel++)
           encoder.appendSample(mean_32(inptr[int(channel) - int(channels)], inptr[channel]));
-      } else if (stuff == -1) {
+      } else if (tstuff == -1) {
         // debug(3, "---------");
         unsigned int channel;
         for (channel = 0; channel < channels; channel++)

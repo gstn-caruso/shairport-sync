@@ -122,4 +122,12 @@ int main() {
     assert(inserted.bytes()[offset] == 0xe8 && inserted.bytes()[offset + 1] == 0x03);
     assert(inserted.bytes()[offset + 2] == 0xd0 && inserted.bytes()[offset + 3] == 0x07);
   }
+  for (int requested : {-3, 3}) {
+    encoder.beginFrame(0x10000, false);
+    auto bounded = encodeBasicPlaybackPcm(playback, 2, requested, encoder);
+    assert(bounded.frames() == static_cast<size_t>(256 + (requested > 0 ? 1 : -1)));
+    assert(bounded.bytes()[0] == 0xe8 && bounded.bytes()[2] == 0xd0);
+    const auto last = bounded.bytes().size() - 4;
+    assert(bounded.bytes()[last] == 0xe8 && bounded.bytes()[last + 2] == 0xd0);
+  }
 }
