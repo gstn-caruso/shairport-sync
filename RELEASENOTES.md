@@ -126,7 +126,6 @@ The tapering rate is slightly modified at the lower end of the range if the devi
 
 **Bug Fixes**
 * Fixed a bug that causes the Docker image to crash occasionally when OwnTone interrupted an existing iOS session. Thanks to [aaronk6](https://github.com/aaronk6) for the report.
-* Fixed a cross-compliation error caused by not looking for the correct version of the `ar` tool. The fix was to substitute the correct version during the `autoreconf` phase. Thanks to [sternenseemann](https://github.com/sternenseemann) for raising the [issue](https://github.com/mikebrady/shairport-sync/issues/1705) and the [PR](https://github.com/mikebrady/shairport-sync/pull/1706) containing the fix.
 * Updated the mDNS strings for the Classic AirPlay feature of AP2, so that it does not appear to provide MFi authentication. Addresses [this discussion](https://github.com/mikebrady/shairport-sync/discussions/1691).
 * Always uses a revision number of 1 when looking for status updates on the DACP remote control port. This follows a suggestion in [Issue #1658](https://github.com/mikebrady/shairport-sync/issues/1658). Thanks to [ejurgensen](https://github.com/ejurgensen), as ever, for the report and the suggested fix.
 * Fixed a `statistics` bug (the minimum buffer size was incorrectly logged) and also tidy up the statistics logging interval logic for resetting min and max counters.
@@ -186,7 +185,6 @@ This release consists of enhancements and bug fixes to Version 4.1. For informat
 * Fix a long-standing bug which didn't close the socket used for the RTSP connection, potentially exhausting the sockets available.
 * Fix a bug in `audio_alsa.c` when there is no hardware device name.
 * Add a configuration check for the `xxd` program when building for AirPlay 2.
-* Fix a compilation bug on certain platforms by trying to use `AC_CHECK_LIB` to find `libavcodec` if the `PKG_CHECK_MODULES` check fails.
 
 **Documentation**
 * Include and reference the HTML version of the man page.
@@ -215,7 +213,6 @@ There have been many many bug fixes and enhancements to the core operation of Sh
 Version 3.3.9
 ====
 **Bug Fix**
-* Version 3.3.9 fixes a build failure with convolution raised since `automake 1.16.5` and https://git.savannah.gnu.org/cgit/automake.git/commit/?id=f4a3a70f69e1dbccb6578f39ef47835098a04624.
 Further details in [Fabrice Fontaine's original PR](https://github.com/mikebrady/shairport-sync/pull/1314) to the `development` branch. Many thanks to [Fabrice Fontaine](https://github.com/ffontaine) for the bug report and for the fix.
 
 Version 3.3.8
@@ -229,7 +226,6 @@ Version 3.3.8
 * Fix a bug that caused Shairport Sync to hang, but not actually crash, if an `on-...` script failed.
 * Fix a crash that occurred if metadata support is enabled during compilation but turned off in the configuration file. Thanks to [Tim Curtis](https://github.com/moodeaudio) for the report.
 * Fix a crash that occurred playing from AirPower on Android. Thanks to [Ircama](https://github.com/Ircama) for the report.
-* Fix the configure.ac file so that `--without-<feature>` configuration options are not interpreted as `--with-<feature>` options instead! Thanks to [David Racine](https://github.com/bassdr) for the report.
 
 Version 3.3.7
 ====
@@ -478,7 +474,6 @@ Version 3.2RC5
 ====
 **Bug Fixes**
 * When errors occur sending resend requests, back off for 0.5 seconds, rather than 10 seconds, and make the code actually work.
-* Make the configuration options for including the dbus interface and the mpris interface be `--with-dbus-interface` and `--with-mpris-interface` as expected, not `--with-dbus` and `--with-mpris` as they actually were.
 
 Version 3.2RC4
 ====
@@ -646,7 +641,7 @@ Here is the list of new features:
 * 8-bit, 16-bit, 24-bit, 24-bit three-byte (S24_3LE and S24_3BE) and 32-bit output to ALSA devices. 
 * 44,100, 88,200, 176,400 and 352,800 sample per second output. This is done using simple upsampling. It's only worth doing if 44,100 samples per second output is not available.
 * Internal processing including software volume control and interpolation is done after sample size and rate conversion.
-* Apple ALAC decoder support. This needs the `libalac` library, available at [ALAC](https://github.com/mikebrady/alac), to be installed. Add the flag `--with-apple-alac` to the `./configure` arguments. Then you can choose the Apple ALAC decoder in the configuration file.
+* Apple ALAC decoder support. This needs the `libalac` library, available at [ALAC](https://github.com/mikebrady/alac), to be installed.
 * Support for `mbed TLS` has been added and the use of `PolarSSL` is deprecated, as `mbed TLS` is a development of `PolarSSL` and `PolarSSL` itself is not being developed further.
 * Choose Network Interface. Add a new setting, for advanced users only, in the `general` section. Use the `interface` setting to allow you to specify the interface on which to provide the AirPlay service. Omit the setting to get the default, which is to choose the interfaces automatically.
 * Set Max Volume. Add a new setting, for advanced users only, in the `general` section. Use the `volume_max_db` setting to allow you to specify the maximum level to set on the hardware mixer (if chosen) or the built-in software mixer otherwise. The software mixer's range is 0.0 dB to -96.1 dB. The setting must be a number with a decimal point, e.g. 21.3.
@@ -703,7 +698,6 @@ Version 3.0d20 – Development Version
 Note: all Version 3 changes are summarized above.
 
 **Bug Fix**
-* Fix a small and generally silent error in configure.ac so that it only looks for the systemd directory if systemd has been chosen. It caused a warning when cross-compiling.
 
 Version 3.0d19 – Development Version
 ----
@@ -720,7 +714,7 @@ Note: all Version 3 changes are summarized above.
 * 8-bit, 16-bit, 24-bit, 24-bit three-byte (S24_3LE and S24_3BE) and 32-bit output to ALSA devices. (Other back ends are not updated yet.)
 * 44,100, 88,200, 176,400 and 352,800 sample per second output. This is done using simple upsampling.
 * Internal processing including software volume control and interpolation is done after sample size and rate conversion.
-* Apple ALAC decoder support. This needs the `libalac` library, available at [ALAC](https://github.com/mikebrady/alac). Add the flag `--with-apple-alac` to the `./configure` arguments. Then you can choose the Apple ALAC decoder in the configuration file.
+* Apple ALAC decoder support. This needs the `libalac` library, available at [ALAC](https://github.com/mikebrady/alac).
 * Support for `mbed TLS` has been added and the use of `PolarSSL` is deprecated, as `mbed TLS` is a development of `PolarSSL` and `PolarSSL` itself is not being developed further.
 * Settings that were denominated in frames are now deprecated but still honoured. Deprecation warnings are issued.
 
@@ -742,12 +736,6 @@ Version 2.8.5 – Stable Version
 ----
 This release includes bug fixes and minor enhancements and is recommended for all users.
 
-Note: if you're upgrading, there is a new `./configure` option:  
-====
-The build process now uses the directory path `sysconfdir` to determine where to place the configuration file `shairport-sync.conf`.
-The default value for `sysconfdir` is `/usr/local/etc` which is used in the BSD family, whereas `/etc` is normally used in Linux.
-To retain the present behaviour of Shairport Sync, *you must add an extra parameter to the `./configure... ` command.* The parameter you must add is `--sysconfdir=/etc`. (This has been added to the sample configuration command line in README.md.)
-
 The enhancements and bug fixes in 2.8.5 were made in versions 2.8.4.1 to 2.8.4.8 inclusive. Please read below for the full list.
 
 Version 2.8.4.8 – Development Version
@@ -759,7 +747,6 @@ Version 2.8.4.8 – Development Version
 Version 2.8.4.7 – Development Version
 ----
 
-* This update means the build process now uses the directory path `sysconfdir` to determine where to place the configuration file `shairport-sync.conf`. The default value for `sysconfdir` is `/usr/local/etc` which is used in the BSD family, whereas `/etc` is normally used in Linux. So, to retain the present behaviour of Shairport Sync, you must add an extra parameter to the `./configure... ` command. The parameter you must add is `--sysconfdir=/etc`. (This has been added to the sample configuration command line in README.md.)
 * Shairport Sync has been updated to use the value of `sysconfdir` to determine where to look for the configuration file. If `sysconfdir` has been left with its default value of `/usr/local/etc`, then Shairport Sync will look for `/usr/local/etc/shairport-sync.conf`. If, as recommended for Linux, `sysconfdir` has been set to `/etc`, then Shairport Sync will look, as before, for `/etc/shairport-sync.conf`.
 
 **Enhancement**
@@ -795,7 +782,6 @@ Version 2.8.4.2 – Development Version
 
 
 **Other**
-* Removed the INSTALL file – it's generated automatically by `autoreconf -fi` anyway – added it to the files to be ignored in `.gitignore` and added a simple `INSTALL.md` file.
 
 Version 2.8.4.1 – Development Version
 ----
@@ -833,7 +819,6 @@ The following is a summary of the bug fixes and enhancements since version 2.8.3
 
 * Substitutions can now be made in the service name. The following substitutions can be used in the service name: `%h` for the `hostname`, `%H` for the `hostname` with the first letter capitalised, `%v` for the version number and `%V` for the full version string. Maximum length is 50 characters.
 
-* An existing `shairport-sync.service` file will not be overwritten by `sudo make install`. 
 
 * The text strings advertising the capabilities of Shairport Sync over Bonjour/Zeroconf/Avahi have been changed and now more closely match those of an AirPort Express Base Station (First Generation). 
 
@@ -868,7 +853,6 @@ Version 2.8.3.9 – Development Version
 
 * The new default service name is simply the hostname, with its first character capitalised.
 
-* An existing `shairport-sync.service` file will not be overwritten by `sudo make install`. 
 
 Version 2.8.3.7 – Development Version
 ----
@@ -972,7 +956,6 @@ Version 2.9.1 – Development Version
 Version 2.9.1 focuses on bug fixes and stability improvements.
 * Stability improvements are concentrated on what happens when a play sessions ends and is followed immediately by a new session. This happens in iOS 9.2 when you click to the next track or to the previous track. It also happens playing YouTube videos when a Mac's System Audio is routed through AirPlay. Thanks to [Tim Curtis](https://github.com/moodeaudio) for help with these issues.
 * A workaround for an apparent flushing issue in TuneBlade has been included. Thanks to [gibman](https://github.com/gibman) for reporting this issue.
-* A number of bug fixes have been made to `configure.ac` – thanks to [Jörg Krause](https://github.com/joerg-krause).
 
 Version 2.8 – Stable Version
 ----
@@ -1139,7 +1122,6 @@ Changes from the previous stable version -- 2.4 -- are summarised here:
  
 **Small Changes**
  * If a mixer being used to control volume does not have a control denominated in dB, a warning is logged and the mixer is not used.
- * Slight revisions have been made to the configuration file `configure.ac` to make compilation on FreeBSD a little easier.
 
 Version 2.4
 ----
@@ -1211,21 +1193,13 @@ Version 2.3.9
 
 Version 2.3.8
 ----
-* Annoying changes you must make
- * You probably need to change your `./configure` arguments. The flag `with-initscript` has changed to `with-systemv`. It was previously enabled by default; now you must enable it explicitly.
-
 * Changes
- * Added limited support for installing into `systemd` and Fedora systems. For `systemd` support, use the configuration flag `--with-systemd` in place of `--with-systemv`. The installation does not do everything needed, such as defining special users and groups.
- * Renamed `with-initscript` configuration flag to `with-systemv` to describe its role more accurately.
- * A System V startup script is no longer installed by default; if you want it, ask for it with the `--with-systemv` configuration flag.
- * Added limited support for FreeBSD. You must specify `LDFLAGS='-I/usr/local/lib'` and `CPPFLAGS='-L/usr/local/include'` before running `./configure --with-foo etc.`
  * Removed the `-configfile` annotation from the version string because it's no longer optional; it's always there.
  * Removed the `dummy`, `pipe` and `stdout` backends from the standard build – they are now optional and are no longer automatically included in the build.
 
 * Bug fixes
  * Allow more stack space to prevent a segfault in certain configurations (thanks to https://github.com/joerg-krause).
  * Add missing header files(thanks to https://github.com/joerg-krause).
- * Removed some (hopefully) mostly silent bugs from the configure.ac file.
  
 Version 2.3.7
 ----
@@ -1284,30 +1258,26 @@ Note that, for the present, settings in the configuration will have priority ove
 
 In moving to the the use of a configuration file, some "housekeeping" is being done -- some logical corrections and other small changes are being made to option names and modes of operations, so the settings in the configuration file do not exactly match command line options.
 
-When `make install` is executed, a sample configuration is installed or updated at `/etc/shairport-sync.conf.sample`. The same file is also installed as `/etc/shairport-sync.conf` if that file doesn't already exist. To prevent the configuration files being installed, use the configuration option `--without-configfiles`.
-
 * Pesky Change You Must Do Something About
 
 If you are using metadata, please note that the option has changed somewhat. The option `-M` has a new long name equivalent: `--metadata-pipename` and the argument you provide must now be the full name of the metadata pipe, e.g. `-M /tmp/shairport-sync-metadata`.
 
 * Enhancements
- * Shairport Sync now reads settings from the configuration file `/etc/shairport-sync.conf`. This has settings for most command-line options and it's where any new settings will go. A default configuration file will be installed if one doesn't exist, and a sample file configuration file is always installed or updated. Details of settings are provided in the sample file. Shairport Sync relies on the `libconfig` library to read configuration files. For the present, you can disable the new feature (and save the space taken up by `libconfig`) by using the configure option `--without-configfile-support`.
+ * Shairport Sync now reads settings from the configuration file `/etc/shairport-sync.conf`. This has settings for most command-line options and it's where any new settings will go. Details of settings are provided in the sample file. Shairport Sync relies on the `libconfig` library to read configuration files.
  * New command-line option `-c <file>` or `--configfile=<file>` allows you to specify a configuration file other than `/etc/shairport-sync.conf`.
  * Session Timeout and Allow Session Interruption can now be set independently. This is really some "housekeeping" as referred to above -- it's a kind of a bug fix, where the bug in question is an inappropriate connection of the setting of two parameters. To explain: (1) By default, when a source such as iTunes starts playing to the Shairport Sync device, any other source attempting to start a play session receives a "busy" signal. If a source disappears without warning, Shairport Sync will wait for 120 seconds before dropping the session and allowing another source to start a play session. (2) The command-line option `-t` or `--timeout` allows you to set the wait time before dropping the session. If you set this parameter to `0`, Shairport Sync will not send a "busy" signal, thus allowing another source to interrupt an existing one. (3) The problem is that if you set the parameter to `0`, a session will never be dropped if the source disappears without warning.
  The (obvious) fix for this is to separate the setting of the two parameters, and this is now done in the configuration file `/etc/shairport-sync.conf` -- please see the settings `allow_session_interruption` and `session_timeout`. The behaviour of the `-t` and `--timeout` command-line options is unchanged but deprecated.
  * New Option -- "Ignore Volume Control" ('ignore_volume_control'). If you set this to "yes", the output from Shairport Sync is always set at 100%. This is useful when you want to set the volume locally. Available via the settings file only.
  * Statistics option correctly reports when no frames are received in a sampling interval and when output is not being synchronised.
- * A new, supported audio back end called `stdout` provides raw 16-bit 44.1kHz stereo PCM output. To activate, set  `output_backend = "stdout"` in the general section of the configuration file. Output is provided synchronously with the source feed. No stuffing or stripping is done. If you are feeding it to an output device that runs slower or faster, you'll eventually get buffer overflow or underflow in that device. To include support for this back end, use the configuration option `--with-stdout`.
- * Support for the `pipe` back end has been enhanced to provide raw 16-bit 44.1kHz stereo PCM output to a named pipe. To activate, set `output_backend = "pipe"` in the general section of the configuration and give the fully-specified pathname to the pipe in the pipe section of the configuration file -- see `etc/shairport-sync.conf.sample` for an example. No stuffing or stripping is done. If you are feeding it to an output device that runs slower or faster, you'll eventually get buffer overflow or underflow in that device.  To include support for this back end, use the configuration option `--with-pipe`.
- * Support for the `dummy` audio backend device continues. To activate, set  `output_backend = "dummy"` in  in the general section of the configuration. To include support for this back end, use the configuration option `--with-dummy`.
+ * A new, supported audio back end called `stdout` provides raw 16-bit 44.1kHz stereo PCM output. To activate, set  `output_backend = "stdout"` in the general section of the configuration file. Output is provided synchronously with the source feed. No stuffing or stripping is done. If you are feeding it to an output device that runs slower or faster, you'll eventually get buffer overflow or underflow in that device.
+ * Support for the `pipe` back end has been enhanced to provide raw 16-bit 44.1kHz stereo PCM output to a named pipe. To activate, set `output_backend = "pipe"` in the general section of the configuration and give the fully-specified pathname to the pipe in the pipe section of the configuration file -- see `etc/shairport-sync.conf.sample` for an example. No stuffing or stripping is done. If you are feeding it to an output device that runs slower or faster, you'll eventually get buffer overflow or underflow in that device.
+ * Support for the `dummy` audio backend device continues. To activate, set  `output_backend = "dummy"` in  in the general section of the configuration.
  * Limited support for the PulseAudio audio backend continues. To activate, set  `output_backend = "pulse"` in  in the general section of the configuration. You must still enter its settings via the command line, after the `--` as before. Note that no stuffing or stripping is done: if the PulseAudio sink runs slower or faster, you'll eventually get buffer overflow or underflow.
  * New backend-specific settings are provided for setting the size of the backend's buffer and for adding or removing a fixed offset to the overall latency. The `audio_backend_buffer_desired_length` default is 6615 frames, or 0.15 seconds. On some slower machines, particularly with metadata processing going on, the DAC buffer can underflow on this setting, so it might be worth making the buffer larger. A problem on software mixers only is that changes to volume control settings have to propagate through the buffer to be heard, so the larger the buffer, the longer the response time. If you're using an alsa back end and are using a hardware mixers, this isn't a problem. The `audio_backend_latency_offset` allows you emit frames to the audio back end some time before or after the synchronised time. This would be useful, for example, if you are outputting to a device that takes 20 ms to process audio; yoou would specify a `audio_backend_latency_offset = -882`, where 882 is the number of frames in 20 ms, to compensate for the device delay.
 
 Version 2.3
 -----
 * Enhancements
- * Adding the System V startup script (the "initscript") is now a configuration option. The default is to include it, so if you want to omit the installation of the initscript, add the configuration option `--without-initscript`.
- * Metadata support is now a compile-time option: `--with-metadata`.
  * A metadata feed has been added. Use the option `-M <pipe-directory>`, e.g. `-M /tmp`. Shairport Sync will provide metadata in a pipe called `<pipe-directory>/shairport-sync-metadata`. (This is changed in 2.3.1.) There's a sample metadata reader at https://github.com/mikebrady/shairport-sync-metadata-reader. The format of the metadata is a mixture of XML-style tags, 4-character codes and base64 data. Please look at `rtsp.c` and `player.c` for examples. Please note that the format of the metadata may change.
 Beware: there appears to be a serious bug in iTunes before 12.1.2, such that it may stall for a long period when sending large (more than a few hundred kilobytes) coverart images.
 
@@ -1374,7 +1344,6 @@ Functionality of shairport-sync is unchanged.
 
 Version 2.1.13
 -----
-* Compilation change: Begin to use PKG_CHECK_MODULES (in configure.ac) to statically link some of the libraries used by shairport-sync. It is intended to make it easier to build in the buildroot system. While sufficient for that purpose, note that PKG_CHECK_MODULES is not used for checking all the libraries yet.
 Functionality of shairport-sync is unchanged.
 
 Version 2.1.12
@@ -1409,8 +1378,6 @@ Send a `SIGUSR2` to the shairport-sync process to disconnect or send it a `SIGHU
 With this feature, you can allow Shairport Sync always to advertise and provide the streaming service, but still be able to disconnect it locally to enable other audio services to access the output device.
 	
 * Annoying things you should know about if you're updating from a previous version:
-	* Options `--with-openssl`, `--with-polarssl` have been replaced with a new option `--with-ssl=<option>` where `<option>` is either `openssl` or `polarssl`.
-	* Option `--with-localstatedir` has been replaced with `--with-piddir`. This compilation option allows you to specify the directory in which the PID file will be written. The directory must exist and be writable. Supersedes the `--with-localstatedir` and describes the intended functionality a little more accurately.
 
 * Bugfixes
 	* A small (?) bug in the flush logic has been corrected. Not causing any known problem.
@@ -1418,7 +1385,6 @@ With this feature, you can allow Shairport Sync always to advertise and provide 
 Version 2.1.5:
 -----
 * Enhancements
-	* Adds a `--with-localstatedir` configuration option. When Shairport Sync is running as a daemon, it writes its Process ID (PID) to a file. The file must be stored in part of the file system that is writable. Most build systems choose an appropriate 'local state directory' for this automatically, but some -- notably `buildroot`  -- don't always get it right for an embedded system. This compilation option allows you to specify the local state directory. Supersedes 2.1.4, which tried to do the same thing.
 
 Version 2.1.4:
 -----

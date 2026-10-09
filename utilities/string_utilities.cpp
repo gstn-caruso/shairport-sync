@@ -27,20 +27,17 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <unistd.h>
 
 #include "config.h"
 #include "string_utilities.h"
+#include "string_utilities.hpp"
 
 // common.h exposes C-only restrict declarations; this result is owned with free().
 extern "C" char *get_version_string();
 
 namespace {
-
-// DNS-SD labels allow 63 bytes; the AirPlay prefix uses 13.
-constexpr size_t max_airplay_service_name_length = 50;
 
 char *malloc_copy(const std::string &text) {
   char *copy = static_cast<char *>(std::malloc(text.size() + 1));
@@ -49,68 +46,15 @@ char *malloc_copy(const std::string &text) {
   return copy;
 }
 
-void replace_occurrences(std::string &text, const std::string &token,
-                         const std::string &replacement) {
-  size_t position = 0;
-  while ((position = text.find(token, position)) != std::string::npos) {
-    text.replace(position, token.size(), replacement);
-    position += replacement.size();
-  }
-}
-
-std::string append_with_limit(const std::string &base, const std::string &suffix,
-                             size_t limit) {
-  if (suffix.size() <= limit && base.size() <= limit - suffix.size())
-    return base + suffix;
-
-  const std::string ellipsis = "...";
-  if (suffix.size() > limit || ellipsis.size() > limit - suffix.size())
-    throw std::length_error("limit cannot fit ellipsis and suffix");
-
-  size_t prefix_length = limit - ellipsis.size() - suffix.size();
-  while (prefix_length > 0 && (base[prefix_length] & 0xC0) == 0x80)
-    --prefix_length;
-  return base.substr(0, prefix_length) + ellipsis + suffix;
-}
-
-std::string hostname_without_domain() {
-  char hostname[256] = {};
-  gethostname(hostname, sizeof(hostname));
-  hostname[sizeof(hostname) - 1] = '\0';
-  std::string name(hostname);
-  size_t last_dot = name.rfind('.');
-  if (last_dot != std::string::npos)
-    name.erase(last_dot);
-  return name;
-}
-
-std::string capitalized_hostname(std::string hostname) {
-  if (!hostname.empty() && hostname[0] >= 'a' && hostname[0] <= 'z')
-    hostname[0] -= 'a' - 'A';
-  return hostname;
-}
-
-std::string expanded_service_name(const char *raw_service_name) {
-  std::string name(raw_service_name != nullptr ? raw_service_name : "%H");
-  const std::string hostname = hostname_without_domain();
-  replace_occurrences(name, "%h", hostname);
-  replace_occurrences(name, "%H", capitalized_hostname(hostname));
-  replace_occurrences(name, "%v", PACKAGE_VERSION);
-  std::unique_ptr<char, decltype(&std::free)> version(get_version_string(), &std::free);
-  if (version == nullptr)
-    throw std::bad_alloc();
-  replace_occurrences(name, "%V", version.get());
-  return name;
-}
-
 }
 
 char *str_replace(const char *string, const char *substr, const char *replacement) {
   try {
-    std::string text(string);
+    if (string == nullptr)
+      return nullptr;
     if (substr != nullptr && replacement != nullptr)
-      replace_occurrences(text, substr, replacement);
-    return malloc_copy(text);
+      return malloc_copy(shairport::replaceOccurrences(string, substr, replacement));
+    return malloc_copy(string);
   } catch (...) {
     return nullptr;
   }
@@ -118,7 +62,10 @@ char *str_replace(const char *string, const char *substr, const char *replacemen
 
 char *append_truncated(const char *base, const char *suffix, size_t limit) {
   try {
-    return malloc_copy(append_with_limit(base, suffix, limit));
+    if (base == nullptr || suffix == nullptr)
+      return nullptr;
+    const auto result = shairport::appendWithLimit(base, suffix, limit);
+    return result ? malloc_copy(*result) : nullptr;
   } catch (...) {
     return nullptr;
   }
@@ -126,8 +73,14 @@ char *append_truncated(const char *base, const char *suffix, size_t limit) {
 
 char *service_name(const char *raw_service_name) {
   try {
-    return malloc_copy(append_with_limit(expanded_service_name(raw_service_name), "",
-                                       max_airplay_service_name_length));
+    char hostname[256] = {};
+    gethostname(hostname, sizeof(hostname));
+    hostname[sizeof(hostname) - 1] = '\0';
+    std::unique_ptr<char, decltype(&std::free)> version(get_version_string(), &std::free);
+    if (version == nullptr)
+      return nullptr;
+    const shairport::ServiceNameFormatter formatter(hostname, PACKAGE_VERSION, version.get());
+    return malloc_copy(formatter.format(raw_service_name != nullptr ? raw_service_name : "%H"));
   } catch (...) {
     return nullptr;
   }

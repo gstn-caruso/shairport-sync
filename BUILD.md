@@ -1,15 +1,28 @@
 # Build and install
 
-## CMake / C++26 migration build
+## CMake / C++26 build
 
-The migration build runs alongside Autotools. The structured buffer and string
+The receiver builds with CMake. The structured buffer and string
 utilities use C++ behind C APIs; the other receiver sources remain C. Returned
 strings retain their malloc/free ownership contract. CMake enables C++26
 and verifies real standard
 library support by compiling, linking and running an expected/span/format/jthread probe.
-Both build systems require Clang 23.1.3 for C and C++, pinned in `.tool-versions`,
-with libstdc++ 15 and C++26 without GNU extensions. They compile, link and run
-the same `cmake/cpp26_probe.cpp` before building the receiver.
+CMake requires Clang 23.1.3 for C and C++, pinned in `.tool-versions`,
+with libstdc++ 15 and C++26 without GNU extensions. It compiles, links and runs
+`cmake/cpp26_probe.cpp` before building the receiver.
+
+Service-name formatting and replacement/truncation now live in the internal
+`receiver-text` C++ library. `utilities/string_utilities.hpp` accepts borrowed
+`string_view` inputs and returns owning `string` values; `appendWithLimit` returns
+`expected` with `TruncationError::limitTooSmall` when the suffix/ellipsis cannot
+fit. `ServiceNameFormatter` owns hostname and version values and preserves the
+ordered `%h`, `%H`, `%v`, `%V` expansion, last-domain removal, first-character
+ASCII capitalization and 50-byte UTF-8 truncation boundary. An empty replacement
+token is a no-op. C adapters obtain host/build information and contain exceptions
+while preserving caller-owned `malloc` results and `NULL` failure results.
+The C++ text test links only `receiver-text`, without receiver providers;
+the legacy C test continues to exercise the public adapters.
+
 Use CMake 4.2 or newer and Ninja. The compiler does not supply the C++ library:
 install GCC 15 development headers and libstdc++ 15 on the host first.
 
@@ -34,9 +47,10 @@ PR updates run once; pushes run on `master`, and newer commits cancel obsolete r
 The toolchain resolves real
 compiler paths through `asdf which` from the repository, so build directories
 outside the repository retain the selected version.
-Install the receiver dependencies listed below, then run:
+Install the receiver dependencies on Debian/Ubuntu, then build:
 
 ```sh
+sudo apt-get install pkg-config libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
 cmake -S . -B build/cmake -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=cmake/clang-toolchain.cmake \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_SYSCONFDIR=/etc
@@ -47,41 +61,17 @@ DESTDIR="$PWD/build/cmake/stage" cmake --install build/cmake
 
 Only Linux with AirPlay 2, PulseAudio, Avahi, FFmpeg and OpenSSL is supported.
 Provider switches are rejected. `INSTALL_CONFIG_FILES=OFF` disables installing
-the sample configuration. CMake installs the binary, manual and sample at the
-same destinations as Autotools with matching prefix and sysconfdir settings.
+the sample configuration. CMake installs the binary under the chosen prefix,
+the manual under its `share/man/man1` directory, and the sample under
+`CMAKE_INSTALL_SYSCONFDIR`.
 Generated configuration, plist and Git version files live in the CMake build
-directory. Use an out-of-tree build and run `make distclean` first if an earlier
-in-tree Autotools build left `config.h` in the source directory.
+directory. Use an out-of-tree build; remove any stale `config.h` from the source
+directory before configuring. To install on the host after checking the staged
+files, run `sudo cmake --install build/cmake`.
 
-## Autotools build
+## Build checks
 
-Install the pinned compiler and GCC 15 library described above, then the receiver
-dependencies. Autotools resolves default compiler paths through `asdf which`
-from the source directory, including when configuring outside the repository.
-Explicit `CC` or `CXX` overrides must also select Clang 23.1.3.
-On Debian/Ubuntu:
-
-```sh
-sudo apt-get install autoconf automake g++-15 g++ pkg-config libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
-```
-
-Build with the default, mandatory AirPlay 2 Linux PulseAudio stack:
-
-```sh
-autoreconf -fi
-mkdir -p build/autotools
-cd build/autotools
-../../configure --sysconfdir=/etc
-make -j2
-make check
-sudo make install
-```
-
-An in-tree build also works: run `./configure`, `make`, and `make check` at the repository root. Run `make distclean` before switching from an in-tree configuration to another build directory.
-
-## Migration checks
-
-CI runs separate CMake Release, Debug, ASan+UBSan and TSan builds, plus Autotools,
+CI runs separate CMake Release, Debug, ASan+UBSan and TSan builds,
 all with the same pinned compiler and library. Every build runs its contracts
 and stages the binary, manual and sample configuration without starting a service.
 The sanitizer jobs check instrumentation in receiver C and C++ object files.

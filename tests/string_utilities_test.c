@@ -20,6 +20,9 @@ static void assert_owned_text(char *actual, const char *expected) {
 }
 
 static void check_replacement(void) {
+  assert_owned_text(str_replace("stable", "", ""), "stable");
+  assert_owned_text(str_replace("stable", "", "x"), "stable");
+  assert(str_replace(NULL, "x", "y") == NULL);
   assert_owned_text(str_replace("plain", "absent", "x"), "plain");
   assert_owned_text(str_replace("ab ab ab", "ab", "longer"), "longer longer longer");
   assert_owned_text(str_replace("aaaaa", "aa", "b"), "bba");
@@ -36,6 +39,8 @@ static void check_replacement(void) {
 }
 
 static void check_truncation(void) {
+  assert(append_truncated(NULL, "!", 5) == NULL);
+  assert(append_truncated("base", NULL, 5) == NULL);
   assert_owned_text(append_truncated("base", "!", 5), "base!");
   assert_owned_text(append_truncated("base", "!", 8), "base!");
   assert_owned_text(append_truncated("abcdef", "!", 6), "ab...!");

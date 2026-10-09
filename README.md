@@ -6,7 +6,7 @@ PulseAudio, Avahi, OpenSSL, FFmpeg, libplist, libsodium, libgcrypt and NQPTP are
 
 See [BUILD.md](BUILD.md) for installation, [CONFIGURATION.md](CONFIGURATION.md) for build options, [AIRPLAY2.md](AIRPLAY2.md) for protocol details, [ADDINGTOHOME.md](ADDINGTOHOME.md) for pairing, and [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for diagnostics. The supported settings are illustrated in [scripts/shairport-sync.conf](scripts/shairport-sync.conf).
 
-AirPlay 1, other audio and discovery backends, alternate crypto providers, daemon/init installers, Docker, DSP effects, DBus, MPRIS, MQTT and metadata export have been removed. Legacy configure switches (including `--without` forms), backend selection and removed runtime configuration groups fail explicitly. Protocol metadata and progress requests are still accepted and processed without an external metadata feed.
+AirPlay 1, other audio and discovery backends, alternate crypto providers, daemon/init installers, Docker, DSP effects, DBus, MPRIS, MQTT and metadata export have been removed. Legacy CMake provider switches, backend selection and removed runtime configuration groups fail explicitly. Protocol metadata and progress requests are still accepted and processed without an external metadata feed.
 
 The realtime ALAC 44.1 kHz / 16-bit stereo path is retained alongside buffered ALAC 48 kHz / 24-bit stereo and AAC stereo/5.1/7.1. Actual playback, multiroom timing and Home pairing still require device validation; see [VALIDATION.md](VALIDATION.md).
 
