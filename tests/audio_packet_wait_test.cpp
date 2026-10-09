@@ -1,4 +1,4 @@
-#include "audio_packet_buffer.hpp"
+#include "audio/buffer/audio_packet_buffer.hpp"
 #include <gtest/gtest.h>
 #include <atomic>
 #include <cassert>

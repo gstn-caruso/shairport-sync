@@ -1,4 +1,4 @@
-#include "utilities/structured_buffer.hpp"
+#include "platform/utilities/structured_buffer.hpp"
 #include <gtest/gtest.h>
 #include <cstdarg>
 #include <cstring>

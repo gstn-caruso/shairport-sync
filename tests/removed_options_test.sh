@@ -11,7 +11,7 @@ check_rejection() {
     exit 1
   fi
 }
-cc -shared -fPIC -I"$source_dir" "$source_dir/tests/nqptp_fixture.c" -o "$test_dir/fixture.so"
+cc -shared -fPIC -I"$source_dir/src" "$source_dir/tests/nqptp_fixture.c" -o "$test_dir/fixture.so"
 for group in alsa jack sndio ao soundio pipewire pipe stdout dummy dsp metadata dbus mpris mqtt; do
   printf '%s = {};\n' "$group" > "$test_dir/receiver.conf"
   if NQPTP_TEST_VERSION=missing LD_PRELOAD="$test_dir/fixture.so" "$binary" -c "$test_dir/receiver.conf" > "$test_dir/output" 2>&1; then

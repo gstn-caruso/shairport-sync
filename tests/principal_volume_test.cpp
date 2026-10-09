@@ -1,5 +1,5 @@
-#include "runtime_principal_session.hpp"
-#include "volume_control.hpp"
+#include "session/runtime_principal_session.hpp"
+#include "volume/volume_control.hpp"
 #include <gtest/gtest.h>
 #include <cassert>
 #include <condition_variable>

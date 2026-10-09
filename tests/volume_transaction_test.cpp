@@ -1,5 +1,5 @@
-#include "session_state.hpp"
-#include "volume_runtime.hpp"
+#include "session/session_state.hpp"
+#include "volume/volume_runtime.hpp"
 #include <gtest/gtest.h>
 #include <condition_variable>
 #include <thread>

@@ -1,6 +1,6 @@
-#include "session_state.hpp"
-#include "resampler.hpp"
-#include "audio_player_adapter.hpp"
+#include "session/session_state.hpp"
+#include "audio/resampling/resampler.hpp"
+#include "audio/output/audio_player_adapter.hpp"
 #include <gtest/gtest.h>
 #include <cassert>
 #include <cstdlib>

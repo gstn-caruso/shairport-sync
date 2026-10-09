@@ -1,4 +1,4 @@
-#include "utilities/string_utilities.hpp"
+#include "platform/utilities/string_utilities.hpp"
 #include <gtest/gtest.h>
 #include <string>
 

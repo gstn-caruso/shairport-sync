@@ -1,5 +1,5 @@
-#include "common.h"
-#include "player.h"
+#include "runtime/common.h"
+#include "playback/player.h"
 #include <gtest/gtest.h>
 
 constexpr sps_format_t unsupported_format = static_cast<sps_format_t>(63);

@@ -1,5 +1,5 @@
-#include "activity_monitor.h"
-#include "common.h"
+#include "monitoring/activity_monitor.h"
+#include "runtime/common.h"
 #include <assert.h>
 
 extern pthread_mutex_t activity_monitor_mutex;

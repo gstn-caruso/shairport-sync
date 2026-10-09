@@ -1,4 +1,4 @@
-#include "statistics_formatter.hpp"
+#include "playback/statistics_formatter.hpp"
 #include <gtest/gtest.h>
 
 static void checkHeaders(StatisticsStream stream, bool delay, bool debugging,

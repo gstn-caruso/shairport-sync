@@ -1,10 +1,12 @@
-#include "session_state.hpp"
-#include "volume_runtime.hpp"
+#include "session/session_state.hpp"
+#include "volume/volume_runtime.hpp"
 #include <gtest/gtest.h>
 #include <cassert>
+#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -21,6 +23,36 @@ static SessionState *activeSession = nullptr;
 static uint64_t expectedFrameTime = 999000000;
 static int16_t outputSample = 0;
 static int outputFrames = 0;
+class ArrivalPublicationProbe {
+public:
+  void pauseProducer() {
+    std::unique_lock lock(observation);
+    paused_ = true;
+    changed.notify_all();
+    changed.wait(lock, [&] { return released_; });
+  }
+  void verifyNoOutputBeforePublication() {
+    std::unique_lock lock(observation);
+    const bool paused = changed.wait_for(lock, std::chrono::seconds(1), [&] { return paused_; });
+    EXPECT_TRUE(paused);
+    if (paused)
+      EXPECT_FALSE(changed.wait_for(lock, std::chrono::milliseconds(250), [] {
+        return prerollFrames > 0;
+      }));
+    released_ = true;
+    changed.notify_all();
+  }
+private:
+  bool paused_ = false, released_ = false;
+};
+static ArrivalPublicationProbe *arrivalPublicationProbe = nullptr;
+extern "C" void __real__ZN14PlaybackTiming9onArrivalE11ArrivalKind(PlaybackTiming *, ArrivalKind);
+extern "C" void __wrap__ZN14PlaybackTiming9onArrivalE11ArrivalKind(PlaybackTiming *timing,
+                                                                  ArrivalKind kind) {
+  if (arrivalPublicationProbe && kind == ArrivalKind::first)
+    arrivalPublicationProbe->pauseProducer();
+  __real__ZN14PlaybackTiming9onArrivalE11ArrivalKind(timing, kind);
+}
 extern "C" int __real_pthread_cond_timedwait(pthread_cond_t *, pthread_mutex_t *, const timespec *);
 extern "C" int __wrap_pthread_cond_timedwait(pthread_cond_t *condition, pthread_mutex_t *mutex,
                                              const timespec *deadline) {
@@ -61,6 +93,7 @@ static int play(void *buffer, int frames, int type, uint32_t timestamp, uint64_t
     std::lock_guard lock(observation);
     assert(frames > 0 && frames <= 4410);
     prerollFrames += frames;
+    changed.notify_all();
   }
   if (type == play_samples_are_timed && timestamp == 1000) {
     assert(frames >= 0);
@@ -150,17 +183,34 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
   assert(pthread_create(&player, nullptr, player_thread_func, &session) == 0);
   {
     std::unique_lock lock(observation);
-    changed.wait(lock, [] { return waiting; });
+    if (arrivalPublicationProbe)
+      EXPECT_TRUE(changed.wait_for(lock, std::chrono::seconds(1), [] { return waiting; }));
+    else
+      changed.wait(lock, [] { return waiting; });
   }
   player_volume(-15, &session);
   if (mute) player_volume(-144, &session);
   const int gain = session.volumeControl.pcmSnapshot().gainFixed16;
   assert(gain > 0 && gain < 65536);
-  assert(player_put_packet(ALAC_44100_S16_2, 7, 1000, packet.data(), packet.size(), 0, 0,
-                           &session) == 352);
+  const auto publishPacket = [&] {
+    EXPECT_EQ(player_put_packet(ALAC_44100_S16_2, 7, 1000, packet.data(), packet.size(), 0, 0,
+                                &session), 352);
+  };
+  if (arrivalPublicationProbe) {
+    std::thread producer(publishPacket);
+    arrivalPublicationProbe->verifyNoOutputBeforePublication();
+    producer.join();
+  } else {
+    publishPacket();
+  }
   {
     std::unique_lock lock(observation);
-    changed.wait(lock, [=] { return waitOnly ? waitingWithArrival : waitingAfterPacket; });
+    if (arrivalPublicationProbe)
+      EXPECT_TRUE(changed.wait_for(lock, std::chrono::seconds(1), [=] {
+        return waitOnly ? waitingWithArrival : waitingAfterPacket;
+      }));
+    else
+      changed.wait(lock, [=] { return waitOnly ? waitingWithArrival : waitingAfterPacket; });
   }
   assert(pthread_cancel(player) == 0);
   void *completion;
@@ -173,7 +223,7 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
   assert(statistics.frames == (submit ? expectedFrames : 0));
   assert(statistics.measurements == (submit && expectedFrames > 0 ? 1 : 0));
   assert(session.statistics.sessionSummary(1000000000).hasObservedFrame == !waitOnly);
-  assert(prerollFrames == expectedPreroll);
+  EXPECT_EQ(prerollFrames, expectedPreroll);
   if (submit) {
     assert(outputFrames == expectedFrames);
     if (expectedFrames > 0) {
@@ -224,6 +274,13 @@ TEST(PlayerVolumeWait, ZeroFrameTimeWaitsWithoutPlayback) {
 
 TEST(PlayerVolumeWait, NoDelayPrerollSubmitsSilenceThenWaits) {
   checkPlayback(false, 1150000000, 0, false, false, true, true, 6615);
+}
+
+TEST(PlayerVolumeWait, PacketWaitsForArrivalPublicationBeforePreroll) {
+  ArrivalPublicationProbe probe;
+  arrivalPublicationProbe = &probe;
+  checkPlayback(false, 1150000000, 0, false, false, true, true, 6615);
+  arrivalPublicationProbe = nullptr;
 }
 
 TEST(PlayerVolumeWait, DelayPrerollSubmitsSilenceThenWaits) {

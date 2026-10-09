@@ -57,7 +57,7 @@ if cmake -S "$source_dir" -B "$test_dir/platform" -G Ninja \
   exit 1
 fi
 grep -q 'Linux is the only supported platform' "$test_dir/output"
-printf 'set_source_files_properties("%s/main.cpp" PROPERTIES LANGUAGE C)\n' "$source_dir" \
+printf 'set_source_files_properties("%s/src/app/main.cpp" PROPERTIES LANGUAGE C)\n' "$source_dir" \
   > "$test_dir/c-production.cmake"
 if cmake -S "$source_dir" -B "$test_dir/c-production" -G Ninja \
     -DCMAKE_C_COMPILER="$c_compiler" -DCMAKE_CXX_COMPILER="$cxx_compiler" \

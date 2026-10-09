@@ -1,0 +1,45 @@
+#ifndef _MDNS_H
+#define _MDNS_H
+
+#include "config.h"
+#include "playback/player.h"
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+extern int mdns_pid;
+
+void mdns_unregister(void);
+void mdns_register(const char **txt_records, const char **secondary_txt_records);
+void mdns_update(const char **txt_records, const char **secondary_txt_records);
+
+void mdns_ls_backends(void);
+
+typedef struct {
+  const char *name;
+  int (*mdns_register)(char *ap1name, char *ap2name, int port, const char **txt_records,
+                       const char **secondary_txt_records);
+  int (*mdns_update)(const char **txt_records, const char **secondary_txt_records);
+  void (*mdns_unregister)(void);
+} mdns_backend;
+
+
+/*
+ #define MDNS_RECORD_WITHOUT_METADATA \
+  "tp=UDP", "sm=false", "ek=1", "et=0,1", "cn=0,1", "ch=2", METADATA_EXPRESSION, "ss=16",
+ "sr=44100", "vn=3",           \
+      "txtvers=1", config.password ? "pw=true" : "pw=false"
+*/
+
+#define MDNS_RECORD_WITHOUT_METADATA                                                               \
+  "sf=0x4", "fv=76400.10", "am=ShairportSync", "vs=105.1", "tp=TCP,UDP", "vn=65537", "ss=16",      \
+      "sr=44100", "da=true", "sv=false", "et=0,1", "ek=1", "cn=0,1", "ch=2", "txtvers=1",          \
+      config.password ? "pw=true" : "pw=false"
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // _MDNS_H

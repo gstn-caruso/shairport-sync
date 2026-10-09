@@ -1,5 +1,5 @@
-#include "session_registry.hpp"
-#include "runtime_principal_session.hpp"
+#include "session/session_registry.hpp"
+#include "session/runtime_principal_session.hpp"
 #include "cancellation_wait.hpp"
 #include <gtest/gtest.h>
 #include <cassert>

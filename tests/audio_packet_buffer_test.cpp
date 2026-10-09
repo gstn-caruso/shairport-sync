@@ -1,5 +1,5 @@
-#include "audio_packet_buffer.hpp"
-#include "resampler.hpp"
+#include "audio/buffer/audio_packet_buffer.hpp"
+#include "audio/resampling/resampler.hpp"
 #include <gtest/gtest.h>
 #include <cassert>
 #include <stdexcept>
@@ -146,6 +146,54 @@ static void checkFlushHistory(AudioPacketBuffer &buffer) {
   const auto boundary = buffer.applyFlush();
   assert(boundary.complete && boundary.resetTiming && buffer.occupancy() == 0);
   assert(!buffer.applyFlush().flushOutput);
+}
+
+TEST(AudioPacketBuffer, AdmissionObserverReceivesAcceptedAndRejectedClassificationsOnce) {
+  AudioPacketBuffer buffer;
+  std::vector<ArrivalKind> arrivals;
+  arrivals.reserve(7);
+  const auto observe = [&](ArrivalKind kind) noexcept { arrivals.push_back(kind); };
+  int factories = 0;
+  const auto admit = [&](uint16_t sequence) {
+    return buffer.accept(sequence, 0, [&] {
+      ++factories;
+      return packet(sequence, 1000);
+    }, {}, observe);
+  };
+  admit(7);
+  admit(9);
+  admit(8);
+  admit(8);
+  admit(6);
+  admit(10);
+  admit(2000);
+
+  const std::vector<ArrivalKind> expected{ArrivalKind::first, ArrivalKind::ahead,
+      ArrivalKind::late, ArrivalKind::duplicate, ArrivalKind::tooLate,
+      ArrivalKind::inOrder, ArrivalKind::overflow};
+  EXPECT_EQ(arrivals, expected);
+  EXPECT_EQ(factories, 5);
+  EXPECT_EQ(buffer.occupancy(), 1);
+}
+
+TEST(AudioPacketBuffer, FactoryFailureDoesNotNotifyAdmissionObserver) {
+  AudioPacketBuffer buffer;
+  int notifications = 0;
+  const auto observe = [&](ArrivalKind) noexcept { ++notifications; };
+  const auto revision = buffer.revision();
+  const auto fail = []() -> QueuedAudioPacket { throw std::runtime_error("decode failed"); };
+  EXPECT_THROW(buffer.accept(7, 0, fail, {}, observe), std::runtime_error);
+  EXPECT_EQ(notifications, 0);
+  EXPECT_EQ(buffer.revision(), revision);
+  EXPECT_FALSE(buffer.front());
+
+  buffer.accept(7, 0, [] { return packet(7, 1000); }, {}, observe);
+  const auto accepted = buffer.front();
+  ASSERT_TRUE(accepted);
+  EXPECT_THROW(buffer.accept(2000, 0, fail, {}, observe), std::runtime_error);
+  EXPECT_EQ(notifications, 1);
+  EXPECT_EQ(buffer.revision(), accepted->revision);
+  EXPECT_EQ(buffer.occupancy(), 1);
 }
 
 TEST(AudioPacketBuffer, FactoryFailuresPreserveEmptyAndOverflowAdmissionWindows) {

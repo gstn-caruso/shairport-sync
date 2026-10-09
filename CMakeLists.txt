@@ -62,8 +62,8 @@ add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/plists/get_info_response.cpp" "${
 
 include(GNUInstallDirs)
 option(INSTALL_CONFIG_FILES "Install the sample configuration" ON)
-add_library(receiver-text STATIC utilities/service_name_formatter.cpp)
-target_include_directories(receiver-text PUBLIC "${CMAKE_SOURCE_DIR}")
+add_library(receiver-text STATIC src/platform/utilities/service_name_formatter.cpp)
+target_include_directories(receiver-text PUBLIC "${CMAKE_SOURCE_DIR}/src")
 target_compile_options(receiver-text PRIVATE -Wall -Wextra -Wshadow -Wformat=2)
 add_library(receiver-packets STATIC src/packets/retransmission_planner.cpp)
 target_include_directories(receiver-packets PUBLIC "${CMAKE_SOURCE_DIR}/src")
@@ -77,18 +77,18 @@ add_library(receiver-playback-timing STATIC src/playback/timing/playback_sync.cp
 target_link_libraries(receiver-playback-timing PUBLIC Threads::Threads)
 add_library(pair_ap STATIC pair_ap/pair.c pair_ap/pair_fruit.c pair_ap/pair_homekit.c pair_ap/pair-tlv.c)
 target_compile_definitions(pair_ap PRIVATE CONFIG_GCRYPT)
-add_library(receiver STATIC shairport.cpp bonjour_strings.cpp mdns.cpp mdns_avahi.cpp common.cpp rtp.cpp session_registry.cpp audio_decoder.cpp resampler.cpp audio_packet_buffer.cpp
-  player.cpp audio.cpp audio_pa.cpp activity_monitor.cpp activity_state.cpp rtsp.cpp rtsp_message.cpp ap2_buffered_audio_processor.cpp
-  statistics_formatter.cpp
-  volume_runtime.cpp
-  playback_run.cpp
-  ap2_event_receiver.cpp ap2_event_message_handler.cpp ptp-utilities.cpp utilities/debug.cpp
-  utilities/network_utilities.cpp utilities/rtsp_message_utilities.cpp utilities/string_utilities.cpp
-  utilities/exit.cpp utilities/buffered_read.cpp utilities/structured_buffer.cpp utilities/mod23.cpp
-  utilities/generate_random_uuid.cpp utilities/generate_device_uuid.cpp "${CMAKE_BINARY_DIR}/plists/get_info_response.cpp")
+add_library(receiver STATIC src/app/shairport.cpp src/discovery/bonjour_strings.cpp src/discovery/mdns.cpp src/discovery/mdns_avahi.cpp src/runtime/common.cpp src/protocol/rtp/rtp.cpp src/session/session_registry.cpp src/audio/decoding/audio_decoder.cpp src/audio/resampling/resampler.cpp src/audio/buffer/audio_packet_buffer.cpp
+  src/playback/player.cpp src/audio/output/audio.cpp src/audio/output/audio_pa.cpp src/monitoring/activity_monitor.cpp src/monitoring/activity_state.cpp src/protocol/rtsp/rtsp.cpp src/protocol/rtsp/rtsp_message.cpp src/protocol/ap2/ap2_buffered_audio_processor.cpp
+  src/playback/statistics_formatter.cpp
+  src/volume/volume_runtime.cpp
+  src/playback/playback_run.cpp
+  src/protocol/ap2/ap2_event_receiver.cpp src/protocol/ap2/ap2_event_message_handler.cpp src/timing/ptp-utilities.cpp src/platform/utilities/debug.cpp
+  src/platform/utilities/network_utilities.cpp src/platform/utilities/rtsp_message_utilities.cpp src/platform/utilities/string_utilities.cpp
+  src/platform/utilities/exit.cpp src/platform/utilities/buffered_read.cpp src/platform/utilities/structured_buffer.cpp src/platform/utilities/mod23.cpp
+  src/platform/utilities/generate_random_uuid.cpp src/platform/utilities/generate_device_uuid.cpp "${CMAKE_BINARY_DIR}/plists/get_info_response.cpp")
 foreach(target pair_ap receiver receiver-volume-policy receiver-rtp-clock receiver-audio-format receiver-pcm receiver-playback-timing)
   target_include_directories(${target} PUBLIC "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
-  target_compile_options(${target} PRIVATE -include "${CMAKE_SOURCE_DIR}/utilities/debug.h" -Wall -Wextra -Wshadow -Wformat=2 -fno-common -Wno-multichar -UNDEBUG)
+  target_compile_options(${target} PRIVATE -include "${CMAKE_SOURCE_DIR}/src/platform/utilities/debug.h" -Wall -Wextra -Wshadow -Wformat=2 -fno-common -Wno-multichar -UNDEBUG)
 endforeach()
 foreach(target pair_ap receiver)
   target_link_libraries(${target} PUBLIC PkgConfig::RECEIVER PkgConfig::PLIST Threads::Threads m rt)
@@ -100,7 +100,7 @@ target_link_libraries(receiver PUBLIC receiver-text receiver-packets receiver-vo
 if(CONFIG_USE_GIT_VERSION_STRING)
   add_dependencies(receiver git-version)
 endif()
-add_executable(shairport-sync main.cpp)
+add_executable(shairport-sync src/app/main.cpp)
 target_link_libraries(shairport-sync PRIVATE receiver)
 foreach(target receiver receiver-text receiver-packets receiver-volume-policy receiver-rtp-clock receiver-audio-format receiver-pcm receiver-playback-timing shairport-sync)
   get_target_property(production_sources ${target} SOURCES)
@@ -176,6 +176,7 @@ if(BUILD_TESTING)
   target_compile_options(player-volume-wait-test PRIVATE -UNDEBUG)
   target_link_libraries(player-volume-wait-test PRIVATE receiver GTest::gtest_main)
   target_link_options(player-volume-wait-test PRIVATE -Wl,--wrap=pthread_cond_timedwait
+    -Wl,--wrap=_ZN14PlaybackTiming9onArrivalE11ArrivalKind
     -Wl,--wrap=get_absolute_time_in_ns -Wl,--wrap=have_timestamp_timing_information
     -Wl,--wrap=frame_to_local_time -Wl,--wrap=local_time_to_frame
     -Wl,--wrap=ptp_send_control_message_string)
