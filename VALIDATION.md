@@ -68,7 +68,7 @@ statements about pending integration or sanitizer runs describe that stage.
 
 The cipher bundle's C++ release method requires a tagged struct declaration.
 The acceptance command
-`clang++ -std=c++26 -Werror=non-c-typedef-for-linkage -Ibuild/redesign-final-release -I. -fsyntax-only tests/receiver_encoding_cpp_test.cpp`
+`clang++ -std=c++26 -Werror=non-c-typedef-for-linkage -Ibuild/redesign-final-release -I. -Isrc -fsyntax-only tests/receiver_encoding_cpp_test.cpp`
 failed on the anonymous declaration and passed after adding the
 `pair_cipher_bundle` tag. Native C syntax checking of
 `tests/rtsp_message_c_test.c` also passed; fields and layout remain unchanged.
