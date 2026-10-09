@@ -3,9 +3,21 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <utility>
 
 class ConvertedAudio {
 public:
+  ConvertedAudio() = default;
+  ConvertedAudio(ConvertedAudio &&other) noexcept { *this = std::move(other); }
+  ConvertedAudio &operator=(ConvertedAudio &&other) noexcept {
+    if (this == &other)
+      return *this;
+    storage_ = std::move(other.storage_);
+    byteCount_ = std::exchange(other.byteCount_, 0);
+    frames_ = std::exchange(other.frames_, 0);
+    retained_ = std::exchange(other.retained_, 0);
+    return *this;
+  }
   static std::optional<ConvertedAudio> allocate(size_t bytes, size_t frames, int64_t retained) {
     ConvertedAudio audio;
     if (bytes != 0) {
