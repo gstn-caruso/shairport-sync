@@ -68,6 +68,7 @@ add_library(pair_ap STATIC pair_ap/pair.c pair_ap/pair_fruit.c pair_ap/pair_home
 target_compile_definitions(pair_ap PRIVATE CONFIG_GCRYPT)
 add_library(receiver STATIC shairport.cpp bonjour_strings.cpp mdns.cpp mdns_avahi.cpp common.cpp rtp.cpp rtp_clock.cpp session_registry.cpp audio_format.cpp audio_decoder.cpp channel_mapping.cpp resampler.cpp audio_packet_buffer.cpp retransmission_planner.cpp pcm_encoder.cpp playback_samples.cpp playback_sync.cpp
   player.cpp audio.cpp audio_pa.cpp activity_monitor.cpp activity_state.cpp rtsp.cpp rtsp_message.cpp ap2_buffered_audio_processor.cpp
+  statistics_formatter.cpp
   ap2_event_receiver.cpp ap2_event_message_handler.cpp ptp-utilities.cpp utilities/debug.cpp
   utilities/network_utilities.cpp utilities/rtsp_message_utilities.cpp utilities/string_utilities.cpp
   utilities/exit.cpp utilities/buffered_read.cpp utilities/structured_buffer.cpp utilities/mod23.cpp
