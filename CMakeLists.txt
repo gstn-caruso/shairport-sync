@@ -55,7 +55,7 @@ if(Git_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
     BYPRODUCTS "${CMAKE_BINARY_DIR}/cmake-gitversion.h")
 endif()
 configure_file(cmake/config.h.in config.h)
-add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/plists/get_info_response.c" "${CMAKE_BINARY_DIR}/plists/get_info_response.h"
+add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/plists/get_info_response.cpp" "${CMAKE_BINARY_DIR}/plists/get_info_response.h"
   COMMAND sh "${CMAKE_SOURCE_DIR}/xml_plist_codegen.sh" "${CMAKE_SOURCE_DIR}/plists/get_info_response.xml" "${CMAKE_BINARY_DIR}/plists"
   DEPENDS plists/get_info_response.xml xml_plist_codegen.sh VERBATIM)
 
@@ -71,7 +71,7 @@ add_library(receiver STATIC shairport.cpp bonjour_strings.cpp mdns.cpp mdns_avah
   ap2_event_receiver.cpp ap2_event_message_handler.cpp ptp-utilities.cpp utilities/debug.cpp
   utilities/network_utilities.cpp utilities/rtsp_message_utilities.cpp utilities/string_utilities.cpp
   utilities/exit.cpp utilities/buffered_read.cpp utilities/structured_buffer.cpp utilities/mod23.cpp
-  utilities/generate_random_uuid.cpp utilities/generate_device_uuid.cpp "${CMAKE_BINARY_DIR}/plists/get_info_response.c")
+  utilities/generate_random_uuid.cpp utilities/generate_device_uuid.cpp "${CMAKE_BINARY_DIR}/plists/get_info_response.cpp")
 foreach(target pair_ap receiver)
   target_include_directories(${target} PUBLIC "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}")
   target_compile_options(${target} PRIVATE -include "${CMAKE_SOURCE_DIR}/utilities/debug.h" -Wall -Wextra -Wshadow -Wformat=2 -fno-common -Wno-multichar -UNDEBUG)
@@ -84,6 +84,15 @@ if(CONFIG_USE_GIT_VERSION_STRING)
 endif()
 add_executable(shairport-sync main.cpp)
 target_link_libraries(shairport-sync PRIVATE receiver)
+foreach(target receiver receiver-text shairport-sync)
+  get_target_property(production_sources ${target} SOURCES)
+  foreach(source IN LISTS production_sources)
+    get_source_file_property(source_language "${source}" TARGET_DIRECTORY ${target} LANGUAGE)
+    if(NOT source_language STREQUAL "CXX")
+      message(FATAL_ERROR "Own production source must compile as C++26: ${source}")
+    endif()
+  endforeach()
+endforeach()
 install(TARGETS shairport-sync RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(FILES man/shairport-sync.1 DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
 if(INSTALL_CONFIG_FILES)

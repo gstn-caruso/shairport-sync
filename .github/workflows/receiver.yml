@@ -65,11 +65,11 @@ jobs:
           case "$BUILD" in
             ASan-UBSan)
               nm -u build/cmake/CMakeFiles/receiver.dir/utilities/structured_buffer.cpp.o | grep __asan_init
-              nm -u build/cmake/CMakeFiles/receiver.dir/rtsp.c.o | grep __ubsan_handle
+              nm -u build/cmake/CMakeFiles/receiver.dir/rtsp.cpp.o | grep __ubsan_handle
               ;;
             TSan)
               nm -u build/cmake/CMakeFiles/receiver.dir/utilities/structured_buffer.cpp.o | grep __tsan_init
-              nm -u build/cmake/CMakeFiles/receiver.dir/rtsp.c.o | grep __tsan_init
+              nm -u build/cmake/CMakeFiles/receiver.dir/rtsp.cpp.o | grep __tsan_init
               ;;
           esac
           ctest --test-dir build/cmake --output-on-failure

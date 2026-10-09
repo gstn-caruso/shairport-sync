@@ -7,6 +7,8 @@ CTest covers:
 
 | Test | Contract |
 | --- | --- |
+| `activity-state` | Activation, immediate inactivity, timeout waiting, reactivation, expiration and stopping |
+| `activity-monitor` | C monitor linkage, synchronous state transitions and DAC standby effects without timing races |
 | `string-utilities-cpp` | Service-name expansion, UTF-8 truncation and explicit errors |
 | `string-utilities` | C adapters, NULL handling and malloc/free ownership |
 | `structured-buffer-cpp` | Buffer capacity and ownership |
@@ -14,7 +16,7 @@ CTest covers:
 | `rtsp-dispatch` | AirPlay 2 dispatch, volume/progress, payload validation and decoding |
 | `nqptp` | Reject unusable shared memory before listening or advertising |
 | `removed-options` | Reject unsupported runtime options and configuration |
-| `configure-contract` | Compiler, dialect, platform, dependencies, generated configuration and C++ linkage |
+| `configure-contract` | Compiler, dialect, platform, dependencies, generated configuration, C++ linkage and rejection of own production compiled as C |
 
 NQPTP tests replace shared-memory access and UDP sends with an uninstrumented
 fixture; they do not modify the running service. Receiver code remains
