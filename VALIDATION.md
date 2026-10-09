@@ -53,6 +53,17 @@ The full Release regression passed all 62 entries (13.42s), retaining native
 cancellation, C ABI and shell checks. Production is unchanged; sanitizer builds
 and device checks were not rerun for this migration.
 
+For audio formats, the legacy `audio-format` entry passed before migration.
+`ctest --test-dir build/redesign-release -R '^AudioFormat\.' --no-tests=error`
+failed with no matching tests (exit 8), then passed eight independently initialized
+scenarios (0.13s). Six readable format cases preserve every original property
+check with explicit expected channel counts, AAC configurations and sample formats;
+separate cases retain rejection of NONE and `0xf00d`. The 7.1 configuration case
+passed alone; all eight generated entries have five-second timeouts. Full Release
+regression passed all 69 entries (13.43s), including native cancellation, C ABI and
+shell checks. Production, sanitizer-build evidence and device-check evidence are
+unchanged by this migration.
+
 CTest covers:
 
 | Test | Contract |
