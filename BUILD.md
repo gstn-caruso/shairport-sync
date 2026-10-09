@@ -1,5 +1,56 @@
 # Build and install
 
+## CMake / C++26 migration build
+
+The migration build runs alongside Autotools. Receiver sources remain C in this
+first slice; CMake enables C++26 for future modules and verifies real standard
+library support by compiling, linking and running an expected/span/format/jthread probe.
+Both compilers must be Clang 23.1.3, pinned in `.tool-versions`, with libstdc++ 15.
+Use CMake 4.2 or newer and Ninja. The compiler does not supply the C++ library:
+install GCC 15 development headers and libstdc++ 15 on the host first.
+
+Install the asdf toolchain from the repository root:
+
+```sh
+sudo apt-get install cmake ninja-build g++-15 g++ python3
+asdf plugin add clang https://github.com/higebu/asdf-llvm.git
+git -C "${ASDF_DATA_DIR:-$HOME/.asdf}/plugins/clang" checkout b7b8dd389c790237145e7436f1cd85b49611e37e
+asdf install
+asdf reshim clang
+```
+
+This asdf plugin builds LLVM from source; the first installation is expensive in
+CPU, disk space and time. Subsequent builds reuse the installed toolchain.
+CI instead downloads the official Linux x86_64 LLVM 23.1.3 binary archive,
+verifies its pinned SHA-256, and registers the compiler in asdf's install directory.
+It caches only Clang and its resource headers/runtimes (about 372 MB unpacked),
+without building LLVM or caching its development libraries and unrelated tools.
+The `.zst` archive requires `zstd --decompress --long=30` to decode its 1 GiB window.
+PR updates run once; pushes run on `master`, and newer commits cancel obsolete runs.
+The toolchain resolves real
+compiler paths through `asdf which` from the repository, so build directories
+outside the repository retain the selected version.
+Install the receiver dependencies listed below, then run:
+
+```sh
+cmake -S . -B build/cmake -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/clang-toolchain.cmake \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_SYSCONFDIR=/etc
+cmake --build build/cmake --parallel 2
+ctest --test-dir build/cmake --output-on-failure
+DESTDIR="$PWD/build/cmake/stage" cmake --install build/cmake
+```
+
+Only Linux with AirPlay 2, PulseAudio, Avahi, FFmpeg and OpenSSL is supported.
+Provider switches are rejected. `INSTALL_CONFIG_FILES=OFF` disables installing
+the sample configuration. CMake installs the binary, manual and sample at the
+same destinations as Autotools with matching prefix and sysconfdir settings.
+Generated configuration, plist and Git version files live in the CMake build
+directory. Use an out-of-tree build and run `make distclean` first if an earlier
+in-tree Autotools build left `config.h` in the source directory.
+
+## Autotools build
+
 On Debian/Ubuntu, install the build dependencies:
 
 ```sh

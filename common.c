@@ -30,7 +30,11 @@
 #include "utilities/network_utilities.h"
 
 #ifdef CONFIG_USE_GIT_VERSION_STRING
+#ifdef SHAIRPORT_GIT_VERSION_HEADER
+#include SHAIRPORT_GIT_VERSION_HEADER
+#else
 #include "gitversion.h"
+#endif
 #endif
 
 #include <assert.h>
