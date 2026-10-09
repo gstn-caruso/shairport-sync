@@ -110,6 +110,15 @@ remote execution remains pending. CMake Release keeps the C assertions active,
 matching Autotools: preprocessing with `-DNDEBUG` disables them, while adding
 `-UNDEBUG` restores the checks.
 
+The first remote CI run on PR #3 passed both Autotools jobs but failed both CMake
+jobs before compiling: the workflow looked for the plugin in `/root/.asdf`,
+which was not the installation's data directory. The correction sets the job's
+`ASDF_DATA_DIR` to `/opt/asdf` and uses that same directory for the cache, plugin
+checkout and shims. Locally, installing the plugin with an isolated
+`ASDF_DATA_DIR` under `build/asdf-ci-check` made `asdf plugin list` report clang
+and the pinned Git checkout succeed at that exact path. The two-job patch applied
+and its Bash syntax check passed. Full corrected remote CI remains pending.
+
 Reproduce the pinned build with the CMake commands in BUILD.md. CTest passed
 RTSP dispatch and six ALAC/AAC formats including real ALAC encode/decode, NQPTP
 startup rejection, removed runtime options, and configuration (4/4). A
