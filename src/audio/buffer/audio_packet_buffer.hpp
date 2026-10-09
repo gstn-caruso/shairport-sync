@@ -79,6 +79,9 @@ private:
   struct Entry {
     uint16_t sequence;
     std::optional<QueuedAudioPacket> packet;
+    ArrivalKind arrivalKind() const;
+    Front snapshot(uint64_t revision) const;
+    BufferedAudioPacket take();
   };
   struct FlushRequest { uint64_t id; uint32_t timestamp; bool delivered = false; };
   static constexpr size_t capacity = 1024;

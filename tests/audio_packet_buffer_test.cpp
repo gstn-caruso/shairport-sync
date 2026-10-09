@@ -237,3 +237,56 @@ TEST(AudioPacketBuffer, EmptyDecodedPacketPreservesPreviouslyRetainedResamplerFr
   assert(failed.audioBytes().empty() && failed.metadata().frames == 0);
   assert(delayed.retainedFrames() == retained);
 }
+
+TEST(AudioPacketBuffer, WrappedMissingPacketPreservesSnapshotsExtractionAndRevisions) {
+  AudioPacketBuffer buffer;
+  buffer.accept(65535, 200, [] { return packet(65535, 2000); });
+  buffer.accept(1, 300, [] { return packet(1, 2032); });
+  EXPECT_EQ(buffer.occupancy(), 3);
+
+  const auto first = buffer.front();
+  ASSERT_TRUE(first);
+  EXPECT_EQ(first->packet.sequence, 65535);
+  EXPECT_EQ(first->packet.timestamp, 2000);
+  EXPECT_EQ(first->packet.frames, 16);
+  EXPECT_EQ(first->packet.timestampGap, 0);
+  EXPECT_EQ(first->packet.encoding, ALAC_44100_S16_2);
+  EXPECT_TRUE(first->packet.ready);
+  EXPECT_EQ(first->sampleFormat, AV_SAMPLE_FMT_S16P);
+  EXPECT_EQ(first->revision, buffer.revision());
+  auto extractedFirst = buffer.takeFrontIf(first->revision);
+  ASSERT_TRUE(extractedFirst);
+  ASSERT_TRUE(std::holds_alternative<QueuedAudioPacket>(*extractedFirst));
+  EXPECT_EQ(std::get<QueuedAudioPacket>(*extractedFirst).metadata().sequence, 65535);
+
+  const auto missing = buffer.front();
+  ASSERT_TRUE(missing);
+  EXPECT_EQ(missing->packet.sequence, 0);
+  EXPECT_EQ(missing->packet.timestamp, 0);
+  EXPECT_EQ(missing->packet.frames, 0);
+  EXPECT_EQ(missing->packet.timestampGap, 0);
+  EXPECT_EQ(missing->packet.encoding, SSRC_NONE);
+  EXPECT_FALSE(missing->packet.ready);
+  EXPECT_EQ(missing->sampleFormat, AV_SAMPLE_FMT_NONE);
+  EXPECT_EQ(missing->revision, buffer.revision());
+  EXPECT_GT(missing->revision, first->revision);
+  EXPECT_FALSE(buffer.takeFrontIf(first->revision));
+  EXPECT_EQ(buffer.occupancy(), 2);
+  auto extractedMissing = buffer.takeFrontIf(missing->revision);
+  ASSERT_TRUE(extractedMissing);
+  ASSERT_TRUE(std::holds_alternative<MissingAudioPacket>(*extractedMissing));
+  EXPECT_EQ(std::get<MissingAudioPacket>(*extractedMissing).sequence, 0);
+
+  const auto following = buffer.front();
+  ASSERT_TRUE(following);
+  EXPECT_EQ(following->packet.sequence, 1);
+  EXPECT_EQ(following->packet.timestamp, 2032);
+  EXPECT_TRUE(following->packet.ready);
+  EXPECT_EQ(buffer.occupancy(), 1);
+  auto extractedFollowing = buffer.takeFrontIf(following->revision);
+  ASSERT_TRUE(extractedFollowing);
+  ASSERT_TRUE(std::holds_alternative<QueuedAudioPacket>(*extractedFollowing));
+  EXPECT_EQ(std::get<QueuedAudioPacket>(*extractedFollowing).metadata().sequence, 1);
+  EXPECT_EQ(buffer.occupancy(), 0);
+  EXPECT_FALSE(buffer.front());
+}

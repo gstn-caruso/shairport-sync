@@ -1,6 +1,19 @@
 #include "audio/buffer/audio_packet_buffer.hpp"
 #include <bit>
 
+ArrivalKind AudioPacketBuffer::Entry::arrivalKind() const {
+  return packet ? ArrivalKind::duplicate : ArrivalKind::late;
+}
+AudioPacketBuffer::Front AudioPacketBuffer::Entry::snapshot(uint64_t revision) const {
+  return Front{packet ? packet->metadata() :
+      AudioPacketMetadata{sequence, 0, 0, 0, SSRC_NONE, false}, revision,
+      packet ? packet->sampleFormatForConversion() : AV_SAMPLE_FMT_NONE};
+}
+BufferedAudioPacket AudioPacketBuffer::Entry::take() {
+  return packet ? BufferedAudioPacket(std::move(*packet)) :
+                  BufferedAudioPacket(MissingAudioPacket{sequence});
+}
+
 ArrivalKind AudioPacketBuffer::classifyArrival(uint16_t sequence) const {
   if (!synced_)
     return ArrivalKind::first;
@@ -12,7 +25,7 @@ ArrivalKind AudioPacketBuffer::classifyArrival(uint16_t sequence) const {
     const auto &entry = entries_[sequence % capacity];
     if (!entry || entry->sequence != sequence)
       return ArrivalKind::tooLate;
-    return entry->packet ? ArrivalKind::duplicate : ArrivalKind::late;
+    return entry->arrivalKind();
   }
   if (size_t(static_cast<uint16_t>(write_ - read_)) + ahead + 1 > capacity)
     return ArrivalKind::overflow;
@@ -39,18 +52,14 @@ std::optional<AudioPacketBuffer::Front> AudioPacketBuffer::front() const {
   if (!synced_ || read_ == write_)
     return std::nullopt;
   const auto &entry = entries_[read_ % capacity];
-  return Front{entry->packet ? entry->packet->metadata() :
-      AudioPacketMetadata{read_, 0, 0, 0, SSRC_NONE, false}, revision_,
-      entry->packet ? entry->packet->sampleFormatForConversion() :
-          AV_SAMPLE_FMT_NONE};
+  return entry->snapshot(revision_);
 }
 std::optional<BufferedAudioPacket> AudioPacketBuffer::takeFrontIf(uint64_t revision) {
   Lock lock(mutex_);
   if (revision != revision_ || !synced_ || read_ == write_)
     return std::nullopt;
   auto &entry = entries_[read_ % capacity];
-  BufferedAudioPacket packet = entry->packet ? BufferedAudioPacket(std::move(*entry->packet)) :
-                                              BufferedAudioPacket(MissingAudioPacket{read_});
+  auto packet = entry->take();
   entry.reset();
   planner_.resolve(read_);
   ++read_;
