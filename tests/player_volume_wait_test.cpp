@@ -1,5 +1,6 @@
 #include "session_state.hpp"
 #include "volume_runtime.hpp"
+#include <gtest/gtest.h>
 #include <cassert>
 #include <condition_variable>
 #include <cstring>
@@ -104,12 +105,24 @@ static std::vector<uint8_t> encodedConstant() {
 static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames, bool submit,
                           bool mute = false, bool waitOnly = false, bool anchor = true,
                           int expectedPreroll = 0, bool conversion = true) {
+  const auto savedOutput = config.output;
+  const auto savedOutputConfiguration = config.current_output_configuration;
+  const auto savedDecoder = config.decoder_in_use;
+  const auto savedMode = config.playback_mode;
+  const auto savedStuffing = config.packet_stuffing;
+  const auto savedSync = config.no_sync;
+  const auto savedProfile = config.volume_control_profile;
+  const auto savedRange = config.volume_range_db;
+  const auto savedAutomaticLeadIn = config.audio_backend_silent_lead_in_time_auto;
+  const auto savedErrorReported = config.unfixable_error_reported;
+  const auto savedSharedLevel = sharedVolumeLevel.current();
   waiting = played = waitingAfterPacket = waitingWithArrival = false;
   referenceAvailable = anchor;
   frameTimeAvailable = conversion;
   prerollFrames = 0;
   expectedFrameTime = frameTime;
   outputFrames = 0;
+  outputSample = 0;
   auto packet = encodedConstant();
   SessionState session{};
   activeSession = &session;
@@ -165,16 +178,55 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
       assert(outputSample >= expected - 1 && outputSample <= expected + 1);
     }
   }
+  config.output = savedOutput;
+  config.current_output_configuration = savedOutputConfiguration;
+  config.decoder_in_use = savedDecoder;
+  config.playback_mode = savedMode;
+  config.packet_stuffing = savedStuffing;
+  config.no_sync = savedSync;
+  config.volume_control_profile = savedProfile;
+  config.volume_range_db = savedRange;
+  config.audio_backend_silent_lead_in_time_auto = savedAutomaticLeadIn;
+  config.unfixable_error_reported = savedErrorReported;
+  sharedVolumeLevel.remember(savedSharedLevel);
 }
-int main() {
+
+TEST(PlayerVolumeWait, NoDelayUsesUpdatedGainAndFullPacketLength) {
   checkPlayback(false, 999000000, 352, true);
+}
+
+TEST(PlayerVolumeWait, UnderrunDelaySkipsFortyFourFramesEvenWhenSyncIsDisabled) {
   checkPlayback(true, 999000000, 308, true);
+}
+
+TEST(PlayerVolumeWait, ContinuingDiscardWaitsWithoutSubmittingCallback) {
   checkPlayback(true, 991000000, 0, false);
+}
+
+TEST(PlayerVolumeWait, ExactDiscardSubmitsZeroFrames) {
   checkPlayback(true, 992000000, 0, true);
+}
+
+TEST(PlayerVolumeWait, MuteSubmitsSilenceAtFullPacketLength) {
   checkPlayback(false, 999000000, 352, true, true);
+}
+
+TEST(PlayerVolumeWait, MissingAnchorWaitsWithoutPlayback) {
   checkPlayback(false, 999000000, 0, false, false, true, false);
+}
+
+TEST(PlayerVolumeWait, ZeroFrameTimeWaitsWithoutPlayback) {
   checkPlayback(false, 0, 0, false, false, true);
+}
+
+TEST(PlayerVolumeWait, NoDelayPrerollSubmitsSilenceThenWaits) {
   checkPlayback(false, 1150000000, 0, false, false, true, true, 6615);
+}
+
+TEST(PlayerVolumeWait, DelayPrerollSubmitsSilenceThenWaits) {
   checkPlayback(true, 1050000000, 0, false, false, true, true, 2205);
+}
+
+TEST(PlayerVolumeWait, UnavailableFrameTimeConversionWaitsWithoutPlayback) {
   checkPlayback(false, 999000000, 0, false, false, true, true, 0, false);
 }

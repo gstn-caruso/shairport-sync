@@ -266,6 +266,16 @@ Native cancellation/join/reaping/assertions and the PTP wrap flag remain; comman
 backend globals restore per run. Production is unchanged; sanitizers/devices were
 not rerun.
 
+Player-volume-wait discovery (`ctest --test-dir build/redesign-release -R '^PlayerVolumeWait\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+All ten original helper invocations now have independent names with unchanged
+parameters/assertions for real Player ALAC gain, mute, no-delay/underrun/discard,
+missing timing and preroll. Group (0.18s), exact zero-frame-discard case, two shuffled
+repetitions and Release 209/209 (15.57s) passed; each entry has timeout 5. Observation
+state resets and output/shared-level globals restore after native joins. All six
+wrap flags, native assertions and C ABI/cancellation/shell checks remain; production
+is unchanged and sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |

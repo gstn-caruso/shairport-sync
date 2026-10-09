@@ -156,13 +156,12 @@ if(BUILD_TESTING)
   gtest_discover_tests(playback-sync-test PROPERTIES TIMEOUT 5)
   add_executable(player-volume-wait-test tests/player_volume_wait_test.cpp)
   target_compile_options(player-volume-wait-test PRIVATE -UNDEBUG)
-  target_link_libraries(player-volume-wait-test PRIVATE receiver)
+  target_link_libraries(player-volume-wait-test PRIVATE receiver GTest::gtest_main)
   target_link_options(player-volume-wait-test PRIVATE -Wl,--wrap=pthread_cond_timedwait
     -Wl,--wrap=get_absolute_time_in_ns -Wl,--wrap=have_timestamp_timing_information
     -Wl,--wrap=frame_to_local_time -Wl,--wrap=local_time_to_frame
     -Wl,--wrap=ptp_send_control_message_string)
-  add_test(NAME player-volume-wait COMMAND player-volume-wait-test)
-  set_tests_properties(player-volume-wait PROPERTIES TIMEOUT 5)
+  gtest_discover_tests(player-volume-wait-test PROPERTIES TIMEOUT 5)
   add_executable(playback-samples-test tests/playback_samples_test.cpp)
   target_compile_options(playback-samples-test PRIVATE -UNDEBUG)
   target_link_libraries(playback-samples-test PRIVATE receiver GTest::gtest_main)
