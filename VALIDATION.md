@@ -146,6 +146,15 @@ failed creation. Group (0.07s), exact failed-creation case and Release 132/132
 also passed. C ABI/shell checks remain green; production is unchanged and
 sanitizers/devices were not rerun.
 
+Playback-statistics discovery (`ctest --test-dir build/redesign-release -R '^PlaybackStatistics\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Seven independent cases replay original prerequisites for epoch/interval/session,
+output reading, concurrent counters and used-state play resets. Group (0.12s),
+exact final-reset/warmup case and Release 138/138 (14.32s) passed; each entry has
+timeout 5. Both producer threads join before assertions. C ABI, native cancellation
+and shell checks remain green; production is unchanged and sanitizers/devices
+were not rerun.
+
 CTest covers:
 
 | Test | Contract |
