@@ -2714,23 +2714,9 @@ void rtsp_conversation_thread_cleanup_function(void *arg) {
     debug(3, "Connection %d: terminating  -- closing timing, control and audio sockets...",
           conn->connection_number);
 
-    buf_drain(&conn->ap2_pairing_context.control_cipher_bundle.plaintext_read_buffer, -1);
-    buf_drain(&conn->ap2_pairing_context.control_cipher_bundle.encrypted_read_buffer, -1);
-    if (conn->ap2_pairing_context.control_cipher_bundle.description != NULL)
-      free(conn->ap2_pairing_context.control_cipher_bundle.description);
-    pair_cipher_free(conn->ap2_pairing_context.control_cipher_bundle.cipher_ctx);
-
-    buf_drain(&conn->ap2_pairing_context.event_cipher_bundle.plaintext_read_buffer, -1);
-    buf_drain(&conn->ap2_pairing_context.event_cipher_bundle.encrypted_read_buffer, -1);
-    if (conn->ap2_pairing_context.event_cipher_bundle.description != NULL)
-      free(conn->ap2_pairing_context.event_cipher_bundle.description);
-    pair_cipher_free(conn->ap2_pairing_context.event_cipher_bundle.cipher_ctx);
-
-    buf_drain(&conn->ap2_pairing_context.data_cipher_bundle.plaintext_read_buffer, -1);
-    buf_drain(&conn->ap2_pairing_context.data_cipher_bundle.encrypted_read_buffer, -1);
-    if (conn->ap2_pairing_context.data_cipher_bundle.description != NULL)
-      free(conn->ap2_pairing_context.data_cipher_bundle.description);
-    pair_cipher_free(conn->ap2_pairing_context.data_cipher_bundle.cipher_ctx);
+    conn->ap2_pairing_context.control_cipher_bundle.release();
+    conn->ap2_pairing_context.event_cipher_bundle.release();
+    conn->ap2_pairing_context.data_cipher_bundle.release();
 
     pair_setup_free(conn->ap2_pairing_context.setup_ctx);
     pair_verify_free(conn->ap2_pairing_context.verify_ctx);

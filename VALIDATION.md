@@ -122,6 +122,19 @@ ten shuffled repetitions and all 237 Release CTest entries passed (14.84s).
 Only test/documentation changed; installation was not repeated. Native logs
 are in ignored `build/redesign-release/pair-cipher-bundle-empty-*.log`;
 sanitizers/device playback and RTSP cleanup integration remain unverified here.
+The separate structural pairing integration replaces the three RTSP cleanup
+blocks with control/event/data bundle `release()` calls in the same order.
+Source inspection confirms setup/verification release follows data and the
+existing cancellation-disabled scope is unchanged. The same 30 bundle/RTSP/
+session/C-adapter cases passed before and after (0.50s each); all 237 Release
+CTest entries passed (14.80s). C header syntax, staged installation, installed
+binary `--version`, and manual/configuration byte comparisons passed. Logs are
+in ignored `build/redesign-release/pairing-integration-*.log`. This green-to-green
+criterion #77 integration does not claim live network teardown/device coverage
+or sanitizer results. Lifecycle/startup decisions remain with their existing
+owners: `PlaybackRun::start/stop` in `playback_run.cpp` and
+`SessionRegistry::start/shutdown` in `session_registry.cpp`; SessionState's
+destructor already delegates playback stop there before closing its socket.
 
 The first AudioInputState contract gives packet-shape coherence to a private
 leaf owner (Feature Envy, criterion #77). Its new named test first failed to
