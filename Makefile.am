@@ -12,7 +12,7 @@ lib_receiver_a_SOURCES = shairport.c bonjour_strings.c mdns.c mdns_avahi.c commo
   player.c audio.c audio_pa.c activity_monitor.c rtsp.c \
   ap2_buffered_audio_processor.c ap2_event_receiver.c ap2_event_message_handler.c ptp-utilities.c \
   utilities/debug.c utilities/network_utilities.c utilities/rtsp_message_utilities.c \
-  utilities/string_utilities.c utilities/exit.c utilities/buffered_read.c \
+  utilities/string_utilities.cpp utilities/exit.c utilities/buffered_read.c \
   utilities/structured_buffer.cpp utilities/mod23.c utilities/generate_random_uuid.c \
   utilities/generate_device_uuid.c plists/get_info_response.c
 BUILT_SOURCES = plists/get_info_response.h plists/get_info_response.c
@@ -43,7 +43,11 @@ install-exec-hook:
 	$(MKDIR_P) $(DESTDIR)$(sysconfdir)
 	$(INSTALL_DATA) $(top_srcdir)/scripts/shairport-sync.conf $(DESTDIR)$(sysconfdir)/shairport-sync.conf.sample
 endif
-check_PROGRAMS = rtsp-dispatch-test structured-buffer-test structured-buffer-cpp-test
+check_PROGRAMS = rtsp-dispatch-test structured-buffer-test structured-buffer-cpp-test string-utilities-test
+string_utilities_test_SOURCES = tests/string_utilities_test.c
+string_utilities_test_CFLAGS = $(AM_CFLAGS) -UNDEBUG
+string_utilities_test_LDADD = $(shairport_sync_LDADD)
+string_utilities_test_LINK = $(CXXLINK)
 structured_buffer_cpp_test_SOURCES = tests/structured_buffer_cpp_test.cpp
 structured_buffer_cpp_test_CXXFLAGS = $(AM_CXXFLAGS) -UNDEBUG
 structured_buffer_cpp_test_LDADD = $(shairport_sync_LDADD)
@@ -57,6 +61,7 @@ rtsp_dispatch_test_LDADD = $(shairport_sync_LDADD)
 rtsp_dispatch_test_LINK = $(CXXLINK)
 TESTS += rtsp-dispatch-test
 TESTS += structured-buffer-test structured-buffer-cpp-test
+TESTS += string-utilities-test
 noinst_HEADERS = receiver.h activity_monitor.h ap2_buffered_audio_processor.h ap2_event_message_handler.h \
   ap2_event_receiver.h audio.h bonjour_strings.h common.h definitions.h mdns.h \
   nqptp-shm-structures.h player.h ptp-utilities.h rtp.h rtsp.h \

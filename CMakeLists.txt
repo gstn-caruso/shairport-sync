@@ -66,7 +66,7 @@ target_compile_definitions(pair_ap PRIVATE CONFIG_GCRYPT)
 add_library(receiver STATIC shairport.c bonjour_strings.c mdns.c mdns_avahi.c common.c rtp.c
   player.c audio.c audio_pa.c activity_monitor.c rtsp.c ap2_buffered_audio_processor.c
   ap2_event_receiver.c ap2_event_message_handler.c ptp-utilities.c utilities/debug.c
-  utilities/network_utilities.c utilities/rtsp_message_utilities.c utilities/string_utilities.c
+  utilities/network_utilities.c utilities/rtsp_message_utilities.c utilities/string_utilities.cpp
   utilities/exit.c utilities/buffered_read.c utilities/structured_buffer.cpp utilities/mod23.c
   utilities/generate_random_uuid.c utilities/generate_device_uuid.c "${CMAKE_BINARY_DIR}/plists/get_info_response.c")
 foreach(target pair_ap receiver)
@@ -90,6 +90,10 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(string-utilities-test tests/string_utilities_test.c)
+  target_compile_options(string-utilities-test PRIVATE -UNDEBUG)
+  target_link_libraries(string-utilities-test PRIVATE receiver)
+  add_test(NAME string-utilities COMMAND string-utilities-test)
   add_executable(structured-buffer-cpp-test tests/structured_buffer_cpp_test.cpp)
   target_compile_options(structured-buffer-cpp-test PRIVATE -UNDEBUG)
   target_link_libraries(structured-buffer-cpp-test PRIVATE receiver)
