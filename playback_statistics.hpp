@@ -1,6 +1,6 @@
 #pragma once
 #include "audio_arrival.hpp"
-#include "playback_sync.hpp"
+#include "playback/timing/playback_sync.hpp"
 #include <algorithm>
 #include <bit>
 #include <limits>

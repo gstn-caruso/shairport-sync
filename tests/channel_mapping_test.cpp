@@ -1,4 +1,4 @@
-#include "channel_mapping.hpp"
+#include "audio/format/channel_mapping.hpp"
 #include <array>
 #include <gtest/gtest.h>
 

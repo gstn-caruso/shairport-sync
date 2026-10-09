@@ -29,7 +29,7 @@
  */
 
 #include "session_state.hpp"
-#include "audio_format.hpp"
+#include "audio/format/audio_format.hpp"
 #include "audio_player_adapter.hpp"
 #include "packets/retransmission_planner.hpp"
 #include "statistics_formatter.hpp"

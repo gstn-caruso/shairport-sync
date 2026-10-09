@@ -6,7 +6,7 @@
 
 #include "config.h"
 #include "definitions.h"
-#include "clock_status.h"
+#include "timing/clock_status.h"
 
 
 
@@ -26,7 +26,7 @@ typedef uint16_t seq_t;
 // these are the values coming in on a buffered audio RTP packet's SSRC field
 // the apparent significances are as indicated.
 // Dolby Atmos seems to be 7P1
-#include "audio_types.h"
+#include "audio/format/audio_types.h"
 
 
 // maximum number of frames that can be added or removed from a packet_count

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "audio_format.hpp"
-#include "channel_mapping.hpp"
-#include "converted_audio.hpp"
+#include "audio/format/audio_format.hpp"
+#include "audio/format/channel_mapping.hpp"
+#include "audio/pcm/converted_audio.hpp"
 #include <expected>
 #include <mutex>
 

@@ -78,7 +78,7 @@ typedef enum {
 
 // ensure sps_format_sample_size_array and sps_format_description_string_array are in sync with
 // this!
-#include "audio_types.h"
+#include "audio/format/audio_types.h"
 
 typedef enum {
   SPS_RATE_UNKNOWN = 0,

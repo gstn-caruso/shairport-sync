@@ -1,4 +1,4 @@
-#include "rtp_clock.hpp"
+#include "timing/rtp_clock.hpp"
 #include <bit>
 
 clock_status_t RtpClock::status() const noexcept { return status_; }

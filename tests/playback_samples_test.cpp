@@ -1,4 +1,4 @@
-#include "playback_samples.hpp"
+#include "audio/pcm/playback_samples.hpp"
 #include <gtest/gtest.h>
 #include <cassert>
 #include <cstring>

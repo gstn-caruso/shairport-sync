@@ -1,4 +1,4 @@
-#include "pcm_encoder.hpp"
+#include "audio/pcm/pcm_encoder.hpp"
 #include <array>
 #include <gtest/gtest.h>
 #include <cstring>

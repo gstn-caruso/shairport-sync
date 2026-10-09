@@ -1,4 +1,4 @@
-#include "rtp_clock.hpp"
+#include "timing/rtp_clock.hpp"
 #include <gtest/gtest.h>
 
 TEST(RtpClock, MissingAnchorPreventsConversions) {

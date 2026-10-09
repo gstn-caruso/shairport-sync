@@ -82,12 +82,12 @@ CTest entries passed in 13.65s. These are single measurements, not a benchmark
 distribution or a code-coverage percentage. The contract inventory below
 describes coverage; no line/branch coverage measurement was taken.
 
-Touching `volume_policy.cpp` caused one policy compile, one receiver archive,
+Touching `src/volume/volume_policy.cpp` caused one policy compile, one receiver archive,
 and 38 executable links (plus the always-run Git-version check). Ninja's dry
 run also conservatively listed `common.cpp`, which includes the generated
 Git-version header; the actual build log determines the compile count.
 The incremental build took 3.51s.
-Reproduce with a clean build, one settling build, `touch volume_policy.cpp`,
+Reproduce with a clean build, one settling build, `touch src/volume/volume_policy.cpp`,
 `ninja -C build/cmake -n`, and `/usr/bin/time -p cmake --build build/cmake --parallel 2`.
 Touching the source only updates its timestamp; it does not change its contents.
 
@@ -100,7 +100,7 @@ linked 38 executables in 3.85s. After the split, the same touch followed by
 `cmake --build build/redesign-release --target volume-policy-test rtp-clock-test
 --parallel 2` did no work (0.01s); the subsequent full build compiled only
 `audio.cpp`, archived the receiver and linked 36 executables (3.65s), neither
-isolated test. Touching `volume_policy.cpp` rebuilt the two selected targets
+isolated test. Touching `src/volume/volume_policy.cpp` rebuilt the two selected targets
 with exactly one policy compile, its archive and its test link (0.27s), without
 relinking the clock test. A separate policy-touch full build compiled and
 archived only the policy library and linked 37 executables in 3.65s, versus the
@@ -116,8 +116,8 @@ retain the original compile options/definitions and join the C++26 source
 guard; sanitizer object paths and native wrapper flags remain unchanged.
 Sanitizer builds and device playback were not rerun in this cycle.
 
-The audio-primitives isolation cycle gives `audio_format.cpp` and
-`channel_mapping.cpp` one `receiver-audio-format` static library, retaining
+The audio-primitives isolation cycle gives `src/audio/format/audio_format.cpp` and
+`src/audio/format/channel_mapping.cpp` one `receiver-audio-format` static library, retaining
 production compile settings and the C++26 source guard. Both named test
 executables link this library and GoogleTest directly, without receiver or
 backend dependencies. Before editing, touching `audio.cpp` in a settled build
@@ -152,8 +152,8 @@ native linkage/configuration contracts. Staged installation, installed binary
 Production behavior and native wrapper/object paths are unchanged; sanitizer
 builds and device playback were not rerun.
 
-The synchronization/preroll isolation cycle puts `playback_sync.cpp` and
-`playback_timing.cpp` in `receiver-playback-timing`, with public
+The synchronization/preroll isolation cycle puts `src/playback/timing/playback_sync.cpp` and
+`src/playback/timing/playback_timing.cpp` in `receiver-playback-timing`, with public
 `Threads::Threads`, original production compile settings and the C++26 source
 guard. Both tests link this library and GoogleTest directly. Before editing,
 a settled build and `touch audio.cpp` scheduled both test links; the actual
@@ -208,7 +208,7 @@ destructor already delegates playback stop there before closing its socket.
 
 The first AudioInputState contract gives packet-shape coherence to a private
 leaf owner (Feature Envy, criterion #77). Its new named test first failed to
-compile because `audio_input_state.hpp` was absent; the red log is in ignored
+compile because `src/audio/format/audio_input_state.hpp` was absent; the red log is in ignored
 `build/redesign-release/audio-input-state-red.log`. The minimal header starts
 with zero rate/frames and false decoder validity, then records ALAC 44.1 kHz's
 44100/352 shape while remaining invalid. The nine relevant input-state/format
