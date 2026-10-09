@@ -1,61 +1,98 @@
 #include "playback_run.hpp"
 #include "cancellation_wait.hpp"
+#include <gtest/gtest.h>
 #include <cassert>
 #include <cerrno>
 #include <unistd.h>
 #include <condition_variable>
 #include <thread>
 
-static CancellationWait cancellation;
-static void *waitForStop(void *) {
-  cancellation.block();
+struct StopCleanup {
+  CancellationWait cancellation;
+  std::mutex ordering;
+  std::condition_variable changed;
+  bool cleanupEntered = false, finishCleanup = false;
+  PlaybackRun run;
+};
+
+static void *waitForStop(void *argument) {
+  static_cast<CancellationWait *>(argument)->block();
   return nullptr;
 }
 static int failCreation(pthread_t *, PlaybackRun::Routine, void *) { return EAGAIN; }
-static std::mutex ordering;
-static std::condition_variable changed;
-static bool cleanupEntered = false, finishCleanup = false;
-static PlaybackRun *activeRun;
-static void finish(void *) {
-  assert(!activeRun->isActive());
-  std::unique_lock lock(ordering);
-  cleanupEntered = true;
-  changed.notify_all();
-  changed.wait(lock, [] { return finishCleanup; });
+static void finish(void *argument) {
+  auto &cleanup = *static_cast<StopCleanup *>(argument);
+  assert(!cleanup.run.isActive());
+  std::unique_lock lock(cleanup.ordering);
+  cleanup.cleanupEntered = true;
+  cleanup.changed.notify_all();
+  cleanup.changed.wait(lock, [&] { return cleanup.finishCleanup; });
 }
-static void *waitWithCleanup(void *) {
-  pthread_cleanup_push(finish, nullptr);
-  waitForStop(nullptr);
+static void *waitWithCleanup(void *argument) {
+  auto &cleanup = *static_cast<StopCleanup *>(argument);
+  pthread_cleanup_push(finish, argument);
+  waitForStop(&cleanup.cancellation);
   pthread_cleanup_pop(1);
   return nullptr;
 }
-int main() {
-  PlaybackRun run;
-  assert(!run.isActive() && !run.stop());
-  activeRun = &run;
-  assert(run.start(waitWithCleanup, nullptr) == PlaybackRun::StartResult::started);
-  cancellation.waitForBlocked(1);
+static void checkConcurrentStops(StopCleanup &cleanup) {
+  auto &run = cleanup.run;
+  EXPECT_FALSE(run.isActive());
+  EXPECT_FALSE(run.stop());
+  ASSERT_EQ(run.start(waitWithCleanup, &cleanup), PlaybackRun::StartResult::started);
+  cleanup.cancellation.waitForBlocked(1);
   bool firstStopped = false, secondStopped = false;
   std::thread first([&] { firstStopped = run.stop(); });
   {
-    std::unique_lock lock(ordering);
-    changed.wait(lock, [] { return cleanupEntered; });
+    std::unique_lock lock(cleanup.ordering);
+    cleanup.changed.wait(lock, [&] { return cleanup.cleanupEntered; });
   }
   std::thread second([&] { secondStopped = run.stop(); });
   {
-    std::lock_guard lock(ordering);
-    finishCleanup = true;
+    std::lock_guard lock(cleanup.ordering);
+    cleanup.finishCleanup = true;
   }
-  changed.notify_all();
+  cleanup.changed.notify_all();
   first.join();
   second.join();
-  assert(firstStopped && !secondStopped && !run.isActive());
-  assert(run.start(waitForStop, nullptr) == PlaybackRun::StartResult::started);
-  cancellation.waitForBlocked(2);
-  assert(run.isActive());
-  assert(run.start(waitForStop, nullptr) == PlaybackRun::StartResult::alreadyOwned);
-  assert(run.stop() && !run.isActive());
-  assert(!run.stop());
-  assert(run.start(waitForStop, nullptr, failCreation) == PlaybackRun::StartResult::failed);
-  assert(!run.isActive() && !run.stop());
+  EXPECT_TRUE(firstStopped);
+  EXPECT_FALSE(secondStopped);
+  EXPECT_FALSE(run.isActive());
+}
+
+static void checkRestartAndExclusiveOwnership(StopCleanup &cleanup) {
+  ASSERT_NO_FATAL_FAILURE(checkConcurrentStops(cleanup));
+  auto &run = cleanup.run;
+  ASSERT_EQ(run.start(waitForStop, &cleanup.cancellation), PlaybackRun::StartResult::started);
+  cleanup.cancellation.waitForBlocked(2);
+  EXPECT_TRUE(run.isActive());
+  EXPECT_EQ(run.start(waitForStop, &cleanup.cancellation), PlaybackRun::StartResult::alreadyOwned);
+  EXPECT_TRUE(run.stop());
+  EXPECT_FALSE(run.isActive());
+  EXPECT_FALSE(run.stop());
+}
+
+TEST(PlaybackRun, InactiveRunHasNoStopToComplete) {
+  PlaybackRun run;
+  EXPECT_FALSE(run.isActive());
+  EXPECT_FALSE(run.stop());
+}
+
+TEST(PlaybackRun, ConcurrentStopsRetireRunBeforeCleanupCompletes) {
+  StopCleanup cleanup;
+  checkConcurrentStops(cleanup);
+}
+
+TEST(PlaybackRun, RestartAfterConcurrentStopKeepsExclusiveOwnership) {
+  StopCleanup cleanup;
+  checkRestartAndExclusiveOwnership(cleanup);
+}
+
+TEST(PlaybackRun, FailedCreationAfterCompletedRunsLeavesRunInactive) {
+  StopCleanup cleanup;
+  ASSERT_NO_FATAL_FAILURE(checkRestartAndExclusiveOwnership(cleanup));
+  auto &run = cleanup.run;
+  EXPECT_EQ(run.start(waitForStop, &cleanup.cancellation, failCreation), PlaybackRun::StartResult::failed);
+  EXPECT_FALSE(run.isActive());
+  EXPECT_FALSE(run.stop());
 }

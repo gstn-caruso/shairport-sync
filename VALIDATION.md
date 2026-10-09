@@ -137,6 +137,15 @@ restores readiness, advances revision and permits the original 4,800-frame exact
 lead result. No production mutation was used. All five cases (0.08s), the exact
 final-reset case and Release 129/129 (14.24s) passed after correction.
 
+Playback-run discovery (`ctest --test-dir build/redesign-release -R '^PlaybackRun\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Four independently owned callback contexts retain native cancellation, cleanup
+assertion/ordering, joins and the complete prerequisite lifecycle for restart and
+failed creation. Group (0.07s), exact failed-creation case and Release 132/132
+(14.29s) passed; all entries have timeout 5. Two shuffled in-process repetitions
+also passed. C ABI/shell checks remain green; production is unchanged and
+sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
