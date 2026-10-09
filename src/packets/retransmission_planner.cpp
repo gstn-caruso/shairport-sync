@@ -29,14 +29,11 @@ std::vector<ResendRange> RetransmissionPlanner::due(uint64_t now, RetryPolicy po
   if (window.size() > capacity)
     return ranges;
   ranges.reserve(window.size());
-  for (unsigned offset = 0; offset < window.size(); ++offset) {
-    const auto sequence = static_cast<uint16_t>(window.first + offset);
+  for (auto sequence : window.sequences()) {
     auto &missing = missing_[sequence % capacity];
     if (!missing || missing->sequence != sequence || !missing->requestIfDue(now, policy))
       continue;
-    if (!ranges.empty() && static_cast<uint16_t>(ranges.back().first + ranges.back().count) == sequence)
-      ++ranges.back().count;
-    else
+    if (ranges.empty() || !ranges.back().extendIfAdjacent(sequence))
       ranges.push_back({sequence, 1});
   }
   return ranges;
