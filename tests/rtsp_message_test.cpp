@@ -6,6 +6,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <chrono>
+#include <thread>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -77,7 +80,44 @@ static void checkBinaryResponseFraming() {
   close(sockets[1]);
 }
 
+struct PendingRequest {
+  rtsp_conn_info connection{};
+  rtsp_message *message = nullptr;
+};
+
+static void *readPendingRequest(void *argument) {
+  auto *pending = static_cast<PendingRequest *>(argument);
+  rtsp_read_request(&pending->connection, &pending->message);
+  return nullptr;
+}
+
+static void checkCancellationReleasesRequest() {
+  int sockets[2];
+  assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+  const std::string headers = "POST /feedback RTSP/1.0\r\nContent-Length: 3\r\n\r\n";
+  assert(write(sockets[1], headers.data(), headers.size()) == static_cast<ssize_t>(headers.size()));
+  PendingRequest pending;
+  pending.connection.fd = sockets[0];
+  pthread_t reader;
+  assert(pthread_create(&reader, nullptr, readPendingRequest, &pending) == 0);
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  int available = 0;
+  do {
+    assert(ioctl(sockets[0], FIONREAD, &available) == 0);
+    assert(std::chrono::steady_clock::now() < deadline);
+    std::this_thread::yield();
+  } while (available != 0);
+  assert(pthread_cancel(reader) == 0);
+  void *completion = nullptr;
+  assert(pthread_join(reader, &completion) == 0);
+  assert(completion == PTHREAD_CANCELED);
+  assert(pending.message == nullptr);
+  close(sockets[0]);
+  close(sockets[1]);
+}
+
 int main() {
+  checkCancellationReleasesRequest();
   checkRequestParsing();
   checkHeaderLimitAndDuplicates();
   checkBinaryResponseFraming();

@@ -538,9 +538,12 @@ void set_client_as_ptp_clock(rtsp_conn_info *conn) {
   ptp_send_control_message_string(timing_list_message);
 }
 
+void msg_cleanup_function(void *arg);
+
 enum rtsp_read_request_response rtsp_read_request(rtsp_conn_info *conn, RtspMessage **the_packet) {
   enum rtsp_read_request_response reply = rtsp_read_request_response_pending;
   *the_packet = msg_init();
+  pthread_cleanup_push(msg_cleanup_function, the_packet);
   ssize_t buflen = 4096;
   char *buf = static_cast<char *>(malloc(buflen + 1));
   if (buf == NULL) {
@@ -724,17 +727,9 @@ enum rtsp_read_request_response rtsp_read_request(rtsp_conn_info *conn, RtspMess
       *the_packet = msg;
     }
 
-    // shutdown:
-    if (reply != rtsp_read_request_response_ok) {
-      if (*the_packet != NULL) {
-        debug(3, "Freeing the_packet");
-        msg_free(the_packet);
-      }
-    }
     pthread_cleanup_pop(1);
   }
-  if (reply != rtsp_read_request_response_ok)
-    msg_free(the_packet);
+  pthread_cleanup_pop(reply != rtsp_read_request_response_ok);
   return reply;
 }
 
