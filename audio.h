@@ -62,8 +62,8 @@ typedef struct {
   // Returns 0 and a channel map (if available) if successful
   // may be NULL if not implemented.
   // Set channel_map to NULL if you don't want it.
-  // Otherwise, a space-separated channel map string will be returned
-  // and you are responsible for freeing it.
+  // Otherwise, a borrowed space-separated channel map string will be returned.
+  // The backend owns it; copy it before the next configure call and do not free it.
   // If there isn't a channel map a NULL will be returned.
   int (*configure)(int32_t encoded_output_format, char **channel_map);
 
