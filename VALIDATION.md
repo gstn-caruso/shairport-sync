@@ -7,7 +7,8 @@ CTest covers:
 
 | Test | Contract |
 | --- | --- |
-| `pcm-encoder` | Signed/unsigned PCM widths and byte order, native S24 sign extension versus padded S24, silence, fixed gain, clipped deterministic dither, seed continuity and basic/interpolated handoff counts and bytes |
+| `playback-samples` | Native S16/S32 normalization, stereo modes and multichannel order, payload shape changes, invalid byte counts, interior Basic correction and Vernier limits/counts with real encoded bytes |
+| `pcm-encoder` | Signed/unsigned PCM widths and byte order, native S24 sign extension versus padded S24, silence, fixed gain, clipped deterministic dither and seed continuity |
 | `player-packet` | Failed real decoding followed by mute preserves ALAC/AAC packet duration without dereferencing a missing frame |
 | `audio-packet-buffer` | Modular admission, bounded resynchronisation, ownership transfer, stale revisions, queued trim/mute/conversion, flush identifiers, failed factories preserving the window and empty packets preserving resampler retention |
 | `retransmission-planner` | Explicit ages, retry intervals, final opportunity and contiguous ranges across sequence wrap |
@@ -64,6 +65,9 @@ Packet trimming was reproduced as a null PCM access before its correction;
 trimming now makes decoded planes writable before conversion. Outdated packet
 discarding preserves the previous comparison of packet start timestamps. The
 queue returns resend ranges to the RTP adapter after releasing its mutex.
+Basic insertion now averages each channel independently. Requests outside its
+previous ±1 contract are bounded to one frame; the regression test checks the
+effective correction and endpoints, rather than claiming a frame/byte mismatch.
 
 Automated tests do not establish playback quality or multiroom timing. Validate
 the resulting binary on AirPlay devices for:

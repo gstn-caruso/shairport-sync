@@ -65,6 +65,7 @@ public:
     return {};
   }
   std::span<const uint8_t> audioBytes() const { return audio_.bytes(); }
+  const ConvertedAudio &convertedAudio() const { return audio_; }
 
 private:
   QueuedAudioPacket(AudioFormat format, uint16_t sequence, uint32_t timestamp, int32_t gap,

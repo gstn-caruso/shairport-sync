@@ -7,6 +7,8 @@
 #include "resampler.hpp"
 #include "audio_packet_buffer.hpp"
 #include "pcm_encoder.hpp"
+#include "playback_samples.hpp"
+#include <cstdlib>
 #include <atomic>
 
 struct SessionState {
@@ -43,7 +45,6 @@ struct SessionState {
   pthread_t thread;
 
   // buffers to delete on exit
-  int32_t *tbuf;
 
   // for generating running statistics...
 
@@ -68,10 +69,7 @@ struct SessionState {
   // other stuff...
   pthread_t *player_thread;
   AudioPacketBuffer packetBuffer;
-  unsigned int frames_per_packet, input_num_channels, input_bit_depth, input_effective_bit_depth,
-      input_rate;
-  int input_bytes_per_frame;
-  unsigned int output_sample_ratio;
+  unsigned int frames_per_packet, input_rate;
   uint64_t packet_count;
   uint64_t packet_count_since_flush;
   // int connection_state_to_output;
@@ -188,6 +186,9 @@ struct SessionState {
     const auto random = r64i();
     r64_unlock;
     return random;
+  }};
+  PlaybackSamples playbackSamples{[](size_t frames) {
+    return (std::rand() % (frames - 2)) + 1;
   }};
 
   // used as the initials values for calculating the rate at which the source thinks it's sending

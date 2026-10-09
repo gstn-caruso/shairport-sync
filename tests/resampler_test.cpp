@@ -165,7 +165,7 @@ int main() {
   SessionState session{};
   prepare_decoding_chain(&session, ALAC_44100_S16_2);
   assert(setup_software_resampler(&session, ALAC_44100_S16_2) == 0);
-  assert(session.input_bit_depth == 16 && session.input_effective_bit_depth == 16);
+  assert(session.resampler.outputShape() == NativePcmShape(2, 16, 16));
   OwnedAudioFrame frame(av_frame_alloc());
   frame->format = AV_SAMPLE_FMT_S16P;
   frame->sample_rate = 44100;

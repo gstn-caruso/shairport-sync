@@ -199,15 +199,11 @@ static int setupSoftwareResampler(rtsp_conn_info *conn, ssrc_t ssrc,
         debug(2, "Connection %d: outgoing audio switching to: %s.", conn->connection_number,
               short_format_description(encoded));
       config.current_output_configuration = encoded;
-      conn->input_num_channels = CHANNELS_FROM_ENCODED_FORMAT(encoded);
       conn->input_rate = format->sampleRate();
       conn->frames_per_packet = format->framesPerPacket();
-      conn->input_bit_depth = conn->resampler.sampleBits();
-      conn->input_effective_bit_depth = conn->resampler.effectiveSampleBits();
-      conn->input_bytes_per_frame = conn->input_num_channels * conn->input_bit_depth / 8;
+      const auto shape = conn->resampler.outputShape();
       if (!conn->pcmEncoder.configure(
-              {FORMAT_FROM_ENCODED_FORMAT(encoded), conn->input_num_channels},
-              conn->input_effective_bit_depth))
+              {FORMAT_FROM_ENCODED_FORMAT(encoded), shape.channels()}, shape.effectiveBits()))
         die("Unsupported PCM output format.");
     } else {
       debug(1, "Could not configure resampler: %d.", configured.error().nativeCode);
@@ -455,7 +451,6 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
                 debug(2, "set up the output chain to %s for FFmpeg.",
                       get_ssrc_name(curframe->encoding));
                 setupSoftwareResampler(conn, curframe->encoding, front->sampleFormat);
-                conn->output_sample_ratio = 1; // it's always 1 if we're using FFmpeg
                 uint64_t should_be_time;
                 frame_to_local_time(conn->first_packet_timestamp, // this will go modulo 2^32
                                     &should_be_time, conn);
@@ -762,224 +757,6 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
   return result;
 }
 
-static inline int32_t mean_32(int32_t a, int32_t b) {
-  int64_t al = a;
-  int64_t bl = b;
-  int64_t mean = (al + bl) / 2;
-  int32_t r = (int32_t)mean;
-  if (r != mean)
-    debug(1, "Error calculating average of two int32_t values: %d, %d.", a, b);
-  return r;
-}
-
-// this takes an array of channels of signed 32-bit integers and
-// (a) removes or inserts a frame as specified in "stuff",
-// (b) multiplies each sample by the fixedvolume (a 16-bit quantity)
-// (c) dithers the result to the output size 32/24/16/8 bits
-// (d) outputs the result in the approprate format
-// formats accepted include U8, S8, S16, S24, S24_3LE, S24_3BE and S32
-
-// can only accept a plus or minus 1
-// stuff: 1 means add 1; 0 means do nothing; -1 means remove 1
-EncodedPcm encodeBasicPlaybackPcm(std::span<const int32_t> samples, unsigned channels,
-                                 int stuff, PcmEncoder &encoder) {
-  const int32_t *inptr = samples.data();
-  const int length = samples.size() / channels;
-  int tstuff = 0;
-  if (length >= 3) {
-    tstuff = std::clamp(stuff, -1, 1);
-    if (tstuff)
-      debug(3, "basic frame adjustment %+d.", tstuff);
-    if (length < 100) {
-      // debug(1, "Stuff argument to stuff_buffer must be from -1 to +1 and length >100.");
-      tstuff = 0; // if any of these conditions hold, don't stuff anything/
-    }
-
-    int i;
-    int stuffsamp = length;
-    if (tstuff)
-      //      stuffsamp = rand() % (length - 1);
-      stuffsamp =
-          (rand() % (length - 2)) + 1; // ensure there's always a sample before and after the item
-
-    for (i = 0; i < stuffsamp; i++) { // the whole frame, if no stuffing
-      unsigned int channel;
-      for (channel = 0; channel < channels; channel++)
-        encoder.appendSample(*inptr++);
-    };
-    if (tstuff) {
-      if (tstuff == 1) {
-        // debug(3, "+++++++++");
-        // interpolate one sample
-        unsigned int channel;
-        for (channel = 0; channel < channels; channel++)
-          encoder.appendSample(mean_32(inptr[int(channel) - int(channels)], inptr[channel]));
-      } else if (tstuff == -1) {
-        // debug(3, "---------");
-        unsigned int channel;
-        for (channel = 0; channel < channels; channel++)
-          inptr++;
-      }
-
-      // if you're removing, i.e. stuff < 0, copy that much less over. If you're adding, do all the
-      // rest.
-      int remainder = length;
-      if (tstuff < 0)
-        remainder = remainder + tstuff; // don't run over the correct end of the output buffer
-
-      for (i = stuffsamp; i < remainder; i++) {
-        unsigned int channel;
-        for (channel = 0; channel < channels; channel++)
-          encoder.appendSample(*inptr++);
-      }
-    }
-  }
-  return encoder.finishFrame();
-}
-
-// this takes an array of channels of n signed 32-bit integers and
-// (a) replaces all of them with channels of n+stuff (+/-1) signed 32-bit integers,
-// by first order interpolation.
-// (b) multiplies each sample by the fixedvolume (a 16-bit quantity)
-// (c) dithers the result to the output size 32/24/16/8 bits
-// (d) outputs the result in the approprate format
-// formats accepted include U8, S8, S16, S24, S24_3LE, S24_3BE and S32
-
-// stuff: 1 means add 1; 0 means do nothing; -1 means remove 1
-
-EncodedPcm encodeInterpolatedPlaybackPcm(std::span<const int32_t> samples, unsigned channels,
-                                        int stuff, PcmEncoder &encoder) {
-  const int32_t *inptr = samples.data();
-  const int length = samples.size() / channels;
-  int tstuff = 0;
-  if (length >= 3) {
-    tstuff = stuff;
-    if ((stuff > INTERPOLATION_LIMIT) || (stuff < -INTERPOLATION_LIMIT) || (length < 100)) {
-      debug(2,
-            "Interpolation adjustment %d for length %d must be from -%d to +%d and "
-            "length > 100.",
-            stuff, length, INTERPOLATION_LIMIT, INTERPOLATION_LIMIT);
-      tstuff = 0; // if any of these conditions hold, don't stuff anything/
-    }
-
-    int i;
-
-    if (tstuff == 0) {
-      for (i = 0; i < length; i++) { // the whole frame, if no stuffing
-        unsigned int channel;
-        for (channel = 0; channel < channels; channel++)
-          encoder.appendSample(*inptr++);
-      }
-    } else {
-      // we are using 64 bit integers to represent fixed point numbers
-      // the high 32 bits are the integer value and the low 32 bits are the fraction.
-      int64_t one_fp = 0x100000000L;
-
-      // this result will always be less than or equal to the exact true value.
-      int64_t step_size_fp = one_fp * (length - 1);
-      step_size_fp = step_size_fp / (length + tstuff - 1);
-
-      // the interpolation is done between the previous sample, starting
-      // with the zeroth sample, and the next one.
-      // the very first and very last sample of the stuffed frame should
-      // correspond 100% to the first and last samples of the original frame.
-
-      // the first sample will be calculated as 100% of the first sample and 0% of the next sample
-      // however, the last sample can not be calculated as 100% of the last sample and
-      // 0% of the next one, because there isn't a "next" sample after the last one, duh.
-
-      // however, rather than add extra code to deal with the last sample,
-      // simply use a copy of the last sample as the "next" one, and the maths will work out.
-
-      int64_t current_input_sample_index_fp = 0;
-      for (i = 0; i < length + tstuff; i++) {
-        int64_t current_input_sample_floor_index =
-            current_input_sample_index_fp >> 32; // this is the (integer) index of the sample before
-                                                 // where the new sample will be interpolated
-        if (current_input_sample_floor_index == length) {
-          // generate the whole and fractional parts of current_input_sample_index_fp for printing
-          // without converting to floating point, which may do rounding.
-          int64_t current_input_sample_index_int = current_input_sample_index_fp >> 32;
-          int64_t current_input_sample_index_low = current_input_sample_index_fp & 0xFFFFFFFF;
-          current_input_sample_index_low =
-              current_input_sample_index_low * 100000; // 100000 for 5 decimal places
-          current_input_sample_index_low = current_input_sample_index_low >> 32;
-          debug(1,
-                "Can't see how this could ever happen, but "
-                "current_input_sample_floor_index %" PRId64
-                " has just stepped outside the frame of %d samples, with stuff %d and "
-                "current_input_sample_index_fp at %" PRId64 ".%05" PRId64 ".",
-                current_input_sample_floor_index, length, stuff, current_input_sample_index_int,
-                current_input_sample_index_low);
-          current_input_sample_floor_index = length - 1; // hack
-        }
-
-        // increment the ceiling index, but ensure it stays within the frame
-        int64_t current_input_sample_ceil_index = current_input_sample_floor_index + 1;
-        if (current_input_sample_ceil_index == length) {
-          if (current_input_sample_floor_index == length - 1) {
-            current_input_sample_ceil_index = length - 1;
-          } else {
-            // generate the whole and fractional parts of current_input_sample_index_fp for printing
-            // without converting to floating point, which may do rounding.
-            int64_t current_input_sample_index_int = current_input_sample_index_fp >> 32;
-            int64_t current_input_sample_index_low = current_input_sample_index_fp & 0xFFFFFFFF;
-            current_input_sample_index_low =
-                current_input_sample_index_low * 100000; // 100000 for 5 decimal places
-            current_input_sample_index_low = current_input_sample_index_low >> 32;
-            debug(1,
-                  "Can't see how this could ever happen, but "
-                  "current_input_sample_ceil_index %" PRId64
-                  " has just stepped outside the frame of %d samples, with stuff %d and "
-                  "current_input_sample_index_fp at %" PRId64 ".%05" PRId64 ".",
-                  current_input_sample_floor_index, length, stuff, current_input_sample_index_int,
-                  current_input_sample_index_low);
-          }
-        }
-
-        /*
-        {
-          // generate the whole and fractional parts of current_input_sample_index_fp for printing
-          // without converting to floating point, which may do rounding.
-          int64_t current_input_sample_index_int = current_input_sample_index_fp >> 32;
-          int64_t current_input_sample_index_low = current_input_sample_index_fp & 0xFFFFFFFF;
-          current_input_sample_index_low =
-              current_input_sample_index_low * 100000; // 100000 for 5 decimal places
-          current_input_sample_index_low = current_input_sample_index_low >> 32;
-          debug(1,
-                "samples: %u, stuff: %d, output_sample: %d, current_input_sample_index_fp: %" PRId64
-                ".%05" PRId64 ", floor: %" PRId64 ", ceil: %" PRId64 ".",
-                length, stuff, i, current_input_sample_index_int, current_input_sample_index_low,
-                current_input_sample_floor_index, current_input_sample_ceil_index);
-        }
-        */
-        unsigned int channel;
-        for (channel = 0; channel < channels; channel++) {
-          int32_t current_sample =
-              inptr[current_input_sample_floor_index * channels + channel];
-          int32_t next_sample =
-              inptr[current_input_sample_ceil_index * channels + channel];
-          int64_t current_sample_fp = current_sample;
-          // current_sample_fp = current_sample_fp << 32;
-          int64_t next_sample_fp = next_sample;
-          // next_sample_fp = next_sample_fp << 32;
-          int64_t offset_from_floor_fp = current_input_sample_index_fp & 0xffffffff;
-          int64_t offset_to_ceil_fp = one_fp - offset_from_floor_fp;
-          int64_t interpolated_sample_value_fp =
-              current_sample_fp * offset_to_ceil_fp + next_sample_fp * offset_from_floor_fp;
-          interpolated_sample_value_fp =
-              interpolated_sample_value_fp / one_fp; // back to a 32-bit samplle
-          int32_t interpolated_sample_value = interpolated_sample_value_fp;
-          encoder.appendSample(interpolated_sample_value);
-        }
-        current_input_sample_index_fp = current_input_sample_index_fp + step_size_fp;
-      }
-    }
-  }
-  return encoder.finishFrame();
-}
-
-
 char line_of_stats[1024];
 int statistics_row; // statistics_line 0 means print the headings; anything else 1 means print the
                     // values. Set to 0 the first time out.
@@ -1106,10 +883,6 @@ void player_thread_cleanup_handler(void *arg) {
     // debug(1, "FFmpeg clearup done");
   }
 
-  if (conn->tbuf) {
-    free(conn->tbuf);
-    conn->tbuf = NULL;
-  }
 
   free_audio_buffers(conn);
 
@@ -1117,6 +890,17 @@ void player_thread_cleanup_handler(void *arg) {
 
   pthread_setcancelstate(oldState, NULL);
   debug(2, "Connection %d: player terminated.", conn->connection_number);
+}
+
+static PlaybackMode playbackModeFor(playback_mode_type mode) {
+  switch (mode) {
+  case ST_stereo: return PlaybackMode::stereo;
+  case ST_mono: return PlaybackMode::mono;
+  case ST_reverse_stereo: return PlaybackMode::reverse;
+  case ST_left_only: return PlaybackMode::left;
+  case ST_right_only: return PlaybackMode::right;
+  }
+  return PlaybackMode::stereo;
 }
 
 void *player_thread_func(void *arg) {
@@ -1334,171 +1118,16 @@ void *player_thread_func(void *arg) {
             frames_played += silence.frames();
           } else {
             EncodedPcm encoded;
-            // process the frame
-            // here, let's transform the frame of data, if necessary
-            // we need an intermediate "transition" buffer
-
-            if (conn->tbuf != NULL) {
-              debug(1, "conn->tbuf not free'd");
-              free(conn->tbuf);
-            }
-            conn->tbuf =
-                static_cast<int32_t *>(malloc(sizeof(int32_t) *
-                       CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration) *
-                       ((playback.frames) * conn->output_sample_ratio + INTERPOLATION_LIMIT)));
-            if (conn->tbuf == NULL)
-              die("Failed to allocate memory for the transition buffer.");
-            if (conn->input_num_channels == 2) {
-              // if (0) {
-
-              switch (conn->input_bit_depth) {
-              case 16: {
-                unsigned int i, j;
-                int16_t ls, rs;
-                int32_t ll = 0, rl = 0;
-                const int16_t *inps = reinterpret_cast<const int16_t *>(inframe->audioBytes().data());
-                // int16_t *outps = tbuf;
-                int32_t *outpl = (int32_t *)conn->tbuf;
-                for (i = 0; i < (playback.frames); i++) {
-                  ls = *inps++;
-                  rs = *inps++;
-
-                  // here, do the mode stuff -- mono / reverse stereo / leftonly / rightonly
-                  // also, raise the 16-bit samples to 32 bits.
-
-                  switch (config.playback_mode) {
-                  case ST_mono: {
-                    int32_t lsl = ls;
-                    int32_t rsl = rs;
-                    int32_t both = lsl + rsl;
-                    both =
-                        both
-                        << (16 -
-                            1); // keep all 17 bits of the sum of the 16 bit left and right channels
-                                // -- the 17th bit will influence dithering later
-                    ll = both;
-                    rl = both;
-                  } break;
-                  case ST_reverse_stereo: {
-                    ll = rs;
-                    rl = ls;
-                    ll = ll << 16;
-                    rl = rl << 16;
-                  } break;
-                  case ST_left_only:
-                    rl = ls;
-                    ll = ls;
-                    ll = ll << 16;
-                    rl = rl << 16;
-                    break;
-                  case ST_right_only:
-                    ll = rs;
-                    rl = rs;
-                    ll = ll << 16;
-                    rl = rl << 16;
-                    break;
-                  case ST_stereo:
-                    ll = ls;
-                    rl = rs;
-                    ll = ll << 16;
-                    rl = rl << 16;
-                    break; // nothing extra to do
-                  }
-
-                  // here, replicate the samples if you're upsampling
-
-                  for (j = 0; j < conn->output_sample_ratio; j++) {
-                    *outpl++ = ll;
-                    *outpl++ = rl;
-                  }
-                }
-              } break;
-              case 32: {
-                unsigned int i, j;
-                int32_t ls, rs;
-                int32_t ll = 0, rl = 0;
-                const int32_t *inps = reinterpret_cast<const int32_t *>(inframe->audioBytes().data());
-                int32_t *outpl = (int32_t *)conn->tbuf;
-                for (i = 0; i < (playback.frames); i++) {
-                  ls = *inps++;
-                  rs = *inps++;
-
-                  // here, do the mode stuff -- mono / reverse stereo / leftonly / rightonly
-
-                  switch (config.playback_mode) {
-                  case ST_mono: {
-                    int64_t lsl = ls;
-                    int64_t rsl = rs;
-                    int64_t both = lsl + rsl;
-                    both = both >> 1;
-                    uint32_t both32 = both;
-                    ll = both32;
-                    rl = both32;
-                  } break;
-                  case ST_reverse_stereo: {
-                    ll = rs;
-                    rl = ls;
-                  } break;
-                  case ST_left_only:
-                    rl = ls;
-                    ll = ls;
-                    break;
-                  case ST_right_only:
-                    ll = rs;
-                    rl = rs;
-                    break;
-                  case ST_stereo:
-                    ll = ls;
-                    rl = rs;
-                    break; // nothing extra to do
-                  }
-
-                  // here, replicate the samples if you're upsampling
-
-                  for (j = 0; j < conn->output_sample_ratio; j++) {
-                    *outpl++ = ll;
-                    *outpl++ = rl;
-                  }
-                }
-              } break;
-
-              default:
-                die("Shairport Sync only supports 16 or 32 bit input (stereo)");
-              }
-            } else {
-              // multichannel -- don't do anything odd here
-              if (conn->input_bit_depth == 16) {
-                unsigned int i;
-                int16_t ss;
-                int32_t sl;
-                const int16_t *inps = reinterpret_cast<const int16_t *>(inframe->audioBytes().data());
-                int32_t *outpl = (int32_t *)conn->tbuf;
-                for (i = 0; i < (playback.frames) * conn->input_num_channels; i++) {
-                  ss = *inps++;
-                  sl = ss;
-                  sl = sl << 16;
-                  unsigned int j;
-                  for (j = 0; j < conn->output_sample_ratio; j++) {
-                    *outpl++ = sl;
-                  }
-                }
-              } else if (conn->input_bit_depth == 32) {
-                unsigned int i;
-                const int32_t *inpl = reinterpret_cast<const int32_t *>(inframe->audioBytes().data());
-                int32_t *outpl = (int32_t *)conn->tbuf;
-                for (i = 0; i < (playback.frames) * conn->input_num_channels; i++) {
-                  int32_t sl = *inpl++;
-                  unsigned int j;
-                  for (j = 0; j < conn->output_sample_ratio; j++) {
-                    *outpl++ = sl;
-                  }
-                }
-              } else {
-                die("Shairport Sync only supports 16 or 32 bit input (multichannel)");
-              }
-            }
-
-            inbuflength = (playback.frames) * conn->output_sample_ratio;
+            const auto mode = playbackModeFor(config.playback_mode);
+            const auto &nativeAudio = inframe->convertedAudio();
+            if (!conn->playbackSamples.prepare(nativeAudio, mode))
+              die("Incoherent converted PCM payload.");
+            const auto shape = nativeAudio.shape();
+            if (!conn->pcmEncoder.configure(
+                    {FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration), shape.channels()},
+                    shape.effectiveBits()))
+              die("Unsupported PCM output format.");
+            inbuflength = playback.frames;
 
             // We have a frame of data. We need to see if we want to add or remove a frame from
             // it to keep in sync. So we calculate the timing error for the first frame in the
@@ -2086,14 +1715,9 @@ void *player_thread_func(void *arg) {
 
 
                 // }
-                if (config.packet_stuffing == ST_basic)
-                  encoded = encodeBasicPlaybackPcm(
-                      {conn->tbuf, size_t(inbuflength) * conn->input_num_channels},
-                      conn->input_num_channels, amount_to_stuff, conn->pcmEncoder);
-                else
-                  encoded = encodeInterpolatedPlaybackPcm(
-                      {conn->tbuf, size_t(inbuflength) * conn->input_num_channels},
-                      conn->input_num_channels, amount_to_stuff, conn->pcmEncoder);
+                encoded = conn->playbackSamples.encode(conn->pcmEncoder,
+                    {config.packet_stuffing == ST_basic ? CorrectionStyle::basic :
+                                                         CorrectionStyle::vernier, amount_to_stuff});
 
 
                 play_samples = encoded.frames();
@@ -2158,14 +1782,9 @@ void *player_thread_func(void *arg) {
               // if this is the first frame, see if it's close to when it's supposed to be
               // released, which will be its time plus latency and any offset_time
 
-              if (config.packet_stuffing == ST_basic)
-                encoded = encodeBasicPlaybackPcm(
-                    {conn->tbuf, size_t(inbuflength) * conn->input_num_channels},
-                    conn->input_num_channels, 0, conn->pcmEncoder);
-              else
-                encoded = encodeInterpolatedPlaybackPcm(
-                    {conn->tbuf, size_t(inbuflength) * conn->input_num_channels},
-                    conn->input_num_channels, 0, conn->pcmEncoder);
+              encoded = conn->playbackSamples.encode(conn->pcmEncoder,
+                  {config.packet_stuffing == ST_basic ? CorrectionStyle::basic :
+                                                       CorrectionStyle::vernier, 0});
               play_samples = encoded.frames();
               if (encoded.bytes().empty())
                 debug(1, "No encoded PCM to play -- skipping it.");
@@ -2182,10 +1801,6 @@ void *player_thread_func(void *arg) {
               }
             }
 
-            if (conn->tbuf) {
-              free(conn->tbuf);
-              conn->tbuf = NULL;
-            }
 
           }
           tsum_of_frames = tsum_of_frames + frames_played;

@@ -122,4 +122,42 @@ int main() {
       assert(sampleAt(corrected, corrected.frames() * 2 - 1) == 1000);
     }
   }
+  std::array<int32_t, 512> playback;
+  PlaybackSamples handoff([](size_t) { return size_t{1}; });
+  const auto encodeCorrection = [&](bool interpolate, int delta) {
+    auto native = nativeAudio(std::vector<int32_t>(playback.begin(), playback.end()), 2, 16);
+    assert(handoff.prepare(native, PlaybackMode::stereo));
+    return handoff.encode(encoder, {interpolate ? CorrectionStyle::vernier : CorrectionStyle::basic, delta});
+  };
+  playback.fill(0x12340000);
+  assert(encoder.configure({SPS_FORMAT_S16_LE, 2}, 16));
+  for (bool interpolate : {false, true})
+    for (int adjustment : {-1, 0, 1}) {
+      encoder.beginFrame(0x10000, false);
+      auto output = encodeCorrection(interpolate, adjustment);
+      assert(output.frames() == static_cast<size_t>(256 + adjustment));
+      assert(output.bytes().size() == output.frames() * 4);
+      for (size_t offset = 0; offset < output.bytes().size(); offset += 2)
+        assert(output.bytes()[offset] == 0x34 && output.bytes()[offset + 1] == 0x12);
+    }
+
+  for (size_t frame = 0; frame < 256; ++frame) {
+    playback[frame * 2] = 1000 * 65536;
+    playback[frame * 2 + 1] = 2000 * 65536;
+  }
+  encoder.beginFrame(0x10000, false);
+  auto inserted = encodeCorrection(false, 1);
+  assert(inserted.frames() == 257);
+  for (size_t offset = 0; offset < inserted.bytes().size(); offset += 4) {
+    assert(inserted.bytes()[offset] == 0xe8 && inserted.bytes()[offset + 1] == 0x03);
+    assert(inserted.bytes()[offset + 2] == 0xd0 && inserted.bytes()[offset + 3] == 0x07);
+  }
+  for (int requested : {-3, 3}) {
+    encoder.beginFrame(0x10000, false);
+    auto bounded = encodeCorrection(false, requested);
+    assert(bounded.frames() == static_cast<size_t>(256 + (requested > 0 ? 1 : -1)));
+    assert(bounded.bytes()[0] == 0xe8 && bounded.bytes()[2] == 0xd0);
+    const auto last = bounded.bytes().size() - 4;
+    assert(bounded.bytes()[last] == 0xe8 && bounded.bytes()[last + 2] == 0xd0);
+  }
 }
