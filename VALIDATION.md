@@ -147,8 +147,14 @@ artifact digest. A cache hit skips download and extraction. PR events trigger
 feature validation; push events target master, avoiding duplicate PR runs.
 Concurrency cancels older runs for the same PR/ref, and the CMake job has a
 15-minute cap. `actionlint` 1.7.12 (including shellcheck) accepted the workflow.
-Cold/warm remote duration and corrected CI results remain to be measured; local
-checks do not substitute for the GitHub run.
+Remote validation passed on commit `26f4baf1801d49fe428667a1d1005a9e6a9d3fca`:
+[run 37872616842](https://github.com/gstn-caruso/shairport-sync/actions/runs/37872616842)
+started once for the PR update. The cold CMake job took 92 seconds, including
+approximately 19 seconds to download, verify and extract LLVM; the Autotools
+receiver job took 67 seconds. Re-running only CMake (attempt 2) passed in 86
+seconds. Its logs confirmed an `actions/cache` hit, restoring a 107 MB cache,
+and the official LLVM installation step was skipped. These are job durations
+including dependency installation/build/tests, not isolated compiler benchmarks.
 
 Reproduce the pinned build with the CMake commands in BUILD.md. CTest passed
 RTSP dispatch and six ALAC/AAC formats including real ALAC encode/decode, NQPTP
