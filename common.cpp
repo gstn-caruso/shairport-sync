@@ -604,7 +604,7 @@ uint8_t *base64_dec(char *input, int *outlen) {
   (void)BIO_flush(bmem);
 
   int bufsize = strlen(input) * 3 / 4 + 1;
-  uint8_t *buf = malloc(bufsize);
+  uint8_t *buf = static_cast<uint8_t *>(malloc(bufsize));
   int nread;
 
   nread = BIO_read(b64, buf, bufsize);
@@ -680,13 +680,13 @@ unsigned int config_get_string_settings_as_string_array(config_setting_t *settin
   if (setting != NULL) { // definitely a setting
     const char *str = config_setting_get_string(setting);
     if (str != NULL) { // definitely a string
-      arr = malloc(sizeof(const char *));
+      arr = static_cast<const char **>(malloc(sizeof(const char *)));
       arr[0] = str;
       count = 1;
     } else { // it might be a list, an array or a group
       count = config_setting_length(setting);
       if (count != 0) {
-        arr = malloc(sizeof(const char *) * count);
+        arr = static_cast<const char **>(malloc(sizeof(const char *) * count));
         unsigned int i;
         for (i = 0; i < count; i++) {
           config_setting_t *item = config_setting_get_elem(setting, i);
@@ -719,13 +719,13 @@ unsigned int config_get_int_settings_as_int_array(config_setting_t *setting, int
   int *arr = NULL;
   if (setting != NULL) { // definitely a setting there
     if (config_setting_type(setting) == CONFIG_TYPE_INT) {
-      arr = malloc(sizeof(int));
+      arr = static_cast<int *>(malloc(sizeof(int)));
       arr[0] = config_setting_get_int(setting);
       count = 1;
     } else if (config_setting_is_aggregate(setting) == CONFIG_TRUE) {
       count = config_setting_length(setting);
       if (count != 0) {
-        arr = malloc(sizeof(int) * count);
+        arr = static_cast<int *>(malloc(sizeof(int) * count));
         unsigned int i;
         for (i = 0; i < count; i++) {
           config_setting_t *item = config_setting_get_elem(setting, i);
@@ -1123,7 +1123,8 @@ double vol2attn(double vol, long max_db, long min_db) {
     if (-range_db > first_slope)
       first_slope = range_db;
     double lines[order][2] = {
-        {0, first_slope}, {-5, first_slope - (range_db + first_slope) / 2}, {-17, -range_db}};
+        {0, first_slope}, {-5, first_slope - (range_db + first_slope) / 2},
+        {-17, static_cast<double>(-range_db)}};
     int i;
     for (i = 0; i < order; i++) {
       if (vol <= lines[i][0]) {
@@ -1310,7 +1311,7 @@ void sps_nanosleep(const time_t sec, const long nanosec) {
 void malloc_cleanup(void *arg) {
   // the address of the malloc variable is passed in case a realloc is done as some time
   // debug(1, "malloc cleanup called.");
-  void **allocation = arg;
+  void **allocation = static_cast<void **>(arg);
   void *ref = *allocation;
   if (ref != NULL)
     free(ref);
@@ -1357,7 +1358,7 @@ void thread_cleanup(void *arg) {
 void pthread_cleanup_debug_mutex_unlock(void *arg) { pthread_mutex_unlock((pthread_mutex_t *)arg); }
 
 char *get_version_string() {
-  char *version_string = malloc(1024);
+  char *version_string = static_cast<char *>(malloc(1024));
   if (version_string) {
 #ifdef CONFIG_USE_GIT_VERSION_STRING
     if (git_version_string[0] != '\0')
@@ -1567,7 +1568,7 @@ int string_update_with_size(char **str, int *flag, char *s, size_t len) {
       if ((len != strlen(*str)) || (strncmp(*str, s, len) != 0)) {
         free(*str);
         //*str = strndup(s, len); // it seems that OpenWrt 12 doesn't have this
-        char *p = malloc(len + 1);
+        char *p = static_cast<char *>(malloc(len + 1));
         memcpy(p, s, len);
         p[len] = '\0';
         *str = p;
@@ -1584,7 +1585,7 @@ int string_update_with_size(char **str, int *flag, char *s, size_t len) {
   } else { // old string is NULL
     if ((s) && (len)) {
       //*str = strndup(s, len); // it seems that OpenWrt 12 doesn't have this
-      char *p = malloc(len + 1);
+      char *p = static_cast<char *>(malloc(len + 1));
       memcpy(p, s, len);
       p[len] = '\0';
       *str = p;
@@ -1610,8 +1611,8 @@ void *memdup(const void *mem, size_t size) {
 // This will allocate memory and place the NUL-terminated hex character equivalent of
 // the bytearray passed in whose length is given.
 char *debug_malloc_hex_cstring(void *packet, size_t nread) {
-  char *response = malloc(nread * 3 + 1);
-  unsigned char *q = packet;
+  char *response = static_cast<char *>(malloc(nread * 3 + 1));
+  unsigned char *q = static_cast<unsigned char *>(packet);
   char *obfp = response;
   size_t obfc;
   for (obfc = 0; obfc < nread; obfc++) {
@@ -1704,7 +1705,7 @@ char *bnprintf(char *buffer, ssize_t max_bytes, const char *format, ...) {
   return buffer;
 }
 
-int do_pthread_setname(pthread_t *__restrict thread, const char *format, ...) {
+int do_pthread_setname(pthread_t *thread, const char *format, ...) {
   // pthread_setname_np/2 not defined in macOS
   char actual_name[16];
   va_list args;
