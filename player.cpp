@@ -31,6 +31,7 @@
 #include "session_state.hpp"
 #include "audio_format.hpp"
 #include "audio_player_adapter.hpp"
+#include "packets/retransmission_planner.hpp"
 #include "statistics_formatter.hpp"
 #include "volume_runtime.hpp"
 #include <algorithm>
@@ -302,7 +303,7 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t timestamp, uint8
   if (!conn->statistics.hasArrivals())
     conn->packetBuffer.reset();
   const uint64_t now = get_absolute_time_in_ns();
-  RetryPolicy policy{
+  shairport::packets::RetryPolicy policy{
       static_cast<uint64_t>(config.resend_control_first_check_time * 1000000000),
       static_cast<uint64_t>(config.resend_control_check_interval_time * 1000000000),
       static_cast<uint64_t>((config.resend_control_last_check_time +
