@@ -1,4 +1,5 @@
 #include "session_registry.hpp"
+#include "runtime_principal_session.hpp"
 #include <cassert>
 #include <cerrno>
 #include <condition_variable>
@@ -48,4 +49,17 @@ int main() {
   assert(successful.takeFinished().empty());
   assert(!successful.takeById(2));
   assert(pthread_join(completed[0]->thread, nullptr) == 0);
+  RuntimePrincipalSession principal;
+  SessionState first{}, replacement{};
+  first.connection_number = 3;
+  replacement.connection_number = 4;
+  assert(principal.acquire(first, false).accepted);
+  assert(!principal.acquire(replacement, false).accepted);
+  auto changed = principal.acquire(replacement, true);
+  assert(changed.accepted && changed.previousId == 3);
+  assert(!principal.releaseIfCurrent(3));
+  assert(principal.isCurrent(4));
+  assert(principal.snapshot().id == 4);
+  assert(principal.clear() == 4);
+  assert(!principal.isCurrent(4));
 }
