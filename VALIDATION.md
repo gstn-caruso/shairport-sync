@@ -120,6 +120,15 @@ C status check. Group (0.09s), exact delayed-reactivation case and full Release
 C ABI and shell checks remain green. No sleeps or production changes were added;
 sanitizers/devices were not rerun.
 
+Playback-timing discovery (`ctest --test-dir build/redesign-release -R '^PlaybackTiming\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Five independent cases preserve all numeric thresholds, wraparound, preroll,
+restart history and 1,000-iteration concurrent-arrival checks. Group (0.09s), exact
+concurrent case and full Release 129/129 (14.23s) passed; all entries have timeout 5.
+Concurrent assertions retain thread joining on failure. Native cancellation, C ABI
+and shell checks remain green; production is unchanged and sanitizers/devices
+were not rerun.
+
 CTest covers:
 
 | Test | Contract |
