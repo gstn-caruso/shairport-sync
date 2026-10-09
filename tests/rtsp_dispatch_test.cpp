@@ -3,6 +3,7 @@
 #include "rtsp.h"
 #include "rtsp_message.hpp"
 #include "utilities/rtsp_message_utilities.h"
+#include <gtest/gtest.h>
 #include <assert.h>
 #include <libavcodec/avcodec.h>
 #include <stdio.h>
@@ -43,14 +44,12 @@ static void check_shared_methods(rtsp_conn_info *conn) {
   }
 }
 
-int main(void) {
-  rtsp_conn_info conn{};
-  conn.thread = pthread_self();
-  check_shared_methods(&conn);
+static rtsp_message *checkAirplay2Methods(rtsp_conn_info *conn) {
+  check_shared_methods(conn);
   rtsp_message *req = msg_init();
   rtsp_message *resp = msg_init();
   req->request("OPTIONS");
-  rtsp_dispatch_request(&conn, req, resp);
+  rtsp_dispatch_request(conn, req, resp);
   assert(resp->responseCode() == 200);
   const char *methods = resp->headerValue("Public");
   assert(methods != NULL);
@@ -62,26 +61,56 @@ int main(void) {
   for (size_t index = 0; index < sizeof(unsupported) / sizeof(unsupported[0]); index++) {
     resp = msg_init();
     req->request(unsupported[index]);
-    rtsp_dispatch_request(&conn, req, resp);
+    rtsp_dispatch_request(conn, req, resp);
     assert(resp->responseCode() == 501);
     msg_free(&resp);
   }
+  return req;
+}
+
+static void checkRejectedNtpSetup(rtsp_conn_info *conn) {
+  auto *req = checkAirplay2Methods(conn);
   plist_t setup = plist_new_dict();
   plist_dict_set_item(setup, "timingProtocol", plist_new_string("NTP"));
   replaceBodyWithPlist(*req, setup);
   plist_free(setup);
   req->request("SETUP");
-  resp = msg_init();
-  rtsp_dispatch_request(&conn, req, resp);
+  auto *resp = msg_init();
+  rtsp_dispatch_request(conn, req, resp);
   assert(resp->responseCode() == 400);
   msg_free(&resp);
   msg_free(&req);
-  req = msg_init();
+}
+
+TEST(RtspDispatch, SharedMethodsPreserveVolumeProgressAndExpectedResponseCodes) {
+  rtsp_conn_info conn{};
+  conn.thread = pthread_self();
+  check_shared_methods(&conn);
+}
+
+TEST(RtspDispatch, Airplay2OptionsAdvertiseSupportedMethodsAndRejectLegacyMethods) {
+  rtsp_conn_info conn{};
+  conn.thread = pthread_self();
+  auto *req = checkAirplay2Methods(&conn);
+  msg_free(&req);
+}
+
+TEST(RtspDispatch, NtpSetupIsRejectedAfterSharedAndUnsupportedMethodHistory) {
+  rtsp_conn_info conn{};
+  conn.thread = pthread_self();
+  checkRejectedNtpSetup(&conn);
+}
+
+TEST(RtspDispatch, MetadataRejectsIncompletePayloadAndAcceptsCompleteReplacement) {
+  rtsp_conn_info conn{};
+  conn.thread = pthread_self();
+  checkRejectedNtpSetup(&conn);
+  auto *req = msg_init();
   req->request("SET_PARAMETER");
   req->addHeader("Content-Type", "application/x-dmap-tagged");
   char invalid_metadata[] = {'m', 'l', 'i', 't', 0, 0, 0, 20};
   req->replaceBody(std::string_view(invalid_metadata, sizeof(invalid_metadata)));
-  resp = msg_init();
+  auto *resp = msg_init();
   rtsp_dispatch_request(&conn, req, resp);
   assert(resp->responseCode() == 400);
   msg_free(&resp);
@@ -93,5 +122,4 @@ int main(void) {
   msg_free(&resp);
   msg_free(&req);
   puts("Only AirPlay 2 methods advertised.");
-  return 0;
 }

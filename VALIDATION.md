@@ -313,6 +313,16 @@ Release 228/228 (15.86s) passed; each entry has timeout 5. Logging restores debu
 level; plist counts remain relative. Native assertions/plist wrap and the unchanged
 C message test remain; production is unchanged and sanitizers/devices were not rerun.
 
+RTSP-dispatch discovery (`ctest --test-dir build/redesign-release -R '^RtspDispatch\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Four independently owned connections retain all shared-method statuses, volume/
+progress payload, AirPlay 2 advertisement, unsupported/NTP rejection and metadata
+replacement checks; later cases replay original earlier requests. Group (0.07s),
+exact metadata case, two shuffled repetitions and Release 231/231 (15.96s) passed;
+each entry has timeout 5. All native assertions and C tests remain; production is
+unchanged and sanitizers/devices were not rerun. Remaining C++ mains are only the
+receiver-linkage CLI and the custom GoogleTest `--child` cancellation entry point.
+
 CTest covers:
 
 | Test | Contract |
