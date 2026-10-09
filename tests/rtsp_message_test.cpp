@@ -2,6 +2,7 @@
 #include "rtsp.h"
 #include "rtsp_message.hpp"
 #include "utilities/rtsp_message_utilities.h"
+#include "utilities/debug.h"
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
@@ -11,6 +12,13 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+static unsigned releasedPlists = 0;
+extern "C" void __real_plist_free(plist_t plist);
+extern "C" void __wrap_plist_free(plist_t plist) {
+  ++releasedPlists;
+  __real_plist_free(plist);
+}
 
 static int readLine(rtsp_message **message, const std::string &line) {
   if (!*message)
@@ -116,8 +124,22 @@ static void checkCancellationReleasesRequest() {
   close(sockets[1]);
 }
 
+static void checkLoggingReleasesParsedPlist() {
+  RtspMessage message;
+  auto plist = plist_new_dict();
+  plist_dict_set_item(plist, "value", plist_new_uint(7));
+  replaceBodyWithPlist(message, plist);
+  plist_free(plist);
+  auto previousReleases = releasedPlists;
+  set_debug_level(4);
+  _debug_log_rtsp_message(nullptr, __FILE__, __LINE__, 4, "owned plist", &message);
+  set_debug_level(0);
+  assert(releasedPlists == previousReleases + 1);
+}
+
 int main() {
   checkCancellationReleasesRequest();
+  checkLoggingReleasesParsedPlist();
   checkRequestParsing();
   checkHeaderLimitAndDuplicates();
   checkBinaryResponseFraming();

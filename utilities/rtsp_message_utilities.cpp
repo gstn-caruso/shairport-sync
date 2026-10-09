@@ -105,6 +105,7 @@ void _debug_log_rtsp_message(rtsp_conn_info *conn, const char *filename, const i
   auto plist = plistFromMessageBody(*message);
   if (plist) {
     auto *text = plist_as_xml_text(plist);
+    plist_free(plist);
     if (text) {
       _debug(filename, linenumber, level, "Content length: %u. Content Plist (as XML):\n--\n%s--",
              message->bodyLength(), text);
