@@ -67,7 +67,7 @@ target_compile_options(receiver-text PRIVATE -Wall -Wextra -Wshadow -Wformat=2)
 add_library(pair_ap STATIC pair_ap/pair.c pair_ap/pair_fruit.c pair_ap/pair_homekit.c pair_ap/pair-tlv.c)
 target_compile_definitions(pair_ap PRIVATE CONFIG_GCRYPT)
 add_library(receiver STATIC shairport.cpp bonjour_strings.cpp mdns.cpp mdns_avahi.cpp common.cpp rtp.cpp
-  player.c audio.cpp audio_pa.cpp activity_monitor.cpp activity_state.cpp rtsp.c ap2_buffered_audio_processor.c
+  player.cpp audio.cpp audio_pa.cpp activity_monitor.cpp activity_state.cpp rtsp.c ap2_buffered_audio_processor.c
   ap2_event_receiver.cpp ap2_event_message_handler.cpp ptp-utilities.cpp utilities/debug.cpp
   utilities/network_utilities.cpp utilities/rtsp_message_utilities.cpp utilities/string_utilities.cpp
   utilities/exit.cpp utilities/buffered_read.cpp utilities/structured_buffer.cpp utilities/mod23.cpp

@@ -180,7 +180,7 @@ size_t get_audio_buffer_occupancy(rtsp_conn_info *conn) {
 }
 
 const char *get_category_string(airplay_stream_c cat) {
-  char *category;
+  const char *category;
   switch (cat) {
   case unspecified_stream_category:
     category = "unspecified stream";
@@ -201,13 +201,13 @@ const char *get_category_string(airplay_stream_c cat) {
 
 static void swr_alloc_cleanup_handler(void *arg) {
   debug(3, "swr_alloc_cleanup_handler");
-  SwrContext **swr = arg;
+  SwrContext **swr = static_cast<SwrContext **>(arg);
   swr_free(swr);
 }
 
 static void av_packet_alloc_cleanup_handler(void *arg) {
   debug(4, "av_packet_alloc_cleanup_handler");
-  AVPacket **pkt = arg;
+  AVPacket **pkt = static_cast<AVPacket **>(arg);
   av_packet_free(pkt);
 }
 
@@ -585,7 +585,7 @@ int setup_software_resampler(rtsp_conn_info *conn, ssrc_t ssrc) {
 
 #if LIBAVUTIL_VERSION_MAJOR >= 57
 
-    AVChannelLayout output_channel_layout = {0};
+    AVChannelLayout output_channel_layout{};
     av_opt_get_chlayout(swr, "out_chlayout", 0, &output_channel_layout);
     conn->resampler_output_channels = output_channel_layout.nb_channels;
     for (c = 0; c < 64; c++) {
@@ -820,7 +820,8 @@ int setup_software_resampler(rtsp_conn_info *conn, ssrc_t ssrc) {
     {
       int res = av_opt_get_int(swr, "out_sample_fmt", 0, &resampler_output_format);
       if (res == 0) {
-        conn->resampler_output_bytes_per_sample = av_get_bytes_per_sample(resampler_output_format);
+        conn->resampler_output_bytes_per_sample =
+            av_get_bytes_per_sample(static_cast<AVSampleFormat>(resampler_output_format));
         debug(3, "resampler output bytes per sample in swr: %d.",
               conn->resampler_output_bytes_per_sample);
       } else {
@@ -896,7 +897,7 @@ void prepare_decoding_chain(rtsp_conn_info *conn, ssrc_t ssrc) {
         // but first, if it's the ALAC decoder, prepare a magic cookie
         if ((ssrc == ALAC_48000_S24_2) || (ssrc == ALAC_44100_S16_2)) {
           alac_ffmpeg_magic_cookie *extradata =
-              malloc(sizeof(alac_ffmpeg_magic_cookie)); // might not use it
+              static_cast<alac_ffmpeg_magic_cookie *>(malloc(sizeof(alac_ffmpeg_magic_cookie)));
           if (extradata == NULL)
             die("connection %d: could not allocate memory for a magic cookie.",
                 conn->connection_number);
@@ -1052,7 +1053,7 @@ int64_t avframe_to_audio(rtsp_conn_info *conn, AVFrame *decoded_frame, uint8_t *
       break;
     }
 
-    *decoded_audio = sample_buffer;
+    *decoded_audio = static_cast<uint8_t *>(sample_buffer);
     *decoded_audio_data_length = sample_buffer_size;
     *decoded_audio_samples_count = samples_generated;
   } else {
@@ -1346,10 +1347,10 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
         // deferred to the player thread, to be sure all the blocks
         // of data are present
 
-        prepare_decoding_chain(conn, ssrc); // dynamically set the decoding environment
+        prepare_decoding_chain(conn, static_cast<ssrc_t>(ssrc));
 
         abuf->avframe = block_to_avframe(conn, data, len);
-        abuf->ssrc = ssrc; // tag the avframe with its specific SSRC
+        abuf->ssrc = static_cast<ssrc_t>(ssrc);
         if (abuf->avframe) {
           input_packets_used = abuf->avframe->nb_samples;
         }
@@ -1365,7 +1366,7 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
           debug(2,
                 "Connection %d: using FFMPEG on a %s stream, a short audio packet %u, rtptime %u, "
                 "of length %zu has been decoded but not discarded. Contents follow:",
-                conn->connection_number, get_ssrc_name(ssrc), seqno, actual_timestamp, len);
+                conn->connection_number, get_ssrc_name(static_cast<ssrc_t>(ssrc)), seqno, actual_timestamp, len);
           debug_print_buffer(2, data, len);
         }
         abuf->ready = 1;
@@ -1856,7 +1857,7 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
                     if (frames_to_remove > 0) {
                       debug(2, "%u frames to remove from current buffer", frames_to_remove);
                       void *dest = (void *)current_packet->data;
-                      void *source = dest + conn->input_bytes_per_frame * frames_to_remove;
+                      void *source = static_cast<char *>(dest) + conn->input_bytes_per_frame * frames_to_remove;
                       size_t frames_remaining = (current_packet->length - frames_to_remove);
                       memmove(dest, source, frames_remaining * conn->input_bytes_per_frame);
                       current_packet->timestamp = conn->flush_rtp_timestamp;
@@ -2199,7 +2200,7 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
                             pthread_cleanup_push(malloc_cleanup, &silence);
 
                             conn->previous_random_number = generate_zero_frames(
-                                silence, fs, conn->enable_dither, conn->previous_random_number,
+                                static_cast<char *>(silence), fs, conn->enable_dither, conn->previous_random_number,
                                 config.current_output_configuration);
 
                             debug(3, "Send %" PRId64 " frames of silence.", fs);
@@ -2256,7 +2257,7 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
                       // debug(1, "No delay function -- outputting %d frames of silence.", fs);
                       pthread_cleanup_push(malloc_cleanup, &silence);
                       conn->previous_random_number = generate_zero_frames(
-                          silence, fs, conn->enable_dither, conn->previous_random_number,
+                          static_cast<char *>(silence), fs, conn->enable_dither, conn->previous_random_number,
                           config.current_output_configuration);
                       config.output->play(silence, fs, play_samples_are_untimed, 0, 0);
                       pthread_cleanup_pop(1); // deallocate silence
@@ -3093,7 +3094,7 @@ void *player_thread_func(void *arg) {
               // the player may change the contents of the buffer, so it has to be zeroed each
               // time; might as well malloc and free it locally
               conn->previous_random_number = generate_zero_frames(
-                  silence, conn->frames_per_packet, conn->enable_dither,
+                  static_cast<char *>(silence), conn->frames_per_packet, conn->enable_dither,
                   conn->previous_random_number, config.current_output_configuration);
               config.output->play(silence, conn->frames_per_packet, play_samples_are_untimed, 0, 0);
               free(silence);
@@ -3109,17 +3110,17 @@ void *player_thread_func(void *arg) {
               free(conn->tbuf);
             }
             conn->tbuf =
-                malloc(sizeof(int32_t) *
+                static_cast<int32_t *>(malloc(sizeof(int32_t) *
                        CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration) *
-                       ((inframe->length) * conn->output_sample_ratio + INTERPOLATION_LIMIT));
+                       ((inframe->length) * conn->output_sample_ratio + INTERPOLATION_LIMIT)));
             if (conn->tbuf == NULL)
               die("Failed to allocate memory for the transition buffer.");
             // size change
             conn->outbuf =
-                malloc(sps_format_sample_size(
+                static_cast<char *>(malloc(sps_format_sample_size(
                            FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration)) *
                        CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration) *
-                       ((inframe->length) * conn->output_sample_ratio + INTERPOLATION_LIMIT));
+                       ((inframe->length) * conn->output_sample_ratio + INTERPOLATION_LIMIT)));
             if (conn->outbuf == NULL)
               die("Failed to allocate memory for an output buffer.");
 
@@ -3697,7 +3698,7 @@ void *player_thread_func(void *arg) {
                       // the player may change the contents of the buffer, so it has to be zeroed
                       // each time; might as well malloc and free it locally
                       conn->previous_random_number = generate_zero_frames(
-                          silence, gap, conn->enable_dither, conn->previous_random_number,
+                          static_cast<char *>(silence), gap, conn->enable_dither, conn->previous_random_number,
                           config.current_output_configuration);
                       config.output->play(silence, gap, play_samples_are_untimed, 0, 0);
                       free(silence);
@@ -4289,7 +4290,7 @@ int player_play(rtsp_conn_info *conn) {
 
   pthread_mutex_lock_and_cleanup_push(&conn->player_create_delete_mutex);
   if (conn->player_thread == NULL) {
-    pthread_t *pt = malloc(sizeof(pthread_t));
+    pthread_t *pt = static_cast<pthread_t *>(malloc(sizeof(pthread_t)));
     if (pt == NULL)
       die("Couldn't allocate space for pthread_t");
 

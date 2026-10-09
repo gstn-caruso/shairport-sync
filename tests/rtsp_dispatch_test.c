@@ -6,8 +6,6 @@
 #include <stdio.h>
 #include <string.h>
 
-AVFrame *block_to_avframe(rtsp_conn_info *conn, uint8_t *data, size_t length);
-
 static void check_audio_formats(void) {
   rtsp_conn_info conn = {0};
   const ssrc_t formats[] = {ALAC_44100_S16_2, ALAC_48000_S24_2, AAC_44100_F24_2,

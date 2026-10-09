@@ -537,6 +537,7 @@ int ssrc_is_recognised(ssrc_t ssrc);
 int ssrc_is_aac(ssrc_t ssrc); // used to decide if a mute might be needed (AAC only)
 void prepare_decoding_chain(rtsp_conn_info *conn, ssrc_t ssrc); // also sets up timing stuff
 void clear_decoding_chain(rtsp_conn_info *conn);                // tear down the decoding chain
+AVFrame *block_to_avframe(rtsp_conn_info *conn, uint8_t *data, size_t length);
 
 #ifdef __cplusplus
 }

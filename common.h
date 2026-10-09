@@ -143,7 +143,10 @@ typedef enum {
 #define CHANNELS_TO_ENCODED_FORMAT(channels) ((channels & 0x7F) << 25)
 
 // up to 64 different SPS_FORMATs
-#define FORMAT_FROM_ENCODED_FORMAT(encoded_format) (encoded_format & 0x3F)
+static inline sps_format_t format_from_encoded_format(uint32_t encoded_format) {
+  return (sps_format_t)(encoded_format & 0x3F);
+}
+#define FORMAT_FROM_ENCODED_FORMAT(encoded_format) format_from_encoded_format(encoded_format)
 #define FORMAT_TO_ENCODED_FORMAT(format) (format & 0x3F)
 
 const char *short_format_description(int32_t encoded_format);
