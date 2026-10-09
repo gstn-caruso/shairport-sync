@@ -138,7 +138,7 @@ static void track_thread(rtsp_conn_info *conn) {
     conns[i] = conn;
   } else {
     // make space for a new element
-    conns = realloc(conns, sizeof(rtsp_conn_info *) * (nconns + 1));
+    conns = static_cast<rtsp_conn_info **>(realloc(conns, sizeof(rtsp_conn_info *) * (nconns + 1)));
     if (conns) {
       conns[nconns] = conn;
       nconns++;
@@ -422,7 +422,7 @@ static char *nextline(char *in, int inbuf) {
 static void buf_add(sized_buffer *buf, uint8_t *in, size_t in_len) {
   if (buf->length + in_len > buf->size) {
     buf->size = buf->length + in_len + 2048; // Extra headroom to avoid future memcpy's
-    buf->data = realloc(buf->data, buf->size);
+    buf->data = static_cast<uint8_t *>(realloc(buf->data, buf->size));
   }
   memcpy(buf->data + buf->length, in, in_len);
   buf->length += in_len;
@@ -449,7 +449,7 @@ ssize_t read_encrypted(int fd, pair_cipher_bundle *ctx, void *buf, size_t count)
   ssize_t response = 0;
   // If there is leftover decoded content from the last pass just return that
   if (ctx->plaintext_read_buffer.length > 0) {
-    response = buf_remove(&ctx->plaintext_read_buffer, buf, count);
+    response = buf_remove(&ctx->plaintext_read_buffer, static_cast<uint8_t *>(buf), count);
   } else {
 
     // Otherwise read stuff in...
@@ -474,7 +474,7 @@ ssize_t read_encrypted(int fd, pair_cipher_bundle *ctx, void *buf, size_t count)
 
     if (response >= 0) {
       buf_add(&ctx->plaintext_read_buffer, plain, plain_len);
-      response = buf_remove(&ctx->plaintext_read_buffer, buf, count);
+      response = buf_remove(&ctx->plaintext_read_buffer, static_cast<uint8_t *>(buf), count);
     }
     pthread_cleanup_pop(1);
   }
@@ -486,7 +486,7 @@ ssize_t write_encrypted(int fd, pair_cipher_bundle *ctx, const void *buf, size_t
   uint8_t *encrypted;
   size_t encrypted_len;
 
-  ssize_t ret = pair_encrypt(&encrypted, &encrypted_len, buf, count, ctx->cipher_ctx);
+  ssize_t ret = pair_encrypt(&encrypted, &encrypted_len, static_cast<const uint8_t *>(buf), count, ctx->cipher_ctx);
   if (ret < 0) {
     debug(1, "%s", pair_cipher_errmsg(ctx->cipher_ctx));
     return -1;
@@ -550,7 +550,7 @@ enum rtsp_read_request_response rtsp_read_request(rtsp_conn_info *conn, rtsp_mes
   *the_packet = NULL; // need this for error handling
   ssize_t buflen = 4096;
   int release_buffer = 0;         // on exit, don't deallocate the buffer if everything was okay
-  char *buf = malloc(buflen + 1); // add a NUL at the end
+  char *buf = static_cast<char *>(malloc(buflen + 1));
   if (buf == NULL) {
     debug(1, "Connection %d: rtsp_read_request: can't get a buffer.", conn->connection_number);
     reply = rtsp_read_request_response_error;
@@ -640,7 +640,7 @@ enum rtsp_read_request_response rtsp_read_request(rtsp_conn_info *conn, rtsp_mes
       int warning_message_sent = 0;
 
       if (msg_size > buflen) {
-        buf = realloc(buf, msg_size + 1);
+        buf = static_cast<char *>(realloc(buf, msg_size + 1));
         if (buf == NULL) {
           warn("Connection %d: too much content.", conn->connection_number);
           reply = rtsp_read_request_response_error;
@@ -751,7 +751,7 @@ int msg_write_response(rtsp_conn_info *conn, rtsp_message *resp) {
 
   struct response_t {
     int code;
-    char *string;
+    const char *string;
   };
 
   struct response_t responses[] = {{200, "OK"},
@@ -765,7 +765,7 @@ int msg_write_response(rtsp_conn_info *conn, rtsp_message *resp) {
                                    {501, "Not Implemented"}};
   // 451 is really "Unavailable For Legal Reasons"!
   int found = 0;
-  char *respcode_text = "Unauthorized";
+  const char *respcode_text = "Unauthorized";
   for (i = 0; i < sizeof(responses) / sizeof(struct response_t); i++) {
     if (resp->respcode == responses[i].code) {
       found = 1;
@@ -868,7 +868,7 @@ int add_pstring_to_malloc(const char *s, void **allocation, size_t *size) {
       *size = *size + strlen(s) + 1;
       uint8_t *b = (uint8_t *)p;
       *b = strlen(s);
-      p = p + 1;
+      p = static_cast<char *>(p) + 1;
       memcpy(p, s, strlen(s));
       response = 1;
     }
@@ -880,7 +880,7 @@ int add_pstring_to_malloc(const char *s, void **allocation, size_t *size) {
       *allocation = p;
       uint8_t *b = (uint8_t *)p + *size;
       *b = strlen(s);
-      p = p + *size + 1;
+      p = static_cast<char *>(p) + *size + 1;
       memcpy(p, s, strlen(s));
       *size = *size + strlen(s) + 1;
       response = 1;
@@ -1119,18 +1119,21 @@ void handle_get_info(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp
     plist_t qualifier = plist_dict_get_item(info_plist, "qualifier");
     if (qualifier == NULL) {
       debug(1, "GET /info Stage 1: plist->qualifier was NULL");
-      goto user_fail;
+      resp->respcode = 400;
+      return;
     }
     if (plist_array_get_size(qualifier) < 1) {
       debug(1, "GET /info Stage 1: plist->qualifier array length < 1");
-      goto user_fail;
+      resp->respcode = 400;
+      return;
     }
     plist_t qualifier_array_value = plist_array_get_item(qualifier, 0);
     char *qualifier_array_val_cstr;
     plist_get_string_val(qualifier_array_value, &qualifier_array_val_cstr);
     if (qualifier_array_val_cstr == NULL) {
       debug(1, "GET /info Stage 1: first item in qualifier array not a string");
-      goto user_fail;
+      resp->respcode = 400;
+      return;
     }
     debug(3, "GET /info Stage 1: qualifier: %s", qualifier_array_val_cstr);
     plist_free(info_plist);
@@ -1138,13 +1141,15 @@ void handle_get_info(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp
 
     plist_t response_plist = generateInfoPlist(conn);
 
-    if (response_plist == NULL)
-      goto user_fail;
+    if (response_plist == NULL) {
+      resp->respcode = 400;
+      return;
+    }
 
     void *txtData = NULL;
     size_t txtDataLength = 0;
     generateTxtDataValueInfo(conn, &txtData, &txtDataLength);
-    plist_dict_set_item(response_plist, "txtAirPlay", plist_new_data(txtData, txtDataLength));
+    plist_dict_set_item(response_plist, "txtAirPlay", plist_new_data(static_cast<const char *>(txtData), txtDataLength));
     free(txtData);
     plist_to_bin(response_plist, &resp->content, &resp->contentlength);
     if (resp->contentlength == 0)
@@ -1159,19 +1164,18 @@ void handle_get_info(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp
     debug_log_rtsp_message(3, "GET /info Stage 1 Response:", resp);
     return;
 
-  user_fail:
-    resp->respcode = 400;
-    return;
   } else { // stage two
     plist_t response_plist = generateInfoPlist(conn);
 
-    if (response_plist == NULL)
-      goto user_fail;
+    if (response_plist == NULL) {
+      resp->respcode = 400;
+      return;
+    }
 
     void *txtData = NULL;
     size_t txtDataLength = 0;
     generateTxtDataValueInfo(conn, &txtData, &txtDataLength);
-    plist_dict_set_item(response_plist, "txtAirPlay", plist_new_data(txtData, txtDataLength));
+    plist_dict_set_item(response_plist, "txtAirPlay", plist_new_data(static_cast<const char *>(txtData), txtDataLength));
     free(txtData);
     plist_to_bin(response_plist, &resp->content, &resp->contentlength);
     plist_free(response_plist);
@@ -1408,7 +1412,7 @@ static struct pairings *pairing_find(const char *device_id) {
 }
 
 static void pairing_add(uint8_t public_key[32], const char *device_id) {
-  struct pairings *pairing = calloc(1, sizeof(struct pairings));
+  struct pairings *pairing = static_cast<struct pairings *>(calloc(1, sizeof(struct pairings)));
   snprintf(pairing->device_id, sizeof(pairing->device_id), "%s", device_id);
   memcpy(pairing->public_key, public_key, sizeof(pairing->public_key));
 
@@ -1788,18 +1792,18 @@ void handle_fp_setup(__attribute__((unused)) rtsp_conn_info *conn, rtsp_message 
     len = sizeof(server_fp_reply1) - 1;
 
     if (req->content[mode_pos] == 0)
-      response = memdup(server_fp_reply1, len);
+      response = static_cast<char *>(memdup(server_fp_reply1, len));
     if (req->content[mode_pos] == 1)
-      response = memdup(server_fp_reply2, len);
+      response = static_cast<char *>(memdup(server_fp_reply2, len));
     if (req->content[mode_pos] == 2)
-      response = memdup(server_fp_reply3, len);
+      response = static_cast<char *>(memdup(server_fp_reply3, len));
     if (req->content[mode_pos] == 3)
-      response = memdup(server_fp_reply4, len);
+      response = static_cast<char *>(memdup(server_fp_reply4, len));
 
   } else if (req->content[seq_pos] == setup2_message_seq) {
     // -1 to account for the NUL byte at the end.
     len = sizeof(server_fp_header) - 1 + setup2_suffix_len;
-    response = malloc(len);
+    response = static_cast<char *>(malloc(len));
     if (response) {
       memcpy(response, server_fp_header, sizeof(server_fp_header) - 1);
       memcpy(response + sizeof(server_fp_header) - 1,
@@ -2445,7 +2449,7 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
               if (conn->rtp_event_thread != NULL)
                 debug(1, "previous rtp_event_thread allocation not freed, it seems.");
               conn->ap2_event_receiver_exited = 0;
-              conn->rtp_event_thread = malloc(sizeof(pthread_t));
+              conn->rtp_event_thread = static_cast<pthread_t *>(malloc(sizeof(pthread_t)));
               if (conn->rtp_event_thread == NULL)
                 die("Couldn't allocate space for pthread_t");
 
@@ -2502,7 +2506,7 @@ void handle_setup_2(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp)
                   "seems.",
                   conn->connection_number);
           conn->ap2_event_receiver_exited = 0;
-          conn->rtp_event_thread = malloc(sizeof(pthread_t));
+          conn->rtp_event_thread = static_cast<pthread_t *>(malloc(sizeof(pthread_t)));
           if (conn->rtp_event_thread == NULL)
             die("Couldn't allocate space for pthread_t");
           named_pthread_create(conn->rtp_event_thread, NULL, &ap2_event_receiver, (void *)conn,
@@ -2934,7 +2938,7 @@ static void handle_get_parameter(__attribute__((unused)) rtsp_conn_info *conn, r
     debug(2, "Connection %d: current volume (%.6f) requested", conn->connection_number,
           suggested_volume(conn));
 
-    char *p = malloc(128); // will be automatically deallocated with the response is deleted
+    char *p = static_cast<char *>(malloc(128));
     if (p) {
       resp->content = p;
       resp->contentlength = snprintf(p, 128, "\r\nvolume: %.6f\r\n", suggested_volume(conn));
@@ -3147,7 +3151,7 @@ void msg_cleanup_function(void *arg) {
 static void *rtsp_conversation_thread_func(void *pconn) {
   //  #include <syscall.h>
   //  debug(1, "rtsp_conversation_thread_func PID %d", syscall(SYS_gettid));
-  rtsp_conn_info *conn = pconn;
+  rtsp_conn_info *conn = static_cast<rtsp_conn_info *>(pconn);
 
   int rc = pthread_mutex_init(&conn->flush_mutex, NULL);
   if (rc)
@@ -3263,7 +3267,7 @@ static void *rtsp_conversation_thread_func(void *pconn) {
           debug(1, "Could not set the RTSP socket to abort due to a read error on closing.");
       } else if (reply == rtsp_read_request_response_bad_packet) {
         conn->stop = 0; // don't stop for a bad packet
-        char *response_text = "RTSP/1.0 400 Bad Request\r\nServer: AirTunes/105.1\r\n\r\n";
+        const char *response_text = "RTSP/1.0 400 Bad Request\r\nServer: AirTunes/105.1\r\n\r\n";
         ssize_t lreply = write(conn->fd, response_text, strlen(response_text));
         if (lreply == -1) {
           char errorstring[1024];
@@ -3381,7 +3385,7 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
       // report its availability. do not complain.
 
       if (ret) {
-        char *family;
+        const char *family;
 #ifdef AF_INET6
         if (p->ai_family == AF_INET6) {
           family = "IPv6";
@@ -3393,7 +3397,7 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
       } else {
         listen(lfd, 255);
         nsock++;
-        sockfd = realloc(sockfd, (nsock + 1) * sizeof(int));
+        sockfd = static_cast<int *>(realloc(sockfd, (nsock + 1) * sizeof(int)));
         sockfd[nsock] = lfd;
         sockfd[0] = nsock; // the first entry is the number of sockets in the array
       }
@@ -3466,7 +3470,7 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
 
       int release_conn = 1; // on exit, deallocate the buffer unless everything was okay
 
-      rtsp_conn_info *conn = malloc(sizeof(rtsp_conn_info));
+      rtsp_conn_info *conn = static_cast<rtsp_conn_info *>(malloc(sizeof(rtsp_conn_info)));
       if (conn == 0)
         die("Couldn't allocate memory for an rtsp_conn_info record.");
       pthread_cleanup_push(malloc_cleanup, &conn);
