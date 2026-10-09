@@ -6,6 +6,19 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+template <typename Registry> concept ExposesTakeById = requires(Registry &registry) {
+  registry.takeById(1);
+};
+template <typename Registry> concept ExposesTakeFinished = requires(Registry &registry) {
+  registry.takeFinished();
+};
+template <typename Registry> concept ExposesTakeMatching = requires(Registry &registry) {
+  registry.takeMatching(unspecified_stream_category, 0);
+};
+static_assert(!ExposesTakeById<SessionRegistry>);
+static_assert(!ExposesTakeFinished<SessionRegistry>);
+static_assert(!ExposesTakeMatching<SessionRegistry>);
+
 static int rejectThread(pthread_t *, void *(*)(void *), void *) { return EAGAIN; }
 static void *unusedThread(void *) { assert(false); return nullptr; }
 static SessionRegistry *activeRegistry;
@@ -69,24 +82,26 @@ int main() {
   session->fd = sockets[0];
   SessionRegistry registry(rejectThread);
   assert(registry.start(std::move(session), unusedThread) == EAGAIN);
-  assert(!registry.takeById(1));
+  assert(!registry.cancelAndJoin(1));
   char byte;
   assert(read(sockets[1], &byte, 1) == 0);
   close(sockets[1]);
   SessionRegistry successful;
   activeRegistry = &successful;
   auto immediate = std::make_unique<SessionState>();
+  assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+  immediate->fd = sockets[0];
   immediate->connection_number = 2;
   assert(successful.start(std::move(immediate), finishImmediately) == 0);
   {
     std::unique_lock lock(completionMutex);
     completionChanged.wait(lock, [] { return finished; });
   }
-  auto completed = successful.takeFinished();
-  assert(completed.size() == 1);
-  assert(successful.takeFinished().empty());
-  assert(!successful.takeById(2));
-  assert(pthread_join(completed[0]->thread, nullptr) == 0);
+  successful.joinFinished();
+  successful.joinFinished();
+  assert(!successful.cancelAndJoin(2));
+  assert(read(sockets[1], &byte, 1) == 0);
+  close(sockets[1]);
   RuntimePrincipalSession principal;
   SessionState first{}, replacement{};
   first.connection_number = 3;
@@ -128,7 +143,8 @@ int main() {
   assert(result == PTHREAD_CANCELED);
   assert(cleanupFinished);
   assert(!principal.isCurrent(5));
-  assert(cancellation.takeFinished().empty());
+  cancellation.joinFinished();
+  assert(!cancellation.cancelAndJoin(5));
   assert(read(sockets[1], &byte, 1) == 0);
   close(sockets[1]);
   permitCleanup = false;
