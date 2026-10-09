@@ -50,5 +50,18 @@ static void check_capacity_and_invalid_handles(void) {
 int main(void) {
   check_formatting_and_binary_append();
   check_capacity_and_invalid_handles();
+  structured_buffer *empty = sbuf_new(0);
+  assert(empty != NULL);
+  char *bytes;
+  size_t length;
+  assert(sbuf_buf_and_length(empty, &bytes, &length) == 0);
+  bytes[0] = 'x';
+  assert(sbuf_printf(empty, "%s", "text") == 0);
+  assert(sbuf_buf_and_length(empty, &bytes, &length) == 0);
+  assert(length == 0 && bytes[0] == 'x');
+  assert(sbuf_append(empty, bytes, 0) == 0);
+  assert(sbuf_append(empty, bytes, 1) == -1);
+  sbuf_free(empty);
+  assert(sbuf_new(SIZE_MAX) == NULL);
   return 0;
 }

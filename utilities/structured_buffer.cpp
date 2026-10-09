@@ -29,13 +29,21 @@
 #include "debug.h"
 #include <cstdio>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
 
 StructuredBuffer::StructuredBuffer(std::size_t capacity)
-    : bytes_(new char[capacity + 1]), capacity_(capacity), position_(0) {}
+    : capacity_(capacity), position_(0) {
+  if (capacity == std::numeric_limits<std::size_t>::max())
+    throw std::length_error("structured buffer capacity cannot include its extra byte");
+  bytes_.reset(new char[capacity + 1]);
+}
 
 void StructuredBuffer::clear() noexcept { position_ = 0; }
 
 int StructuredBuffer::append_format(const char *format, std::va_list args) noexcept {
+  if (position_ == capacity_)
+    return 0;
   char *destination = bytes_.get() + position_;
   std::vsnprintf(destination, capacity_ - position_, format, args);
   std::size_t written = std::strlen(destination);

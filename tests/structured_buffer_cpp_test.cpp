@@ -2,6 +2,8 @@
 #include <cassert>
 #include <cstdarg>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
 #include <type_traits>
 
 static int format_into(StructuredBuffer &buffer, const char *format, ...) {
@@ -30,5 +32,16 @@ int main() {
   assert(format_into(buffer, "%c%s", 0, "tail") == 0);
   assert(format_into(buffer, "%s", "123456789") == 7);
   assert(buffer.length() == 7);
+  StructuredBuffer empty(0);
+  empty.data()[0] = 'x';
+  assert(format_into(empty, "%s", "text") == 0);
+  assert(empty.length() == 0 && empty.data()[0] == 'x');
+  bool rejected = false;
+  try {
+    StructuredBuffer impossible(std::numeric_limits<std::size_t>::max());
+  } catch (const std::length_error &) {
+    rejected = true;
+  }
+  assert(rejected);
   return 0;
 }
