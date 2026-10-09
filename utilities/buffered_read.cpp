@@ -196,7 +196,8 @@ ssize_t read_sized_block(buffered_tcp_desc *descriptor, void *buf, size_t count,
   int keep_trying = 1;
 
   do {
-    nread = buffered_read(descriptor, buf + inbuf, count - inbuf, bytes_remaining);
+    nread = buffered_read(descriptor, static_cast<char *>(buf) + inbuf, count - inbuf,
+                          bytes_remaining);
     if (nread == 0) {
       // a blocking read that returns zero means eof -- implies connection closed
       debug(2, "read_sized_block connection closed.");

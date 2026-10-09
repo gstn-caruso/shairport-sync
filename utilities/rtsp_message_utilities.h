@@ -9,11 +9,11 @@ extern "C" {
 
 rtsp_message *msg_init(void);
 int msg_handle_line(rtsp_message **pmsg, char *line);
-int msg_add_header(rtsp_message *msg, char *name, char *value);
-char *msg_get_header(rtsp_message *msg, char *name);
+int msg_add_header(rtsp_message *msg, const char *name, const char *value);
+char *msg_get_header(rtsp_message *msg, const char *name);
 
 void _debug_log_rtsp_message(rtsp_conn_info *conn, const char *filename, const int linenumber,
-                             int level, char *prompt, rtsp_message *message);
+                             int level, const char *prompt, rtsp_message *message);
 
 #define debug_log_rtsp_message_conn(conn, level, prompt, message)                                  \
   _debug_log_rtsp_message(conn, __FILE__, __LINE__, level, prompt, message)

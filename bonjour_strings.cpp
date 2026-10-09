@@ -27,8 +27,8 @@
 #include "bonjour_strings.h"
 #include "common.h"
 
-char *txt_records[128];
-char *secondary_txt_records[128];
+const char *txt_records[128];
+const char *secondary_txt_records[128];
 
 // mDNS advertisement strings
 

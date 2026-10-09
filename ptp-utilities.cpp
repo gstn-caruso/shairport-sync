@@ -225,7 +225,7 @@ int ptp_shm_interface_close() {
 void ptp_send_control_message_string(const char *msg) {
   size_t full_message_size =
       strlen(config.nqptp_shared_memory_interface_name) + strlen(" ") + strlen(msg) + 1;
-  char *full_message = malloc(full_message_size);
+  char *full_message = static_cast<char *>(malloc(full_message_size));
   if (full_message != NULL) {
     *full_message = '\0';
     snprintf(full_message, full_message_size, "%s %s", config.nqptp_shared_memory_interface_name,

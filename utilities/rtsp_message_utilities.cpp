@@ -65,7 +65,7 @@ rtsp_message *msg_init(void) {
   if (rc)
     debug(1, "Error %d locking reference counter lock", rc);
 
-  rtsp_message *msg = malloc(sizeof(rtsp_message));
+  rtsp_message *msg = static_cast<rtsp_message *>(malloc(sizeof(rtsp_message)));
   if (msg) {
     memset(msg, 0, sizeof(rtsp_message));
     msg->referenceCount = 1; // from now on, any access to this must be protected with the lock
@@ -83,7 +83,7 @@ rtsp_message *msg_init(void) {
   return msg;
 }
 
-int msg_add_header(rtsp_message *msg, char *name, char *value) {
+int msg_add_header(rtsp_message *msg, const char *name, const char *value) {
   if (msg->nheaders >= sizeof(msg->name) / sizeof(char *)) {
     warn("too many headers?!");
     return 1;
@@ -96,7 +96,7 @@ int msg_add_header(rtsp_message *msg, char *name, char *value) {
   return 0;
 }
 
-char *msg_get_header(rtsp_message *msg, char *name) {
+char *msg_get_header(rtsp_message *msg, const char *name) {
   unsigned int i;
   for (i = 0; i < msg->nheaders; i++)
     if (!strcasecmp(msg->name[i], name))
@@ -246,7 +246,7 @@ char *plist_as_xml_text(plist_t the_plist) {
   plist_to_xml(the_plist, &plist_out, &size);
 
   // put it into a NUL-terminated string
-  char *reply = malloc(size + 1);
+  char *reply = static_cast<char *>(malloc(size + 1));
   if (reply) {
     memcpy(reply, plist_out, size);
     reply[size] = '\0';
@@ -267,7 +267,7 @@ char *rtsp_plist_content(rtsp_message *message) {
 
 
 void _debug_log_rtsp_message(rtsp_conn_info *conn, const char *filename, const int linenumber,
-                             int level, char *prompt, rtsp_message *message) {
+                             int level, const char *prompt, rtsp_message *message) {
   if (level > debug_level())
     return;
   if ((prompt) && (*prompt != '\0')) // okay to pass NULL or an empty list...

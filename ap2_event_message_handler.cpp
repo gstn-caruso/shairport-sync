@@ -114,7 +114,8 @@ ssize_t ap2_event_send_update_info(rtsp_conn_info *conn) {
     void *txtData = NULL;
     size_t txtDataLength = 0;
     generateTxtDataValueInfo(conn, &txtData, &txtDataLength);
-    plist_dict_set_item(value_plist, "txtAirPlay", plist_new_data(txtData, txtDataLength));
+    plist_dict_set_item(value_plist, "txtAirPlay",
+                        plist_new_data(static_cast<const char *>(txtData), txtDataLength));
     free(txtData);
     plist_t update_info_plist = plist_new_dict();
     if (update_info_plist != NULL) {

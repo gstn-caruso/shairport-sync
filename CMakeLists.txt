@@ -66,11 +66,11 @@ target_include_directories(receiver-text PUBLIC "${CMAKE_SOURCE_DIR}")
 target_compile_options(receiver-text PRIVATE -Wall -Wextra -Wshadow -Wformat=2)
 add_library(pair_ap STATIC pair_ap/pair.c pair_ap/pair_fruit.c pair_ap/pair_homekit.c pair_ap/pair-tlv.c)
 target_compile_definitions(pair_ap PRIVATE CONFIG_GCRYPT)
-add_library(receiver STATIC shairport.c bonjour_strings.c mdns.c mdns_avahi.c common.c rtp.c
-  player.c audio.c audio_pa.c activity_monitor.c activity_state.cpp rtsp.c ap2_buffered_audio_processor.c
-  ap2_event_receiver.c ap2_event_message_handler.c ptp-utilities.c utilities/debug.c
-  utilities/network_utilities.cpp utilities/rtsp_message_utilities.c utilities/string_utilities.cpp
-  utilities/exit.cpp utilities/buffered_read.c utilities/structured_buffer.cpp utilities/mod23.cpp
+add_library(receiver STATIC shairport.c bonjour_strings.cpp mdns.cpp mdns_avahi.cpp common.c rtp.c
+  player.c audio.c audio_pa.c activity_monitor.cpp activity_state.cpp rtsp.c ap2_buffered_audio_processor.c
+  ap2_event_receiver.cpp ap2_event_message_handler.cpp ptp-utilities.cpp utilities/debug.cpp
+  utilities/network_utilities.cpp utilities/rtsp_message_utilities.cpp utilities/string_utilities.cpp
+  utilities/exit.cpp utilities/buffered_read.cpp utilities/structured_buffer.cpp utilities/mod23.cpp
   utilities/generate_random_uuid.cpp utilities/generate_device_uuid.cpp "${CMAKE_BINARY_DIR}/plists/get_info_response.c")
 foreach(target pair_ap receiver)
   target_include_directories(${target} PUBLIC "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}")

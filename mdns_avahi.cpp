@@ -155,7 +155,7 @@ static void register_service(AvahiClient *c) {
     else
       selected_interface = AVAHI_IF_UNSPEC;
     if (ap2_text_record_string_list) {
-      ret = avahi_entry_group_add_service_strlst(group, selected_interface, AVAHI_PROTO_UNSPEC, 0,
+      ret = avahi_entry_group_add_service_strlst(group, selected_interface, AVAHI_PROTO_UNSPEC, AvahiPublishFlags{},
                                                  ap2_service_name, config.regtype2, NULL, NULL,
                                                  port, ap2_text_record_string_list);
       if (ret == AVAHI_ERR_COLLISION) {
@@ -163,7 +163,7 @@ static void register_service(AvahiClient *c) {
       }
     }
     if ((ret == 0) && (text_record_string_list)) {
-      ret = avahi_entry_group_add_service_strlst(group, selected_interface, AVAHI_PROTO_UNSPEC, 0,
+      ret = avahi_entry_group_add_service_strlst(group, selected_interface, AVAHI_PROTO_UNSPEC, AvahiPublishFlags{},
                                                  service_name, config.regtype, NULL, NULL, port,
                                                  text_record_string_list);
       if (ret == AVAHI_ERR_COLLISION) {
@@ -232,7 +232,7 @@ static void client_callback(AvahiClient *c, AvahiClientState state,
   }
 }
 
-static int avahi_update(char **txt_records, char **secondary_txt_records) {
+static int avahi_update(const char **txt_records, const char **secondary_txt_records) {
   // debug(1, "avahi_update.");
 
   /*
@@ -256,7 +256,7 @@ static int avahi_update(char **txt_records, char **secondary_txt_records) {
       avahi_string_list_free(text_record_string_list);
     text_record_string_list = avahi_string_list_new_from_array((const char **)txt_records, -1);
     err = avahi_entry_group_update_service_txt_strlst(group, selected_interface, AVAHI_PROTO_UNSPEC,
-                                                      0, service_name, config.regtype, NULL,
+                                                      AvahiPublishFlags{}, service_name, config.regtype, NULL,
                                                       text_record_string_list);
     if (err != 0)
       debug(1, "avahi_update error updating primary txt records.");
@@ -268,7 +268,7 @@ static int avahi_update(char **txt_records, char **secondary_txt_records) {
     ap2_text_record_string_list =
         avahi_string_list_new_from_array((const char **)secondary_txt_records, -1);
     err = avahi_entry_group_update_service_txt_strlst(group, selected_interface, AVAHI_PROTO_UNSPEC,
-                                                      0, ap2_service_name, config.regtype2, NULL,
+                                                      AvahiPublishFlags{}, ap2_service_name, config.regtype2, NULL,
                                                       ap2_text_record_string_list);
     if (err != 0)
       debug(1, "avahi_update error updating secondary txt records.");
@@ -278,8 +278,8 @@ static int avahi_update(char **txt_records, char **secondary_txt_records) {
   return 0;
 }
 
-static int avahi_register(char *ap1name, char *ap2name, int srvport, char **txt_records,
-                          char **secondary_txt_records) {
+static int avahi_register(char *ap1name, char *ap2name, int srvport, const char **txt_records,
+                          const char **secondary_txt_records) {
   // debug(1, "avahi_register.");
   service_name = strdup(ap1name);
   if (ap2name != NULL)

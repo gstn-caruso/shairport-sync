@@ -12,16 +12,16 @@ extern "C" {
 extern int mdns_pid;
 
 void mdns_unregister(void);
-void mdns_register(char **txt_records, char **secondary_txt_records);
-void mdns_update(char **txt_records, char **secondary_txt_records);
+void mdns_register(const char **txt_records, const char **secondary_txt_records);
+void mdns_update(const char **txt_records, const char **secondary_txt_records);
 
 void mdns_ls_backends(void);
 
 typedef struct {
   const char *name;
-  int (*mdns_register)(char *ap1name, char *ap2name, int port, char **txt_records,
-                       char **secondary_txt_records);
-  int (*mdns_update)(char **txt_records, char **secondary_txt_records);
+  int (*mdns_register)(char *ap1name, char *ap2name, int port, const char **txt_records,
+                       const char **secondary_txt_records);
+  int (*mdns_update)(const char **txt_records, const char **secondary_txt_records);
   void (*mdns_unregister)(void);
 } mdns_backend;
 

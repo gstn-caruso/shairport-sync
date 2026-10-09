@@ -37,8 +37,8 @@ extern mdns_backend mdns_avahi;
 
 
 
-void mdns_register(char **txt_records, char **secondary_txt_records) {
-  char *ap1_service_name = alloca(strlen(config.service_name) + 14);
+void mdns_register(const char **txt_records, const char **secondary_txt_records) {
+  char *ap1_service_name = static_cast<char *>(alloca(strlen(config.service_name) + 14));
   char *p = ap1_service_name;
   int i;
   for (i = 0; i < 6; i++) {
@@ -54,7 +54,7 @@ if (mdns_avahi.mdns_register(ap1_service_name, config.service_name, config.port,
 config.mdns = &mdns_avahi;
 }
 
-void mdns_update(char **txt_records, char **secondary_txt_records) {
+void mdns_update(const char **txt_records, const char **secondary_txt_records) {
   if ((config.mdns) && (config.mdns->mdns_update)) {
     config.mdns->mdns_update(txt_records, secondary_txt_records);
   } else

@@ -3419,8 +3419,8 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
         maxfd = sockfd[i];
     }
 
-    char **t1 = txt_records; // ap1 text records
-    char **t2 = NULL;        // possibly two text records
+    const char **t1 = txt_records; // ap1 text records
+    const char **t2 = NULL;        // possibly two text records
 
       // make up a secondary set of text records
       t2 = secondary_txt_records; // second set of text records in AirPlay 2 only

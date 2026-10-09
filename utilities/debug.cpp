@@ -251,7 +251,7 @@ void _debug_print_buffer(const char *thefilename, const int linenumber, int leve
 
   // 0x123456: <hexdump_cols * 3> <hexdump_cols>\n
   const size_t buffer_size = 2 + 6 + 2 + hexdump_cols * 3 + hexdump_cols + 1;
-  char *buf = malloc(buffer_size);
+  char *buf = static_cast<char *>(malloc(buffer_size));
   if (buf) {
     // char *bufp = buf;
     //  *buf = '\0';
@@ -327,7 +327,7 @@ void _debug_print_buffer(const char *thefilename, const int linenumber, int leve
   new_debug_print_buffer(thefilename, linenumber, level, vbuf, buf_len);
   char *buf = (char *)vbuf;
   char *obf =
-      malloc(buf_len * 4 + 1); // to be on the safe side -- 4 characters on average for each byte
+      static_cast<char *>(malloc(buf_len * 4 + 1));
   if (obf != NULL) {
     char *obfp = obf;
     unsigned int obfc;
