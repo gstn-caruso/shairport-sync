@@ -59,5 +59,5 @@ int main() {
   const auto lastRandom = generate_zero_frames(mute.data(), 2, 1, 17, configuration);
   r64init(456);
   mutePlaybackPcm(mute.data(), 2, configuration, session);
-  assert(lastRandom != 17 && session.previous_random_number == 17);
+  assert(lastRandom != 17 && session.previous_random_number == lastRandom);
 }

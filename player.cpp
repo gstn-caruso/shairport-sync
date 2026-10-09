@@ -571,7 +571,8 @@ void encodePlaybackSample(int32_t sample, char **outp, sps_format_t format, int 
 }
 
 void mutePlaybackPcm(char *output, size_t frames, uint32_t format, SessionState &session) {
-  generate_zero_frames(output, frames, session.enable_dither, session.previous_random_number, format);
+  session.previous_random_number = generate_zero_frames(
+      output, frames, session.enable_dither, session.previous_random_number, format);
 }
 
 static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
