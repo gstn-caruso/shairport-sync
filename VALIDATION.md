@@ -182,6 +182,15 @@ handoff case and Release 170/170 (14.89s) passed; each entry has timeout 5. Nati
 assertions remain in non-void helpers/callbacks. C ABI, cancellation and shell checks
 remain green; production is unchanged and sanitizers/devices were not rerun.
 
+Player-packet discovery (`ctest --test-dir build/redesign-release -R '^PlayerPacket\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Two independently owned sessions retain invalid ALAC/AAC decoding followed by
+mute, packet duration/readiness and extraction checks; AAC replays prior ALAC.
+Group (0.04s), exact AAC case and Release 171/171 (14.94s) passed; each entry has
+timeout 5. Mutex destruction follows nonfatal checks. ABI includes, cancellation
+and shell checks are preserved; production is unchanged and sanitizers/devices
+were not rerun.
+
 CTest covers:
 
 | Test | Contract |
