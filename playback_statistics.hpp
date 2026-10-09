@@ -21,6 +21,10 @@ struct PlaybackStatisticsSnapshot {
   double averageSyncErrorMs = 0, averageWindowMs = 0, correctionsPpm = 0, absoluteCorrectionsPpm = 0;
 };
 struct PlaybackAttempt { uint64_t playNumber; };
+struct OutputReading {
+  int status;
+  uint64_t rawTime, correctedTime, queuedFrames, sentFrames;
+};
 struct PlaybackSessionSummary {
   bool hasObservedFrame = false, outputRateAvailable = false;
   uint64_t elapsedSeconds = 0;
@@ -56,12 +60,53 @@ public:
   }
   PlaybackStatisticsSnapshot snapshot() const {
     std::lock_guard lock(mutex_);
-    auto result = totals_;
-    const auto duration = inputEndTime_ - inputStartTime_;
-    result.inputRateAvailable = inputBaseline_ && duration != 0;
-    if (result.inputRateAvailable)
-      result.inputFramesPerSecond = 1e9 * uint32_t(inputEndFrame_ - inputStartFrame_) / duration;
-    return result;
+    return snapshotUnlocked();
+  }
+  void recordOutputReading(OutputReading reading) {
+    std::lock_guard lock(mutex_);
+    const auto played = reading.sentFrames - reading.queuedFrames;
+    if (reading.status == 0 && outputBaseline_) {
+      const int64_t rawDuration = std::bit_cast<int64_t>(reading.rawTime - outputStart_.rawTime);
+      const int64_t correctedDuration = std::bit_cast<int64_t>(reading.correctedTime - outputStart_.correctedTime);
+      if (rawDuration != 0) {
+        const auto frames = played - (outputStart_.sentFrames - outputStart_.queuedFrames);
+        totals_.rawOutputFramesPerSecond = 1e9 * frames / rawDuration;
+        totals_.correctedOutputFramesPerSecond = 1e9 * frames / correctedDuration;
+        totals_.outputRateAvailable = true;
+      }
+    }
+    if (reading.status != 0 || !outputBaseline_) {
+      if (reading.status != 0) totals_.outputRateAvailable = false;
+      outputStart_ = reading;
+      outputBaseline_ = true;
+    }
+  }
+  void recordMissingPlayback() {
+    std::lock_guard lock(mutex_);
+    ++totals_.missing;
+  }
+  void recordResendRequested() {
+    std::lock_guard lock(mutex_);
+    ++totals_.resends;
+  }
+  void observeBufferedBytes(uint64_t bytes) {
+    std::lock_guard lock(mutex_);
+    if (totals_.minimumBufferedBytes < 0 || bytes < uint64_t(totals_.minimumBufferedBytes))
+      totals_.minimumBufferedBytes = bytes;
+  }
+  void recordDacQueue(uint64_t frames) {
+    std::lock_guard lock(mutex_);
+    totals_.minimumDacQueue = std::min(totals_.minimumDacQueue, frames);
+  }
+  bool intervalDue(unsigned outputRate) const {
+    std::lock_guard lock(mutex_);
+    return outputRate != 0 && totals_.frames > uint64_t{8} * outputRate;
+  }
+  void resetForPlay() {
+    std::lock_guard lock(mutex_);
+    totals_ = {};
+    arrivalsSinceFlush_ = attemptsSinceFlush_ = playStart_ = 0;
+    inputBaseline_ = outputBaseline_ = hasObservedFrame_ = false;
   }
   PlaybackAttempt recordPlaybackAttempt(uint64_t now) {
     std::lock_guard lock(mutex_);
@@ -135,4 +180,6 @@ private:
   bool inputBaseline_ = false;
   uint64_t attemptsSinceFlush_ = 0, playStart_ = 0;
   bool hasObservedFrame_ = false;
+  OutputReading outputStart_{};
+  bool outputBaseline_ = false;
 };

@@ -1,5 +1,6 @@
 #include "playback_statistics.hpp"
 #include <cassert>
+#include <thread>
 
 int main() {
   PlaybackStatistics statistics;
@@ -35,4 +36,21 @@ int main() {
   assert(!statistics.observeFrame(9));
   statistics.recordPlaybackAttempt(2000000000);
   assert(statistics.sessionSummary(3000000000).elapsedSeconds == 2);
+  statistics.recordOutputReading({0, 1000000000, 2000000000, 10, 100});
+  assert(!statistics.snapshot().outputRateAvailable);
+  statistics.recordOutputReading({0, 2000000000, 3000000000, 10, 44100 + 100});
+  auto output = statistics.snapshot();
+  assert(output.outputRateAvailable && output.rawOutputFramesPerSecond == 44100);
+  statistics.recordOutputReading({1, 3000000000, 4000000000, 10, 90000});
+  assert(!statistics.snapshot().outputRateAvailable);
+  statistics.observeBufferedBytes(20000);
+  statistics.observeBufferedBytes(12000);
+  statistics.recordDacQueue(17);
+  std::thread producerA([&] { for (unsigned i = 0; i < 1000; ++i) statistics.recordMissingPlayback(); });
+  std::thread producerB([&] { for (unsigned i = 0; i < 1000; ++i) statistics.recordResendRequested(); });
+  producerA.join();
+  producerB.join();
+  auto concurrent = statistics.snapshot();
+  assert(concurrent.missing == 1000 && concurrent.resends == 1000);
+  assert(concurrent.minimumBufferedBytes == 12000 && concurrent.minimumDacQueue == 17);
 }
