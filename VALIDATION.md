@@ -276,6 +276,14 @@ state resets and output/shared-level globals restore after native joins. All six
 wrap flags, native assertions and C ABI/cancellation/shell checks remain; production
 is unchanged and sanitizers/devices were not rerun.
 
+Session-replacement discovery (`ctest --test-dir build/redesign-release -R '^SessionReplacement\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+One complete named interleaving retains cancellation disabling, displaced-session
+reacquisition rejection, mutual-join regression branch and native joins/assertions.
+Fresh callback state passed group/exact selection (0.02s), two in-process repetitions
+and Release 209/209 (15.55s); timeout is 5. C ABI/cancellation/shell checks remain;
+production is unchanged and sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
