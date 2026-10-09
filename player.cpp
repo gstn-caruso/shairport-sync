@@ -816,7 +816,7 @@ EncodedPcm encodeBasicPlaybackPcm(std::span<const int32_t> samples, unsigned cha
         // interpolate one sample
         unsigned int channel;
         for (channel = 0; channel < channels; channel++)
-          encoder.appendSample(mean_32(inptr[-2], inptr[0]));
+          encoder.appendSample(mean_32(inptr[int(channel) - int(channels)], inptr[channel]));
       } else if (stuff == -1) {
         // debug(3, "---------");
         unsigned int channel;

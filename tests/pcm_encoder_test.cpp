@@ -111,4 +111,15 @@ int main() {
         assert(output.bytes()[offset] == 0x34 && output.bytes()[offset + 1] == 0x12);
     }
 
+  for (size_t frame = 0; frame < 256; ++frame) {
+    playback[frame * 2] = 1000 * 65536;
+    playback[frame * 2 + 1] = 2000 * 65536;
+  }
+  encoder.beginFrame(0x10000, false);
+  auto inserted = encodeBasicPlaybackPcm(playback, 2, 1, encoder);
+  assert(inserted.frames() == 257);
+  for (size_t offset = 0; offset < inserted.bytes().size(); offset += 4) {
+    assert(inserted.bytes()[offset] == 0xe8 && inserted.bytes()[offset + 1] == 0x03);
+    assert(inserted.bytes()[offset + 2] == 0xd0 && inserted.bytes()[offset + 3] == 0x07);
+  }
 }
