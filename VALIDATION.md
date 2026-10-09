@@ -3,6 +3,51 @@
 Build and run the suite with the commands in [BUILD.md](BUILD.md).
 CI runs Release, Debug, ASan+UBSan and TSan builds and checks staged installation.
 
+## Current redesign result
+
+There are 230 named C++ cases and seven C/shell checks, for 237 CTest entries.
+The linkage executable remains a CLI fixture exercised by `configure-contract`.
+Native cancellation, wrapper flags, original inputs and assertions are retained;
+the volume profile tolerance uses the original strict `< 1e-9` predicate.
+
+Final local Release verification at `b71cf0d8` used the pinned toolchain and two
+build jobs. A clean rebuild passed without the cipher-bundle linkage warning,
+all 237 tests passed, and staged executable/version, manual and sample-config
+checks passed. Single-run measurements are:
+
+| Check | Initial baseline | Final local result |
+| --- | --- | --- |
+| Clean Release build | 27.13s, 132 steps | 40.12s, 141 steps |
+| Full CTest run | 13.65s, 40 entries | 14.86s, 237 entries |
+| Unrelated `audio.cpp` touch: full build | 3.85s, 38 executable links | 3.06s, 30 executable links |
+| Same touch: ten isolated test targets | Rebuilt receiver-dependent consumers | 0.01s, no work |
+
+The isolated targets are volume-policy, rtp-clock, audio-format, channel-mapping,
+pcm-encoder, playback-samples, converted-audio, playback-sync, playback-timing
+and audio-input-state (append `-test` to each name). Reproduce the last check
+with a settled build, `touch audio.cpp`, and `cmake --build` with these targets.
+Full rebuild counts come from actual Ninja build output; dry runs conservatively
+predict changes to the always-checked Git-version header. The final logs live in
+ignored `build/redesign-verified-*.log` and `build/redesign-final-*.log` files.
+These measurements establish faster isolated feedback and fewer unrelated
+links. Clean builds and full test execution are slower; no overall speedup or
+line/branch-coverage percentage is claimed.
+
+`AudioInputState` now owns packet shape, decoded validity, independent SETUP
+overrides and playback's packet reset. `SessionState` holds this object instead
+of three public primitive fields. Cipher bundles own explicit release, while
+RTSP retains the cancellation-disabled control/event/data/setup/verify order.
+`PlaybackRun` already owns thread start/stop, and `SessionRegistry` owns session
+start/retirement/shutdown; their tested decisions remain there. Startup remains
+the process boundary in `shairport_receiver_main`. Manual checks of `--version`
+and `--help` both exited successfully with the existing NQPTP fixture set to
+`missing`, without requiring a running timing service. Automated CI remains the
+Release/Debug/ASan+UBSan/TSan and installation gate before merge. Device playback
+and live network pairing/teardown checks were not performed.
+
+The cycle notes below record evidence and verification limits at each stage;
+statements about pending integration or sanitizer runs describe that stage.
+
 The cipher bundle's C++ release method requires a tagged struct declaration.
 The acceptance command
 `clang++ -std=c++26 -Werror=non-c-typedef-for-linkage -Ibuild/redesign-final-release -I. -fsyntax-only tests/receiver_encoding_cpp_test.cpp`
@@ -487,10 +532,23 @@ each entry has timeout 5. All native assertions and C tests remain; production i
 unchanged and sanitizers/devices were not rerun. Remaining C++ mains are only the
 receiver-linkage CLI and the custom GoogleTest `--child` cancellation entry point.
 
-CTest covers:
+The contract inventory uses executable basenames for C++ suites; CTest registers
+their individual `Suite.Scenario` names. C and shell entries keep their names.
 
-| Test | Contract |
+| Suite or check | Contract |
 | --- | --- |
+| `audio-input-state` | Packet-shape coherence, decoder validity, independent SETUP overrides and playback packet reset |
+| `pair-cipher-bundle` | Owned resource release order, cleared buffers/pointers, repeated release and empty ownership |
+| `playback-run` | Native cancellation cleanup, concurrent stop, restart history and failed thread creation |
+| `playback-timing` | Preroll, resynchronization, used-state reset, revisions and concurrent arrival |
+| `volume-policy` | Profiles, strict attenuation tolerance, bounds, hardware/software priority, mute and ignored control |
+| `volume-control` | Gain/mute history and concurrent snapshots |
+| `volume-adapter` | Backend effect order, gain/mute and ignored control |
+| `principal-volume` | Selection tickets, numeric volume publication and concurrent effect ordering |
+| `volume-transaction` | Wrapped mutex contention, selection and effect ordering |
+| `volume-command-cancel` | Startup/update child command cancellation, native joins and child reaping |
+| `statistics-formatter` | All 16 header combinations and exact row/session strings |
+| `playback-statistics` | Measurement thresholds/totals, producer completion and used-state reset |
 | `playback-sync` | Previous retained frames, DAC measurement boundary, initial silence/prefix skips, rate conversion, modular time, 40-error window, strict tolerance/resync thresholds and history preserved across first-frame/rate observations |
 | `player-volume-wait` | Real Player wait, software volume update and ALAC delivery use the new gain; no-delay output keeps 352 frames, underrun skips 44 even with no_sync, exact discard submits zero frames and continuing discard waits without a callback; no sleep ordering |
 | `playback-samples` | Native S16/S32 normalization, stereo modes and multichannel order, payload shape changes, invalid byte counts, interior Basic correction and Vernier limits/counts with real encoded bytes |

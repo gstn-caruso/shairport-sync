@@ -48,11 +48,20 @@ files, run `sudo cmake --install build/cmake`.
 
 Test builds require GoogleTest 1.17 or newer (`libgtest-dev`). Production-only
 builds configured with `-DBUILD_TESTING=OFF` do not require GoogleTest.
-Volume policy scenarios are individually registered with CTest, for example:
+All C++ suites register named scenarios with CTest. For a short feedback cycle,
+build the relevant executable and select one case:
 
 ```sh
-ctest --test-dir build/cmake -R '^VolumePolicy\.' --no-tests=error --output-on-failure
+cmake --build build/cmake --target volume-policy-test --parallel 2
+ctest --test-dir build/cmake -R '^VolumePolicy.MuteLevelRequestsMute$' --no-tests=error --output-on-failure
 ```
+
+Use `ctest --test-dir build/cmake -N` to list cases, or a suite prefix such as
+`-R '^RtpClock\.'` to select a group. Keep `--no-tests=error` so a mistyped name
+fails. Full builds and CTest runs still cover the C adapters, linkage and shell
+contracts. Policy, clock, audio-format/mapping, PCM/samples and playback-timing
+targets use separate libraries; unrelated receiver changes do not relink their
+test executables. This improves targeted feedback rather than clean-build time.
 
 CI runs separate CMake Release, Debug, ASan+UBSan and TSan builds,
 all with the same pinned compiler and library. Every build runs its contracts
