@@ -46,6 +46,24 @@ retain the original compile options/definitions and join the C++26 source
 guard; sanitizer object paths and native wrapper flags remain unchanged.
 Sanitizer builds and device playback were not rerun in this cycle.
 
+The audio-primitives isolation cycle gives `audio_format.cpp` and
+`channel_mapping.cpp` one `receiver-audio-format` static library, retaining
+production compile settings and the C++26 source guard. Both named test
+executables link this library and GoogleTest directly, without receiver or
+backend dependencies. Before editing, touching `audio.cpp` in a settled build
+scheduled both test links; the actual selected-target build compiled that
+source, archived the receiver and linked both tests in 0.43s. After the split,
+the same selected-target build did no work (0.01s). The subsequent full build
+compiled `audio.cpp`, archived the receiver and linked 34 executables in 3.48s,
+leaving both isolated tests untouched. These are single measurements, with
+native dry-run/build/time logs in ignored
+`build/redesign-release/audio-primitives-*.log`, not a speedup estimate.
+All 17 named format/mapping cases and all 231 Release CTest entries passed
+(15.33s), including native linkage/configuration contracts. Staged installation,
+installed executable `--version`, and installed manual/configuration byte
+comparisons passed. No production behavior, native wrappers or sanitizer
+object paths changed; sanitizers and device playback were not rerun.
+
 The first discovery acceptance check was
 `ctest --test-dir build/cmake -R '^VolumePolicy\.' --no-tests=error`.
 It failed with no tests on the baseline. GoogleTest now registers six named
