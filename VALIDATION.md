@@ -3,6 +3,32 @@
 Build and run the suite with the commands in [BUILD.md](BUILD.md).
 CI runs Release, Debug, ASan+UBSan and TSan builds and checks staged installation.
 
+## Redesign measurements
+
+The initial baseline at `43f85b50` used Clang 23.1.3, CMake 4.2.3, Ninja,
+Release, and two build jobs on the development host. A fresh out-of-tree
+configuration took 1.66s, the 132-step build took 27.13s, and all 40 suite-level
+CTest entries passed in 13.65s. These are single measurements, not a benchmark
+distribution or a code-coverage percentage. The contract inventory below
+describes coverage; no line/branch coverage measurement was taken.
+
+Touching `volume_policy.cpp` caused one policy compile, one receiver archive,
+and 38 executable links (plus the always-run Git-version check). Ninja's dry
+run also conservatively listed `common.cpp`, which includes the generated
+Git-version header; the actual build log determines the compile count.
+The incremental build took 3.51s.
+Reproduce with a clean build, one settling build, `touch volume_policy.cpp`,
+`ninja -C build/cmake -n`, and `/usr/bin/time -p cmake --build build/cmake --parallel 2`.
+Touching the source only updates its timestamp; it does not change its contents.
+
+The first discovery acceptance check was
+`ctest --test-dir build/cmake -R '^VolumePolicy\.' --no-tests=error`.
+It failed with no tests on the baseline. GoogleTest now registers six named
+volume-policy scenarios while preserving the previous profile, boundary,
+hardware priority/range, mute and ignored-control assertions. Each scenario
+creates its own settings; `ctest -R '^VolumePolicy\.'` runs this group and an
+exact scenario name selects one case. Device validation remains separate below.
+
 CTest covers:
 
 | Test | Contract |

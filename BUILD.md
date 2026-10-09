@@ -25,7 +25,7 @@ The toolchain resolves compiler paths through `asdf which` from the repository.
 Install the receiver dependencies on Debian/Ubuntu, then build:
 
 ```sh
-sudo apt-get install pkg-config libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
+sudo apt-get install pkg-config libgtest-dev libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
 cmake -S . -B build/cmake -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=cmake/clang-toolchain.cmake \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_SYSCONFDIR=/etc
@@ -45,6 +45,14 @@ directory before configuring. To install on the host after checking the staged
 files, run `sudo cmake --install build/cmake`.
 
 ## Build checks
+
+Test builds require GoogleTest 1.17 or newer (`libgtest-dev`). Production-only
+builds configured with `-DBUILD_TESTING=OFF` do not require GoogleTest.
+Volume policy scenarios are individually registered with CTest, for example:
+
+```sh
+ctest --test-dir build/cmake -R '^VolumePolicy\.' --no-tests=error --output-on-failure
+```
 
 CI runs separate CMake Release, Debug, ASan+UBSan and TSan builds,
 all with the same pinned compiler and library. Every build runs its contracts
