@@ -143,7 +143,7 @@ size_t AudioPacketBuffer::dropOutdatedBefore(uint32_t timestamp) {
   size_t discarded = 0;
   while (synced_ && read_ != write_) {
     auto &entry = entries_[read_ % capacity];
-    if (!entry->packet || !entry->packet->endsBy(timestamp))
+    if (entry->packet && !entry->packet->startsBefore(timestamp))
       break;
     discardFrontUnderLock();
     ++discarded;

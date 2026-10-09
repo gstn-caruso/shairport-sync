@@ -87,7 +87,7 @@ int main() {
   assert(expired.id == futureId && !expired.flushOutput && expired.complete);
   assert(buffer.occupancy() == 1);
   auto unchanged = buffer.front();
-  assert(buffer.dropOutdatedBefore(9010) == 0);
+  assert(buffer.dropOutdatedBefore(9005) == 0);
   assert(buffer.front()->packet.timestamp == unchanged->packet.timestamp);
   buffer.requestFlush(0);
   auto total = buffer.applyFlush();

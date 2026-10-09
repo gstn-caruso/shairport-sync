@@ -44,9 +44,8 @@ public:
     metadata_.frames -= removed;
     return true;
   }
-  bool endsBy(uint32_t timestamp) const {
-    const auto elapsed = std::bit_cast<int32_t>(timestamp - metadata_.timestamp);
-    return elapsed >= 0 && static_cast<size_t>(elapsed) >= metadata_.frames;
+  bool startsBefore(uint32_t timestamp) const {
+    return std::bit_cast<int32_t>(metadata_.timestamp - timestamp) < 0;
   }
   std::expected<void, ResamplerFailure> convertWith(Resampler &resampler) {
     if (frame_ && !trim_.applyTo(*frame_))
