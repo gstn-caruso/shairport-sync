@@ -1,0 +1,163 @@
+#include "rtsp_message.hpp"
+#include <cctype>
+#include <array>
+#include <format>
+#include <cstdlib>
+#include <limits>
+#include <stdexcept>
+
+namespace {
+bool sameHeaderName(std::string_view left, std::string_view right) noexcept {
+  if (left.size() != right.size())
+    return false;
+  for (std::size_t index = 0; index < left.size(); ++index)
+    if (std::tolower(static_cast<unsigned char>(left[index])) !=
+        std::tolower(static_cast<unsigned char>(right[index])))
+      return false;
+  return true;
+}
+
+std::string_view nextRequestToken(std::string_view &line) noexcept {
+  auto first = line.find_first_not_of(' ');
+  if (first == std::string_view::npos)
+    return {};
+  line.remove_prefix(first);
+  auto end = line.find(' ');
+  auto token = line.substr(0, end);
+  line.remove_prefix(token.size());
+  return token;
+}
+}
+
+std::optional<int> RtspMessage::readLine(std::string_view line) {
+  if (!requestLineRead_) {
+    auto method = nextRequestToken(line);
+    auto path = nextRequestToken(line);
+    auto version = nextRequestToken(line);
+    if (method.empty() || path.empty() || (version != "RTSP/1.0" && version != "HTTP/1.1"))
+      return std::nullopt;
+    request(method, path);
+    return -1;
+  }
+  if (line.empty()) {
+    auto length = headerValue("Content-Length");
+    return length ? std::atoi(length) : 0;
+  }
+  auto separator = line.find(": ");
+  if (separator == std::string_view::npos)
+    return std::nullopt;
+  addHeader(line.substr(0, separator), line.substr(separator + 2));
+  return -1;
+}
+
+void RtspMessage::request(std::string_view method, std::string_view path) {
+  method_ = method.substr(0, 15);
+  path_ = path.substr(0, 255);
+  requestLineRead_ = true;
+}
+
+bool RtspMessage::requestsMethod(std::string_view method) const noexcept { return method_ == method; }
+bool RtspMessage::requestsPath(std::string_view path) const noexcept { return path_ == path; }
+const char *RtspMessage::methodName() const noexcept { return method_.c_str(); }
+const char *RtspMessage::requestPath() const noexcept { return path_.c_str(); }
+
+bool RtspMessage::addHeader(std::string_view name, std::string_view value) {
+  if (headers_.size() == 16)
+    return false;
+  headers_.push_back({std::string(name), std::string(value)});
+  return true;
+}
+
+const char *RtspMessage::headerValue(std::string_view name) const noexcept {
+  for (const auto &header : headers_)
+    if (sameHeaderName(header.name, name))
+      return header.value.c_str();
+  return nullptr;
+}
+
+const std::vector<RtspMessage::Header> &RtspMessage::headers() const noexcept { return headers_; }
+
+void RtspMessage::replaceBody(std::string_view bytes) {
+  if (bytes.size() > std::numeric_limits<uint32_t>::max())
+    throw std::length_error("RTSP body exceeds protocol length");
+  if (bytes.empty())
+    body_.clear();
+  else
+    body_.assign(bytes.data(), bytes.size());
+}
+
+std::string_view RtspMessage::bodyText() const noexcept { return body_; }
+const char *RtspMessage::bodyData() const noexcept { return body_.c_str(); }
+uint32_t RtspMessage::bodyLength() const noexcept { return static_cast<uint32_t>(body_.size()); }
+bool RtspMessage::bodyStartsWith(std::string_view prefix) const noexcept { return body_.starts_with(prefix); }
+bool RtspMessage::requestsVolume() const noexcept {
+  return body_.size() == 8 && body_.starts_with("volume");
+}
+
+void RtspMessage::respondWith(int code) noexcept { responseCode_ = code; }
+int RtspMessage::responseCode() const noexcept { return responseCode_; }
+bool RtspMessage::hasResponseCode(int code) const noexcept { return responseCode_ == code; }
+
+std::string_view RtspMessage::responseReason() const noexcept {
+  static constexpr std::array<std::pair<int, std::string_view>, 9> reasons{{
+      {200, "OK"}, {400, "Bad Request"}, {403, "Unauthorized"}, {404, "Not Found"},
+      {451, "Unavailable"}, {456, "Header Field Not Valid for Resource"},
+      {470, "Connection Authorization Required"}, {500, "Internal Server Error"},
+      {501, "Not Implemented"}}};
+  for (const auto &[code, reason] : reasons)
+    if (responseCode_ == code)
+      return reason;
+  return "Unauthorized";
+}
+
+std::expected<std::string, RtspMessage::FramingError> RtspMessage::responsePacket() const {
+  auto packet = std::format("RTSP/1.0 {} {}\r\n", responseCode_, responseReason());
+  for (const auto &header : headers_) {
+    packet += std::format("{}: {}\r\n", header.name, header.value);
+    if (packet.size() >= 3072)
+      return std::unexpected(FramingError::headersTooLong);
+  }
+  packet += std::format("Content-Length: {}\r\n", body_.size());
+  if (packet.size() >= 3072)
+    return std::unexpected(FramingError::lengthTooLong);
+  packet += "\r\n";
+  packet += body_;
+  if (packet.size() >= 3072)
+    return std::unexpected(FramingError::bodyTooLong);
+  return packet;
+}
+
+bool RtspMessage::containsCompleteMetadata() const noexcept {
+  auto readLength = [this](std::size_t offset) {
+    auto byte = [this](std::size_t index) { return static_cast<unsigned char>(body_[index]); };
+    return (uint32_t{byte(offset)} << 24) | (uint32_t{byte(offset + 1)} << 16) |
+           (uint32_t{byte(offset + 2)} << 8) | uint32_t{byte(offset + 3)};
+  };
+  if (body_.size() < 8 || readLength(4) != body_.size() - 8)
+    return false;
+  std::size_t offset = 8;
+  while (body_.size() - offset >= 8) {
+    auto length = readLength(offset + 4);
+    offset += 8;
+    if (length > body_.size() - offset)
+      return false;
+    offset += length;
+  }
+  return offset == body_.size();
+}
+
+std::vector<std::string> RtspMessage::parameterLines() const {
+  std::vector<std::string> lines;
+  std::string_view remaining = body_;
+  while (!remaining.empty()) {
+    auto end = remaining.find_first_of("\r\n");
+    lines.emplace_back(remaining.substr(0, end));
+    if (end == std::string_view::npos)
+      break;
+    auto separator = remaining[end];
+    remaining.remove_prefix(end + 1);
+    if (separator == '\r' && remaining.starts_with('\n'))
+      remaining.remove_prefix(1);
+  }
+  return lines;
+}

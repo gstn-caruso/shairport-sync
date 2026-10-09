@@ -4,8 +4,10 @@
 
 Use CMake 4.2 or newer, Ninja, Clang 23.1.3 (pinned in `.tool-versions`)
 and libstdc++ 15. CMake checks C++26 without GNU extensions by compiling and
-running `cmake/cpp26_probe.cpp`. Most receiver sources are C; the buffer and
-string utilities expose C adapters over C++ implementations.
+running `cmake/cpp26_probe.cpp`. All receiver production sources, including the
+entrypoint and generated plist, compile as C++26. The bundled pairing dependency
+remains C behind an explicit linkage boundary; C tests exercise the receiver APIs.
+CMake rejects any own production source configured to compile as C.
 
 Install the asdf toolchain from the repository root:
 
@@ -47,7 +49,7 @@ files, run `sudo cmake --install build/cmake`.
 CI runs separate CMake Release, Debug, ASan+UBSan and TSan builds,
 all with the same pinned compiler and library. Every build runs its contracts
 and stages the binary, manual and sample configuration without starting a service.
-The sanitizer jobs check instrumentation in receiver C and C++ object files.
+The sanitizer jobs check instrumentation in receiver C++ object files.
 
 The compiler installation must include compiler-rt runtimes for sanitizer builds;
 the official binary archive used by CI includes them. Some source-built asdf

@@ -1,0 +1,186 @@
+#pragma once
+
+#include "common.h"
+#include "player.h"
+#include "rtp_clock.hpp"
+#include "audio_decoder.hpp"
+#include "resampler.hpp"
+#include "audio_packet_buffer.hpp"
+#include "pcm_encoder.hpp"
+#include "playback_samples.hpp"
+#include "playback_sync.hpp"
+#include "playback_statistics.hpp"
+#include "volume_control.hpp"
+#include "playback_timing.hpp"
+#include "playback_run.hpp"
+#include <cstdlib>
+#include <atomic>
+
+struct SessionState {
+  SessionState() = default;
+  SessionState(const SessionState &) = delete;
+  SessionState &operator=(const SessionState &) = delete;
+  ~SessionState();
+  bool mayAcquirePrincipal() const { return !retiring_.load(); }
+  void beginRetirement() { retiring_.store(true); }
+  int connection_number;           // for debug ID purposes, nothing else...
+  int input_format_is_valid;       // set when the input format is known and set in this structure
+  int resend_interval;                      // this is really just for debugging
+  char *UserAgent;                          // free this on teardown
+  int AirPlayVersion; // zero if not an AirPlay session. Used to help calculate latency
+  int latency_warning_issued;
+  uint32_t latency;          // the actual latency used for this play session
+  uint32_t minimum_latency;  // set if an a=min-latency: line appears in the ANNOUNCE message; zero
+                             // otherwise
+  uint32_t maximum_latency;  // set if an a=max-latency: line appears in the ANNOUNCE message; zero
+                             // otherwise
+  int fd = -1;
+  SOCKADDR remote, local;
+  volatile int stop;
+
+  uint64_t connection_start_time; // the time the device is selected, which could be a long time
+                                  // before a play
+  pthread_t thread;
+
+  PlaybackStatistics statistics;
+  PlaybackRun playbackRun;
+  AudioPacketBuffer packetBuffer;
+  unsigned int frames_per_packet, input_rate;
+  // int connection_state_to_output;
+  PlaybackTiming playbackTiming;
+  // debug variables
+  int last_seqno_valid;
+  seq_t last_seqno_read;
+  // mutexes and condition variables
+  pthread_mutex_t flush_mutex;
+  VolumeControl volumeControl;
+
+
+
+
+
+
+  // RTP stuff
+  // only one RTP session can be active at a time.
+  int rtp_running;
+  uint64_t rtp_time_of_last_resend_request_error_ns;
+
+  char client_ip_string[INET6_ADDRSTRLEN]; // the ip string of the client
+  uint16_t client_rtsp_port;
+  char self_ip_string[INET6_ADDRSTRLEN]; // the ip string being used by this program -- it
+  uint16_t self_rtsp_port;               // could be one of many, so we need to know it
+
+  uint32_t self_scope_id;     // if it's an ipv6 connection, this will be its scope
+  short connection_ip_family; // AF_INET / AF_INET6
+
+
+  int64_t latency_delayed_timestamp; // this is for debugging only...
+
+  // this is what connects an rtp timestamp to the remote time
+
+  int udp_clock_is_initialised;
+  int udp_clock_sender_is_initialised;
+
+  RtpClock clock;
+
+  std::atomic<airplay_stream_c> airplay_stream_category{unspecified_stream_category};
+
+  plist_t sessionPlist;
+  char *airplay_gid; // UUID in the Bonjour advertisement -- if NULL, the group UUID is the same as
+                     // the pi UUID
+  airplay_stream_t airplay_stream_type; // is it realtime audio or buffered audio...
+
+  pthread_t *rtp_event_thread;
+  pthread_t *rtp_data_thread;
+  pthread_t rtp_ap2_control_thread;
+  pthread_t rtp_realtime_audio_thread;
+  pthread_t rtp_buffered_audio_thread;
+  pthread_mutex_t event_sender_mutex;
+  int event_channel_fd; // zero if closed, controlled by event_sender_mutex
+
+  int ap2_event_receiver_exited;
+
+  int ap2_immediate_flush_requested;
+  uint32_t ap2_immediate_flush_until_rtp_timestamp;
+  uint32_t ap2_immediate_flush_until_sequence_number;
+
+  ap2_flush_request_t ap2_deferred_flush_requests[MAX_DEFERRED_FLUSH_REQUESTS];
+
+  ssize_t ap2_audio_buffer_size;
+
+  int ap2_rate;         // protect with flush mutex, 0 means don't play, 1 means play
+  int ap2_play_enabled; // protect with flush mutex
+
+  ap2_pairing ap2_pairing_context;
+  struct pair_result *pair_setup_result; // need to keep the shared secret
+
+  int event_socket;
+  int data_socket;
+  SOCKADDR ap2_remote_control_socket_addr; // a socket pointing to the control port of the client
+  socklen_t ap2_remote_control_socket_addr_length;
+  int ap2_control_socket;
+  int realtime_audio_socket;
+  int buffered_audio_socket;
+
+  uint16_t local_data_port;
+  uint16_t local_event_port;
+  uint16_t local_ap2_control_port;
+  uint16_t local_realtime_audio_port;
+  uint16_t local_buffered_audio_port;
+
+  uint64_t audio_format;
+  uint64_t compression;
+  unsigned char *session_key; // needs to be free'd at the end
+  char *ap2_client_name;      // needs to be free'd at teardown phase 2
+  uint64_t frames_packet;
+  uint64_t type;                  // 96 (Realtime Audio), 103 (Buffered Audio), 130 (Remote Control)
+  uint64_t networkTimeTimelineID; // the clock ID used by the player
+  uint8_t groupContainsGroupLeader; // information coming from the SETUP
+  uint64_t compressionType;
+
+  AudioDecoder decoder;
+  Resampler resampler;
+  PcmEncoder pcmEncoder{[] {
+    r64_lock;
+    const auto random = r64i();
+    r64_unlock;
+    return random;
+  }};
+  PlaybackSamples playbackSamples{[](size_t frames) {
+    return (std::rand() % (frames - 2)) + 1;
+  }};
+  PlaybackSync playbackSync;
+
+  // used as the initials values for calculating the rate at which the source thinks it's sending
+  // frames
+  uint32_t initial_reference_timestamp;
+  uint64_t initial_reference_time;
+
+  // the ratio of the following should give us the operating rate, nominally 44,100
+  int64_t reference_to_previous_frame_difference;
+  uint64_t reference_to_previous_time_difference;
+
+  // debug variables
+  int request_sent;
+
+  pthread_mutex_t reference_time_mutex;
+
+
+  // int64_t play_segment_reference_frame;
+  // uint64_t play_segment_reference_frame_remote_time;
+
+
+
+  // remote control stuff. The port to which to send commands is not specified, so you have to use
+  // mdns to find it.
+  // at present, only avahi can do this
+
+  char *dacp_id; // id of the client -- used to find the port to be used
+  //  uint16_t dacp_port;          // port on the client to send remote control messages to, else
+  //  zero
+  char *dacp_active_remote;   // key to send to the remote controller
+  void *dapo_private_storage; // this is used for compatibility, if dacp stuff isn't enabled.
+
+private:
+  std::atomic<bool> retiring_{false};
+};

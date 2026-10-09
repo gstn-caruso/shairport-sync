@@ -1,0 +1,41 @@
+#pragma once
+#include <stdint.h>
+
+typedef enum sps_format_type
+#ifdef __cplusplus
+    : uint32_t
+#endif
+{
+  SPS_FORMAT_UNKNOWN = 0,
+  SPS_FORMAT_S8,
+  SPS_FORMAT_LOWEST = SPS_FORMAT_S8,
+  SPS_FORMAT_U8,
+  SPS_FORMAT_S16_LE,
+  SPS_FORMAT_S16_BE,
+  SPS_FORMAT_S24_LE,
+  SPS_FORMAT_S24_BE,
+  SPS_FORMAT_S24_3LE,
+  SPS_FORMAT_S24_3BE,
+  SPS_FORMAT_S32_LE,
+  SPS_FORMAT_S32_BE,
+  SPS_FORMAT_HIGHEST_NATIVE = SPS_FORMAT_S32_BE,
+  SPS_FORMAT_S16,
+  SPS_FORMAT_S24,
+  SPS_FORMAT_S32,
+  SPS_FORMAT_AUTO,
+  SPS_FORMAT_INVALID,
+} sps_format_t;
+
+typedef enum ssrc_type
+#ifdef __cplusplus
+    : uint32_t
+#endif
+{
+  SSRC_NONE = 0,
+  ALAC_44100_S16_2 = 0x0000FACE, // this is made up
+  ALAC_48000_S24_2 = 0x15000000,
+  AAC_44100_F24_2 = 0x16000000,
+  AAC_48000_F24_2 = 0x17000000,
+  AAC_48000_F24_5P1 = 0x27000000,
+  AAC_48000_F24_7P1 = 0x28000000,
+} ssrc_t;

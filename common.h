@@ -1,11 +1,9 @@
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #ifndef _COMMON_H
 #define _COMMON_H
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include <sys/types.h> // for mode_t
 #include <unistd.h>    // for useconds_t
@@ -13,6 +11,10 @@ extern "C" {
 #include "config.h"
 #include "definitions.h"
 #include "mdns.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 
 // struct sockaddr_in6 is bigger than struct sockaddr. derp
@@ -76,26 +78,7 @@ typedef enum {
 
 // ensure sps_format_sample_size_array and sps_format_description_string_array are in sync with
 // this!
-typedef enum {
-  SPS_FORMAT_UNKNOWN = 0,
-  SPS_FORMAT_S8,
-  SPS_FORMAT_LOWEST = SPS_FORMAT_S8,
-  SPS_FORMAT_U8,
-  SPS_FORMAT_S16_LE,
-  SPS_FORMAT_S16_BE,
-  SPS_FORMAT_S24_LE,
-  SPS_FORMAT_S24_BE,
-  SPS_FORMAT_S24_3LE,
-  SPS_FORMAT_S24_3BE,
-  SPS_FORMAT_S32_LE,
-  SPS_FORMAT_S32_BE,
-  SPS_FORMAT_HIGHEST_NATIVE = SPS_FORMAT_S32_BE,
-  SPS_FORMAT_S16,
-  SPS_FORMAT_S24,
-  SPS_FORMAT_S32,
-  SPS_FORMAT_AUTO,
-  SPS_FORMAT_INVALID,
-} sps_format_t;
+#include "audio_types.h"
 
 typedef enum {
   SPS_RATE_UNKNOWN = 0,
@@ -141,7 +124,10 @@ typedef enum {
 #define CHANNELS_TO_ENCODED_FORMAT(channels) ((channels & 0x7F) << 25)
 
 // up to 64 different SPS_FORMATs
-#define FORMAT_FROM_ENCODED_FORMAT(encoded_format) (encoded_format & 0x3F)
+static inline sps_format_t format_from_encoded_format(uint32_t encoded_format) {
+  return (sps_format_t)(encoded_format & 0x3F);
+}
+#define FORMAT_FROM_ENCODED_FORMAT(encoded_format) format_from_encoded_format(encoded_format)
 #define FORMAT_TO_ENCODED_FORMAT(format) (format & 0x3F)
 
 const char *short_format_description(int32_t encoded_format);
@@ -162,7 +148,6 @@ typedef struct {
   pthread_mutex_t lock;
   config_t *cfg;
   int endianness;
-  double airplay_volume; // stored here for reloading when necessary
   double default_airplay_volume;
   char *appName; // normally the app is called shairport-syn, but it may be symlinked
   char *password;
@@ -354,22 +339,6 @@ char *base64_enc(uint8_t *input, int length);
 char *base64_encode_so(const unsigned char *data, size_t input_length, char *encoded_data,
                        size_t *output_length);
 
-// given a volume (0 to -30) and high and low attenuations in dB*100 (e.g. 0 to -6000 for 0 to -60
-// dB), return an attenuation depending on a linear interpolation along the range
-double flat_vol2attn(double vol, long max_db, long min_db);
-
-// The intention behind dasl_tapered is that a given percentage change in volume should result in
-// the same percentage change in perceived loudness. For instance, doubling the volume level should
-// result in doubling the perceived loudness. With the range of AirPlay volume being from -30 to 0,
-// doubling the volume from -22.5 to -15 results in an increase of 10 dB. Similarly, doubling the
-// volume from -15 to 0 results in an increase of 10 dB. For compatibility with mixers having a
-// restricted attenuation range (e.g. 30 dB), "dasl_tapered" will switch to a flat profile at low
-// AirPlay volumes.
-double dasl_tapered_vol2attn(double vol, long max_db, long min_db);
-// given a volume (0 to -30) and high and low attenuations in dB*100 (e.g. 0 to -6000 for 0 to -60
-// dB), return an attenuation depending on the transfer function
-double vol2attn(double vol, long max_db, long min_db);
-
 // return a time in nanoseconds
 // Not defined for macOS
 uint64_t get_realtime_in_ns(void);
@@ -386,7 +355,6 @@ uint32_t uatoi(const char *nptr);
 extern shairport_cfg config;
 extern config_t config_file_stuff;
 
-extern uint64_t minimum_dac_queue_size;
 
 int config_lookup_non_empty_string(const config_t *cfg, const char *path, const char **value);
 int config_set_lookup_bool(config_t *cfg, const char *where, int *dst);
@@ -411,10 +379,10 @@ int mkpath(const char *path, mode_t mode);
 
 
 
-int do_pthread_setname(pthread_t *restrict thread, const char *format, ...);
+int do_pthread_setname(pthread_t *thread, const char *format, ...);
 
-int named_pthread_create(pthread_t *restrict thread, const pthread_attr_t *restrict attr,
-                         void *(*start_routine)(void *), void *restrict arg, const char *format,
+int named_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
+                         void *(*start_routine)(void *), void *arg, const char *format,
                          ...);
 int named_pthread_create_with_priority(pthread_t *thread, int priority,
                                        void *(*start_routine)(void *), void *arg,
@@ -428,8 +396,6 @@ extern pthread_mutex_t r64_mutex;
 
 char *get_version_string(); // mallocs a string space -- remember to free it afterwards
 
-int64_t generate_zero_frames(char *outp, size_t number_of_frames, int with_dither,
-                             int64_t random_number_in, uint32_t encoded_output_format);
 
 
 int string_update_with_size(char **str, int *flag, char *s, size_t len);
@@ -470,8 +436,8 @@ char *bnprintf(char *buffer, ssize_t max_bytes, const char *format, ...);
 extern char git_version_string[];
 #endif
 
-#endif // _COMMON_H
-
 #ifdef __cplusplus
 }
 #endif
+
+#endif // _COMMON_H
