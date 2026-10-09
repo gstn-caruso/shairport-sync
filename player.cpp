@@ -256,11 +256,7 @@ int setup_software_resampler(rtsp_conn_info *conn, ssrc_t ssrc) {
   // the player chain, so we need to set those parameters according to the SSRC:
 
   const auto format = AudioFormat::fromSsrc(ssrc);
-  conn->input_bit_depth = 16;
-  conn->input_effective_bit_depth = 16;
-  conn->input_bytes_per_frame = 4;
-  conn->input_rate = format ? format->sampleRate() : 48000;
-  conn->frames_per_packet = format ? format->framesPerPacket() : 1024;
+  const auto inputRate = format ? format->sampleRate() : 48000;
   channels = format ? format->channels() : 2;
   const auto suggested_output_format = format ? format->suggestedSampleFormat() : SPS_FORMAT_S32;
   if (!format)
@@ -276,11 +272,16 @@ int setup_software_resampler(rtsp_conn_info *conn, ssrc_t ssrc) {
 
   if (config.output->get_configuration) {
     output_configuration =
-        config.output->get_configuration(channels, conn->input_rate, suggested_output_format);
+        config.output->get_configuration(channels, inputRate, suggested_output_format);
   }
 
   // if you can set up a configuration...
   if (output_configuration != 0) {
+    conn->input_bit_depth = 16;
+    conn->input_effective_bit_depth = 16;
+    conn->input_bytes_per_frame = 4;
+    conn->input_rate = inputRate;
+    conn->frames_per_packet = format ? format->framesPerPacket() : 1024;
     if (config.current_output_configuration != output_configuration) {
       output_configuration_changed = 1;
       debug(2, "Connection %d: outgoing audio switching to: %s.", conn->connection_number,

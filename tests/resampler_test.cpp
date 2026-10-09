@@ -111,6 +111,7 @@ static int32_t chooseStereo(unsigned, unsigned, unsigned) {
   return CHANNELS_TO_ENCODED_FORMAT(2) | RATE_TO_ENCODED_FORMAT(44100) |
          FORMAT_TO_ENCODED_FORMAT(SPS_FORMAT_S16_LE);
 }
+static int32_t rejectOutput(unsigned, unsigned, unsigned) { return 0; }
 
 int main() {
   audio_output backend{};
@@ -148,6 +149,12 @@ int main() {
   result = reinterpret_cast<int16_t *>(bytes);
   assert(result[0] == 6 && result[1] == 0);
   free(bytes);
+  backend.get_configuration = rejectOutput;
+  const auto previousRate = session.input_rate, previousFrames = session.frames_per_packet;
+  const auto previousConfiguration = config.current_output_configuration;
+  setup_software_resampler(&session, ALAC_48000_S24_2);
+  assert(session.input_rate == previousRate && session.frames_per_packet == previousFrames);
+  assert(config.current_output_configuration == previousConfiguration);
   clear_software_resampler(&session);
   config.output = nullptr;
   Resampler resampler;
