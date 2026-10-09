@@ -28,6 +28,13 @@ AC_ARG_WITH([ssl], [AS_HELP_STRING([--with-ssl=openssl], [OpenSSL is required])]
 AS_IF([test "x$with_airplay_2" != xyes -o "x$with_pulseaudio" != xyes -o "x$with_avahi" != xyes -o "x$with_ffmpeg" != xyes -o "x$with_ssl" != xopenssl], [AC_MSG_ERROR([this fork requires AirPlay 2, PulseAudio, Avahi, FFmpeg and OpenSSL])])
 AM_INIT_AUTOMAKE([subdir-objects])
 AC_PROG_CC
+AC_PROG_CXX
+AC_LANG_PUSH([C++])
+saved_cxxflags="$CXXFLAGS"
+CXXFLAGS="$CXXFLAGS -std=c++11"
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <memory>]], [[std::unique_ptr<char[]> bytes(new char[1]);]])], [], [AC_MSG_ERROR([a C++11 compiler and standard library are required])])
+CXXFLAGS="$saved_cxxflags"
+AC_LANG_POP([C++])
 AC_PROG_RANLIB
 AC_CHECK_TOOL([AR], [ar], [:])
 AC_PROG_INSTALL
@@ -45,6 +52,7 @@ AC_CHECK_LIB([m], [exp], [], [AC_MSG_ERROR([libm required])])
 PKG_CHECK_MODULES([RECEIVER], [popt libconfig libpulse >= 0.9.2 avahi-client libssl libcrypto libsodium libgcrypt uuid libavutil libavcodec libavformat libswresample], [CFLAGS="$RECEIVER_CFLAGS $CFLAGS" LIBS="$RECEIVER_LIBS $LIBS"])
 PKG_CHECK_MODULES([PLIST], [libplist-2.0 >= 2.3.0], [CFLAGS="$PLIST_CFLAGS $CFLAGS" LIBS="$PLIST_LIBS $LIBS" AC_DEFINE([HAVE_LIBPLIST_GE_2_3_0], [1], [libplist >= 2.3.0])], [PKG_CHECK_MODULES([PLIST], [libplist-2.0 >= 2.0.0], [CFLAGS="$PLIST_CFLAGS $CFLAGS" LIBS="$PLIST_LIBS $LIBS"])])
 AC_CHECK_PROG([PLISTUTIL], [plistutil], [yes])
+CXXFLAGS="$RECEIVER_CFLAGS $PLIST_CFLAGS $CXXFLAGS"
 AS_IF([test "x$PLISTUTIL" != xyes], [AC_MSG_ERROR([plistutil required; install libplist-utils])])
 AC_CHECK_PROG([XXD], [xxd], [yes])
 AS_IF([test "x$XXD" != xyes], [AC_MSG_ERROR([xxd required])])

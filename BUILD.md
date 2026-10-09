@@ -2,8 +2,9 @@
 
 ## CMake / C++26 migration build
 
-The migration build runs alongside Autotools. Receiver sources remain C in this
-first slice; CMake enables C++26 for future modules and verifies real standard
+The migration build runs alongside Autotools. The structured buffer is a C++
+object behind a C API; the other receiver sources remain C. CMake enables C++26
+and verifies real standard
 library support by compiling, linking and running an expected/span/format/jthread probe.
 Both compilers must be Clang 23.1.3, pinned in `.tool-versions`, with libstdc++ 15.
 Use CMake 4.2 or newer and Ninja. The compiler does not supply the C++ library:
@@ -51,10 +52,11 @@ in-tree Autotools build left `config.h` in the source directory.
 
 ## Autotools build
 
-On Debian/Ubuntu, install the build dependencies:
+Autotools requires a C compiler and a C++11 compiler with its standard library.
+On Debian/Ubuntu, install the build dependencies (including `g++`):
 
 ```sh
-sudo apt-get install autoconf automake pkg-config libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
+sudo apt-get install autoconf automake g++ pkg-config libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
 ```
 
 Build with the default, mandatory AirPlay 2 Linux PulseAudio stack:

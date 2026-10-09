@@ -1,5 +1,3 @@
-#include <stddef.h>
-#include <stdint.h>
 #include "utilities/structured_buffer.h"
 #include <assert.h>
 #include <string.h>
