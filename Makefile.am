@@ -1,7 +1,7 @@
 ARFLAGS = cr
 AM_CFLAGS = --include=utilities/debug.h -Wshadow -fno-common -Wno-multichar -Wall -Wextra -Wformat=2 -Wno-clobbered -Wno-psabi -pthread -DSYSCONFDIR=\"$(sysconfdir)\"
 bin_PROGRAMS = shairport-sync
-AM_CXXFLAGS = -std=c++11 -Wall -Wextra -Wshadow -Wformat=2 -pthread
+AM_CXXFLAGS = -std=c++26 -Wall -Wextra -Wshadow -Wformat=2 -pthread
 noinst_LIBRARIES = lib_pair_ap.a lib_receiver.a
 lib_pair_ap_a_CFLAGS = -Wall -g -DCONFIG_GCRYPT -pthread --include=utilities/debug.h
 lib_pair_ap_a_SOURCES = pair_ap/pair.c pair_ap/pair_fruit.c pair_ap/pair_homekit.c pair_ap/pair-tlv.c

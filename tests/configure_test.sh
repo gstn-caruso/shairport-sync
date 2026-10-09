@@ -24,6 +24,22 @@ for option in --without-airplay-2 --without-pulseaudio --without-avahi --without
   fi
   grep -q 'requires\|only' configure.log
 done
+if CC=gcc CXX=g++ "$source_dir/configure" > configure.log 2>&1; then
+  echo 'Accepted unpinned compiler' >&2
+  exit 1
+fi
+grep -q 'Clang 23.1.3 is required' configure.log
+mkdir mixed-c mixed-cxx
+if (cd mixed-c && CC=gcc "$source_dir/configure" > configure.log 2>&1); then
+  echo 'Accepted unpinned C compiler' >&2
+  exit 1
+fi
+grep -q 'Clang 23.1.3 is required' mixed-c/configure.log
+if (cd mixed-cxx && CXX=g++ "$source_dir/configure" > configure.log 2>&1); then
+  echo 'Accepted unpinned C++ compiler' >&2
+  exit 1
+fi
+grep -q 'Clang 23.1.3 is required' mixed-cxx/configure.log
 configuration_header=config.h
 if [ -f "$source_dir/config.status" ]; then
   configuration_header=$source_dir/config.h
