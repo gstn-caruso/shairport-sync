@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -25,23 +26,30 @@ public:
 
 private:
   enum class Source { channel, silence, frontMono };
-  struct Selection { Source source = Source::silence; unsigned channel = 0; };
+  struct Selection {
+    Source source = Source::silence;
+    unsigned channel = 0;
+
+    template <typename Sample>
+    Sample sampleFrom(std::span<const Sample> frame) const {
+      if (source == Source::channel)
+        return frame[channel];
+      if (source == Source::frontMono)
+        return frame[0] / 2 + frame[1] / 2;
+      return 0;
+    }
+  };
   template <typename Sample>
   bool mapSamples(std::span<const Sample> input, std::span<Sample> output) const {
     if (sourceChannels_ == 0 || selections_.empty() || input.size() % sourceChannels_ != 0 ||
         output.size() != input.size() / sourceChannels_ * selections_.size())
       return false;
-    for (size_t frame = 0; frame < input.size() / sourceChannels_; ++frame)
-      for (size_t channel = 0; channel < selections_.size(); ++channel) {
-        const auto &selection = selections_[channel];
-        const auto source = input.subspan(frame * sourceChannels_, sourceChannels_);
-        Sample value = 0;
-        if (selection.source == Source::channel)
-          value = source[selection.channel];
-        else if (selection.source == Source::frontMono)
-          value = source[0] / 2 + source[1] / 2;
-        output[frame * selections_.size() + channel] = value;
-      }
+    for (size_t frame = 0; frame < input.size() / sourceChannels_; ++frame) {
+      const auto source = input.subspan(frame * sourceChannels_, sourceChannels_);
+      const auto destination = output.subspan(frame * selections_.size(), selections_.size());
+      std::ranges::transform(selections_, destination.begin(),
+                             [source](const Selection &selection) { return selection.sampleFrom(source); });
+    }
     return true;
   }
   unsigned sourceChannels_ = 0;
