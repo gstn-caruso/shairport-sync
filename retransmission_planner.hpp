@@ -25,7 +25,7 @@ private:
     uint16_t sequence;
     uint64_t noticed, lastRequest = 0;
     unsigned attempts = 0;
-    bool isDue(uint64_t now, RetryPolicy policy) const;
+    bool requestIfDue(uint64_t now, RetryPolicy policy);
   };
   static constexpr size_t capacity = 1024;
   std::array<std::optional<Missing>, capacity> missing_;
