@@ -12,6 +12,8 @@ static std::mutex observation;
 static std::condition_variable changed;
 static bool waiting = false, played = false;
 static bool waitingAfterPacket = false;
+static bool waitingWithArrival = false, referenceAvailable = true;
+static int prerollFrames = 0;
 static SessionState *activeSession = nullptr;
 static uint64_t expectedFrameTime = 999000000;
 static int16_t outputSample = 0;
@@ -24,12 +26,14 @@ extern "C" int __wrap_pthread_cond_timedwait(pthread_cond_t *condition, pthread_
     waiting = true;
     if (activeSession && activeSession->statistics.hasPlaybackSinceFlush())
       waitingAfterPacket = true;
+    if (activeSession && activeSession->statistics.hasArrivals())
+      waitingWithArrival = true;
   }
   changed.notify_one();
   return __real_pthread_cond_timedwait(condition, mutex, deadline);
 }
 extern "C" uint64_t __wrap_get_absolute_time_in_ns() { return 1000000000; }
-extern "C" int __wrap_have_timestamp_timing_information(rtsp_conn_info *) { return 1; }
+extern "C" int __wrap_have_timestamp_timing_information(rtsp_conn_info *) { return referenceAvailable; }
 extern "C" int __wrap_frame_to_local_time(uint32_t, uint64_t *time, rtsp_conn_info *) {
   *time = expectedFrameTime;
   return 0;
@@ -49,6 +53,11 @@ static int underrunDelay(long *frames) {
   return 0;
 }
 static int play(void *buffer, int frames, int type, uint32_t timestamp, uint64_t) {
+  if (type == play_samples_are_untimed) {
+    std::lock_guard lock(observation);
+    assert(frames > 0 && frames <= 4410);
+    prerollFrames += frames;
+  }
   if (type == play_samples_are_timed && timestamp == 1000) {
     assert(frames >= 0);
     const auto *bytes = static_cast<const uint8_t *>(buffer);
@@ -92,8 +101,11 @@ static std::vector<uint8_t> encodedConstant() {
   return bytes;
 }
 static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames, bool submit,
-                          bool mute = false) {
-  waiting = played = waitingAfterPacket = false;
+                          bool mute = false, bool waitOnly = false, bool anchor = true,
+                          int expectedPreroll = 0) {
+  waiting = played = waitingAfterPacket = waitingWithArrival = false;
+  referenceAvailable = anchor;
+  prerollFrames = 0;
   expectedFrameTime = frameTime;
   outputFrames = 0;
   auto packet = encodedConstant();
@@ -114,6 +126,7 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
   config.no_sync = 1;
   config.volume_control_profile = VCP_flat;
   config.volume_range_db = 12;
+  config.audio_backend_silent_lead_in_time_auto = 1;
   sharedVolumeLevel.remember(0);
   pthread_t player;
   assert(pthread_create(&player, nullptr, player_thread_func, &session) == 0);
@@ -129,7 +142,7 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
                            &session) == 352);
   {
     std::unique_lock lock(observation);
-    changed.wait(lock, [] { return waitingAfterPacket; });
+    changed.wait(lock, [=] { return waitOnly ? waitingWithArrival : waitingAfterPacket; });
   }
   assert(pthread_cancel(player) == 0);
   void *completion;
@@ -138,10 +151,11 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
   assert(pthread_mutex_destroy(&session.flush_mutex) == 0);
   assert(played == submit);
   const auto statistics = session.statistics.snapshot();
-  assert(statistics.packets == 1 && statistics.playNumber == 1);
+  assert(statistics.packets == 1 && statistics.playNumber == (waitOnly ? 0 : 1));
   assert(statistics.frames == (submit ? expectedFrames : 0));
   assert(statistics.measurements == (submit && expectedFrames > 0 ? 1 : 0));
-  assert(session.statistics.sessionSummary(1000000000).hasObservedFrame);
+  assert(session.statistics.sessionSummary(1000000000).hasObservedFrame == !waitOnly);
+  assert(prerollFrames == expectedPreroll);
   if (submit) {
     assert(outputFrames == expectedFrames);
     if (expectedFrames > 0) {
@@ -156,4 +170,8 @@ int main() {
   checkPlayback(true, 991000000, 0, false);
   checkPlayback(true, 992000000, 0, true);
   checkPlayback(false, 999000000, 352, true, true);
+  checkPlayback(false, 999000000, 0, false, false, true, false);
+  checkPlayback(false, 0, 0, false, false, true);
+  checkPlayback(false, 1150000000, 0, false, false, true, true, 6615);
+  checkPlayback(true, 1050000000, 0, false, false, true, true, 2205);
 }
