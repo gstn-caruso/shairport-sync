@@ -304,6 +304,15 @@ batch case, two shuffled repetitions and Release 221/221 (15.75s) passed; timeou
 is 5. Native callback assertions/order remain with fresh per-case state; production
 is unchanged and sanitizers/devices were not rerun.
 
+RTSP-message discovery (`ctest --test-dir build/redesign-release -R '^RtspMessage\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Eight independent cases preserve all parser/header, binary framing, owned-body,
+metadata, native reader cancellation and plist-release checks with original helper
+histories. Group (0.14s), exact cancellation case, two shuffled repetitions and
+Release 228/228 (15.86s) passed; each entry has timeout 5. Logging restores debug
+level; plist counts remain relative. Native assertions/plist wrap and the unchanged
+C message test remain; production is unchanged and sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
