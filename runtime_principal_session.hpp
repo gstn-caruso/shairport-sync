@@ -7,6 +7,7 @@
 
 class RuntimePrincipalSession {
 public:
+  struct SelectionTicket { int id; uint64_t generation; };
   struct Acquisition {
     bool accepted;
     bool alreadyCurrent;
@@ -33,6 +34,7 @@ public:
     if (current_)
       current_->beginRetirement();
     current_ = &session;
+    ++generation_;
     return {true, false, previous};
   }
   bool releaseIfCurrent(int id) {
@@ -40,6 +42,7 @@ public:
     if (!current_ || current_->connection_number != id)
       return false;
     current_ = nullptr;
+    ++generation_;
     return true;
   }
   std::optional<int> clear() {
@@ -48,6 +51,7 @@ public:
     if (current_)
       current_->beginRetirement();
     current_ = nullptr;
+    ++generation_;
     return previous;
   }
   bool isCurrent(int id) const {
@@ -69,10 +73,22 @@ public:
     std::lock_guard lock(mutex_);
     return action(current_);
   }
-  template <typename Action> bool applyIfCurrent(int id, Action action) {
+  std::optional<SelectionTicket> ticketFor(int id) const {
     std::lock_guard lock(mutex_);
     if (!current_ || current_->connection_number != id)
+      return std::nullopt;
+    return SelectionTicket{id, generation_};
+  }
+  template <typename Action> bool commitIfSelected(SelectionTicket ticket, Action action) {
+    std::lock_guard lock(mutex_);
+    if (!current_ || current_->connection_number != ticket.id || generation_ != ticket.generation)
       return false;
+    action();
+    return true;
+  }
+  template <typename Action> bool applyIfCurrent(int id, Action action) {
+    std::lock_guard lock(mutex_);
+    if (!current_ || current_->connection_number != id) return false;
     action(*current_);
     return true;
   }
@@ -84,4 +100,5 @@ public:
 private:
   mutable std::mutex mutex_;
   SessionState *current_ = nullptr;
+  uint64_t generation_ = 0;
 };
