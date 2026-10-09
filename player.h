@@ -17,11 +17,7 @@
 extern "C" {
 #endif
 
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-#include <libavutil/channel_layout.h>
-#include <libavutil/opt.h>
-#include <libswresample/swresample.h>
+#include "utilities/ffmpeg_api.h"
 
 #include "audio.h"
 

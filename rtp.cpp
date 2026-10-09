@@ -50,11 +50,7 @@
 // #include "plist_xml_strings.h"
 #include "ptp-utilities.h"
 #include "utilities/structured_buffer.h"
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-#include <libavutil/channel_layout.h>
-#include <libavutil/opt.h>
-#include <libswresample/swresample.h>
+#include "utilities/ffmpeg_api.h"
 #include <sodium.h>
 
 

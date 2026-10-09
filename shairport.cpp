@@ -45,13 +45,12 @@
 #include "config.h"
 #include "receiver.h"
 
-#include <libavutil/log.h>
+#include "utilities/ffmpeg_api.h"
 
 #include "ptp-utilities.h"
 #include "utilities/generate_device_uuid.h"
 #include "utilities/generate_random_uuid.h"
 #include <gcrypt.h>
-#include <libavcodec/avcodec.h>
 #include <sodium.h>
 #include <uuid/uuid.h>
 
@@ -1007,7 +1006,7 @@ if (config_lookup(config.cfg, "general.alac_decoder") != NULL)
   result[8] &= 0x3F;
   result[8] |= 0x80;
 
-  char *psi_uuid = malloc(UUID_STR_LEN + 1); // leave space for the NUL at the end
+  char *psi_uuid = static_cast<char *>(malloc(UUID_STR_LEN + 1));
   // Produces a UUID string at uuid consisting of lower-case letters
   uuid_unparse_lower(result, psi_uuid);
   config.airplay_psi = psi_uuid;
@@ -1920,7 +1919,7 @@ int shairport_receiver_main(int argc, char **argv) {
               enum AVChannel channel_index;
               for (channel_index = AV_CHAN_NONE;
                    ((channel_index < AV_CHAN_BOTTOM_FRONT_RIGHT) && (found == 0));
-                   channel_index++) {
+                   channel_index = static_cast<AVChannel>(channel_index + 1)) {
                 found = av_channel_name(buffer, buffer_size, channel_index);
                 if (found > 0) {
                   found = ((av_channel_name(buffer, buffer_size, channel_index) > 0) &&
