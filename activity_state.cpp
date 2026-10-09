@@ -14,3 +14,16 @@ ActivityState::Effect ActivityState::signifyActivity(bool active, double idleTim
   }
   return Effect::none;
 }
+
+ActivityState::Wait ActivityState::advance() noexcept {
+  if (state_ == am_active && !playerActive_) {
+    state_ = am_timing_out;
+    return Wait::beginTimeout;
+  }
+  if (state_ == am_timing_out) {
+    if (!playerActive_)
+      return Wait::deadline;
+    state_ = am_active;
+  }
+  return Wait::signal;
+}
