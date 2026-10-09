@@ -1,8 +1,8 @@
-#include "retransmission_planner.hpp"
+#include "packets/retransmission_planner.hpp"
 #include <gtest/gtest.h>
 
-static RetransmissionPlanner missingPacketsAcrossWraparound() {
-  RetransmissionPlanner planner;
+static shairport::packets::RetransmissionPlanner missingPacketsAcrossWraparound() {
+  shairport::packets::RetransmissionPlanner planner;
   planner.noteMissing(65535, 1000);
   planner.noteMissing(0, 1000);
   planner.noteMissing(2, 1000);
@@ -11,7 +11,7 @@ static RetransmissionPlanner missingPacketsAcrossWraparound() {
 
 TEST(RetransmissionPlanner, InitialAgeBoundaryGroupsContiguousRangesAcrossWraparound) {
   auto planner = missingPacketsAcrossWraparound();
-  const RetryPolicy policy{100, 50, 20, 1000};
+  const shairport::packets::RetryPolicy policy{100, 50, 20, 1000};
   EXPECT_TRUE(planner.due(1099, policy, {65535, 3}).empty());
   auto first = planner.due(1100, policy, {65535, 3});
   ASSERT_EQ(first.size(), 2);
@@ -23,7 +23,7 @@ TEST(RetransmissionPlanner, InitialAgeBoundaryGroupsContiguousRangesAcrossWrapar
 
 TEST(RetransmissionPlanner, RetryIntervalIncludesExactBoundary) {
   auto planner = missingPacketsAcrossWraparound();
-  const RetryPolicy policy{100, 50, 20, 1000};
+  const shairport::packets::RetryPolicy policy{100, 50, 20, 1000};
   planner.due(1100, policy, {65535, 3});
   EXPECT_TRUE(planner.due(1149, policy, {65535, 3}).empty());
   auto repeat = planner.due(1150, policy, {65535, 3});
@@ -31,10 +31,10 @@ TEST(RetransmissionPlanner, RetryIntervalIncludesExactBoundary) {
 }
 
 TEST(RetransmissionPlanner, RejectedChecksPreserveInitialAndRepeatedRequestBoundaries) {
-  RetransmissionPlanner planner;
+  shairport::packets::RetransmissionPlanner planner;
   planner.noteMissing(7, 1000);
-  const RetryPolicy policy{100, 50, 20, 1000};
-  const PacketWindow window{7, 8};
+  const shairport::packets::RetryPolicy policy{100, 50, 20, 1000};
+  const shairport::packets::PacketWindow window{7, 8};
 
   EXPECT_TRUE(planner.due(999, policy, window).empty());
   EXPECT_TRUE(planner.due(1099, policy, window).empty());
@@ -53,7 +53,7 @@ TEST(RetransmissionPlanner, RejectedChecksPreserveInitialAndRepeatedRequestBound
 
 TEST(RetransmissionPlanner, ResolutionShrinksRangesAtFinalOpportunityBoundary) {
   auto planner = missingPacketsAcrossWraparound();
-  const RetryPolicy policy{100, 50, 20, 1000};
+  const shairport::packets::RetryPolicy policy{100, 50, 20, 1000};
   planner.due(1100, policy, {65535, 3});
   planner.due(1150, policy, {65535, 3});
   planner.resolve(0);
@@ -65,7 +65,7 @@ TEST(RetransmissionPlanner, ResolutionShrinksRangesAtFinalOpportunityBoundary) {
 
 TEST(RetransmissionPlanner, ResetLeavesNoRetransmissionsDue) {
   auto planner = missingPacketsAcrossWraparound();
-  const RetryPolicy policy{100, 50, 20, 1000};
+  const shairport::packets::RetryPolicy policy{100, 50, 20, 1000};
   planner.due(1100, policy, {65535, 3});
   planner.due(1150, policy, {65535, 3});
   planner.resolve(0);

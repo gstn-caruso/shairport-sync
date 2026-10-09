@@ -165,7 +165,8 @@ size_t AudioPacketBuffer::discardPacketsStartingBefore(uint32_t timestamp) {
     advanceRevision();
   return discarded;
 }
-std::vector<ResendRange> AudioPacketBuffer::due(uint64_t now, RetryPolicy policy) {
+std::vector<shairport::packets::ResendRange>
+AudioPacketBuffer::due(uint64_t now, shairport::packets::RetryPolicy policy) {
   Lock lock(mutex_);
   return planner_.due(now, policy, {read_, write_});
 }

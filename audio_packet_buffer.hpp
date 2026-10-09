@@ -1,7 +1,7 @@
 #pragma once
 #include "audio_arrival.hpp"
 #include "queued_audio_packet.hpp"
-#include "retransmission_planner.hpp"
+#include "packets/retransmission_planner.hpp"
 #include <array>
 #include <pthread.h>
 #include <variant>
@@ -15,7 +15,7 @@ public:
     ArrivalKind kind;
     size_t samples;
     uint64_t revision;
-    std::vector<ResendRange> resendRanges{};
+    std::vector<shairport::packets::ResendRange> resendRanges{};
   };
   struct Front { AudioPacketMetadata packet; uint64_t revision; AVSampleFormat sampleFormat; };
   struct FlushEffect {
@@ -32,7 +32,7 @@ public:
   AudioPacketBuffer(const AudioPacketBuffer &) = delete;
   AudioPacketBuffer &operator=(const AudioPacketBuffer &) = delete;
   template <typename Factory> Admission accept(uint16_t sequence, uint64_t now, Factory factory,
-                                               RetryPolicy policy = {}) {
+                                               shairport::packets::RetryPolicy policy = {}) {
     Lock lock(mutex_);
     const auto kind = classifyArrival(sequence);
     if (kind == ArrivalKind::tooLate || kind == ArrivalKind::duplicate)
@@ -56,7 +56,7 @@ public:
   uint64_t requestFlush(uint32_t timestamp);
   FlushEffect applyFlush();
   size_t discardPacketsStartingBefore(uint32_t timestamp);
-  std::vector<ResendRange> due(uint64_t now, RetryPolicy policy);
+  std::vector<shairport::packets::ResendRange> due(uint64_t now, shairport::packets::RetryPolicy policy);
 
 private:
   struct Lock {
@@ -82,7 +82,7 @@ private:
   uint16_t read_ = 0, write_ = 0;
   bool synced_ = false;
   uint64_t revision_ = 0;
-  RetransmissionPlanner planner_;
+  shairport::packets::RetransmissionPlanner planner_;
   std::optional<FlushRequest> flush_;
   uint64_t nextFlushId_ = 0;
 };
