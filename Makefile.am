@@ -2,7 +2,8 @@ ARFLAGS = cr
 AM_CFLAGS = --include=utilities/debug.h -Wshadow -fno-common -Wno-multichar -Wall -Wextra -Wformat=2 -Wno-clobbered -Wno-psabi -pthread -DSYSCONFDIR=\"$(sysconfdir)\"
 bin_PROGRAMS = shairport-sync
 AM_CXXFLAGS = -std=c++26 -Wall -Wextra -Wshadow -Wformat=2 -pthread
-noinst_LIBRARIES = lib_pair_ap.a lib_receiver.a
+noinst_LIBRARIES = lib_pair_ap.a lib_receiver.a lib_receiver_text.a
+lib_receiver_text_a_SOURCES = utilities/service_name_formatter.cpp
 lib_pair_ap_a_CFLAGS = -Wall -g -DCONFIG_GCRYPT -pthread --include=utilities/debug.h
 lib_pair_ap_a_SOURCES = pair_ap/pair.c pair_ap/pair_fruit.c pair_ap/pair_homekit.c pair_ap/pair-tlv.c
 shairport_sync_LDADD = lib_receiver.a lib_pair_ap.a
@@ -43,7 +44,10 @@ install-exec-hook:
 	$(MKDIR_P) $(DESTDIR)$(sysconfdir)
 	$(INSTALL_DATA) $(top_srcdir)/scripts/shairport-sync.conf $(DESTDIR)$(sysconfdir)/shairport-sync.conf.sample
 endif
-check_PROGRAMS = rtsp-dispatch-test structured-buffer-test structured-buffer-cpp-test string-utilities-test
+check_PROGRAMS = rtsp-dispatch-test structured-buffer-test structured-buffer-cpp-test string-utilities-test string-utilities-cpp-test
+string_utilities_cpp_test_SOURCES = tests/string_utilities_cpp_test.cpp
+string_utilities_cpp_test_CXXFLAGS = $(AM_CXXFLAGS) -UNDEBUG
+string_utilities_cpp_test_LDADD = lib_receiver_text.a
 string_utilities_test_SOURCES = tests/string_utilities_test.c
 string_utilities_test_CFLAGS = $(AM_CFLAGS) -UNDEBUG
 string_utilities_test_LDADD = $(shairport_sync_LDADD)
@@ -61,7 +65,7 @@ rtsp_dispatch_test_LDADD = $(shairport_sync_LDADD)
 rtsp_dispatch_test_LINK = $(CXXLINK)
 TESTS += rtsp-dispatch-test
 TESTS += structured-buffer-test structured-buffer-cpp-test
-TESTS += string-utilities-test
+TESTS += string-utilities-test string-utilities-cpp-test
 noinst_HEADERS = receiver.h activity_monitor.h ap2_buffered_audio_processor.h ap2_event_message_handler.h \
   ap2_event_receiver.h audio.h bonjour_strings.h common.h definitions.h mdns.h \
   nqptp-shm-structures.h player.h ptp-utilities.h rtp.h rtsp.h \
@@ -69,4 +73,4 @@ noinst_HEADERS = receiver.h activity_monitor.h ap2_buffered_audio_processor.h ap
   utilities/buffered_read.h utilities/debug.h utilities/exit.h \
   utilities/generate_device_uuid.h utilities/generate_random_uuid.h utilities/mod23.h \
   utilities/network_utilities.h utilities/rtsp_message_utilities.h \
-  utilities/string_utilities.h utilities/structured_buffer.h utilities/structured_buffer.hpp
+  utilities/string_utilities.h utilities/string_utilities.hpp utilities/structured_buffer.h utilities/structured_buffer.hpp

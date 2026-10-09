@@ -61,6 +61,9 @@ add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/plists/get_info_response.c" "${CM
 
 include(GNUInstallDirs)
 option(INSTALL_CONFIG_FILES "Install the sample configuration" ON)
+add_library(receiver-text STATIC utilities/service_name_formatter.cpp)
+target_include_directories(receiver-text PUBLIC "${CMAKE_SOURCE_DIR}")
+target_compile_options(receiver-text PRIVATE -Wall -Wextra -Wshadow -Wformat=2)
 add_library(pair_ap STATIC pair_ap/pair.c pair_ap/pair_fruit.c pair_ap/pair_homekit.c pair_ap/pair-tlv.c)
 target_compile_definitions(pair_ap PRIVATE CONFIG_GCRYPT)
 add_library(receiver STATIC shairport.c bonjour_strings.c mdns.c mdns_avahi.c common.c rtp.c
@@ -90,6 +93,10 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(string-utilities-cpp-test tests/string_utilities_cpp_test.cpp)
+  target_compile_options(string-utilities-cpp-test PRIVATE -UNDEBUG)
+  target_link_libraries(string-utilities-cpp-test PRIVATE receiver-text)
+  add_test(NAME string-utilities-cpp COMMAND string-utilities-cpp-test)
   add_executable(string-utilities-test tests/string_utilities_test.c)
   target_compile_options(string-utilities-test PRIVATE -UNDEBUG)
   target_link_libraries(string-utilities-test PRIVATE receiver)
