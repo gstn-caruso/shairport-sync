@@ -1,4 +1,5 @@
 #include "session_registry.hpp"
+#include "cancellation_wait.hpp"
 #include <cassert>
 #include <cerrno>
 #include <condition_variable>
@@ -6,6 +7,7 @@
 #include <unistd.h>
 
 struct ShutdownScenario {
+  CancellationWait cancellation;
   std::mutex mutex;
   std::condition_variable changed;
   SessionRegistry *registry = nullptr;
@@ -31,15 +33,13 @@ static void finishWorker(void *argument) {
   scenario->changed.notify_all();
 }
 static void *blockWorker(void *argument) {
-  auto *session = static_cast<SessionState *>(argument);
   pthread_cleanup_push(finishWorker, argument);
   {
     std::lock_guard lock(scenario->mutex);
     scenario->ready = true;
   }
   scenario->changed.notify_all();
-  char byte;
-  read(session->fd, &byte, 1);
+  scenario->cancellation.block();
   pthread_cleanup_pop(1);
   return nullptr;
 }

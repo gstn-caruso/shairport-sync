@@ -1,5 +1,6 @@
 #include "session_registry.hpp"
 #include "runtime_principal_session.hpp"
+#include "cancellation_wait.hpp"
 #include <cassert>
 #include <cerrno>
 #include <condition_variable>
@@ -30,6 +31,7 @@ static bool cleanupEntered;
 static int cleanupCount;
 static bool permitCleanup;
 static bool cleanupFinished;
+static CancellationWait cancellation;
 static void finishCancelled(void *argument) {
   auto *session = static_cast<SessionState *>(argument);
   {
@@ -48,10 +50,8 @@ static void finishCancelled(void *argument) {
   completionChanged.notify_all();
 }
 static void *waitForCancellation(void *argument) {
-  auto *session = static_cast<SessionState *>(argument);
   pthread_cleanup_push(finishCancelled, argument);
-  char byte;
-  read(session->fd, &byte, 1);
+  cancellation.block();
   pthread_cleanup_pop(1);
   return nullptr;
 }

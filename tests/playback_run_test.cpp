@@ -1,15 +1,15 @@
 #include "playback_run.hpp"
+#include "cancellation_wait.hpp"
 #include <cassert>
 #include <cerrno>
 #include <unistd.h>
 #include <condition_variable>
 #include <thread>
 
-static int ready[2];
+static CancellationWait cancellation;
 static void *waitForStop(void *) {
-  const char byte = 1;
-  assert(write(ready[1], &byte, 1) == 1);
-  for (;;) pause();
+  cancellation.block();
+  return nullptr;
 }
 static int failCreation(pthread_t *, PlaybackRun::Routine, void *) { return EAGAIN; }
 static std::mutex ordering;
@@ -32,11 +32,9 @@ static void *waitWithCleanup(void *) {
 int main() {
   PlaybackRun run;
   assert(!run.isActive() && !run.stop());
-  assert(pipe(ready) == 0);
-  char byte;
   activeRun = &run;
   assert(run.start(waitWithCleanup, nullptr) == PlaybackRun::StartResult::started);
-  assert(read(ready[0], &byte, 1) == 1);
+  cancellation.waitForBlocked(1);
   bool firstStopped = false, secondStopped = false;
   std::thread first([&] { firstStopped = run.stop(); });
   {
@@ -53,12 +51,11 @@ int main() {
   second.join();
   assert(firstStopped && !secondStopped && !run.isActive());
   assert(run.start(waitForStop, nullptr) == PlaybackRun::StartResult::started);
-  assert(read(ready[0], &byte, 1) == 1);
+  cancellation.waitForBlocked(2);
   assert(run.isActive());
   assert(run.start(waitForStop, nullptr) == PlaybackRun::StartResult::alreadyOwned);
   assert(run.stop() && !run.isActive());
   assert(!run.stop());
   assert(run.start(waitForStop, nullptr, failCreation) == PlaybackRun::StartResult::failed);
   assert(!run.isActive() && !run.stop());
-  assert(close(ready[0]) == 0 && close(ready[1]) == 0);
 }

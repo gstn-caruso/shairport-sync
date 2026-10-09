@@ -61,6 +61,30 @@ runtime used by this project: pending cancellation is delivered at a later
 explicit cancellation point, after noexcept destruction has returned. Async
 pthread cancellation is outside that contract.
 
+## TSan cancellation fixtures
+
+LLVM 23.1.3 reproduced three lifecycle-test failures after cancelling workers
+blocked in `read` or `pause`. The reported cleanup accesses were protected by
+the same mutexes as their competing accesses. A minimal native-pthread probe
+reproduced the report with either blocking call, passed with
+`pthread_cond_wait`, and reported the deliberately unprotected access when the
+mutex was removed from that condition-wait variant.
+
+The version-pinned [LLVM interceptor source](https://github.com/llvm/llvm-project/blob/llvmorg-23.1.3/compiler-rt/lib/tsan/rtl/tsan_interceptors_posix.cpp#L362-L377)
+disables interceptors during blocking calls. Its
+[condition-wait cancellation cleanup](https://github.com/llvm/llvm-project/blob/llvmorg-23.1.3/compiler-rt/lib/tsan/rtl/tsan_interceptors_posix.cpp#L1282-L1322)
+explicitly restores that state before user cleanup because the interceptor
+destructors do not run on cancellation.
+
+The three lifecycle fixtures therefore block at a native condition wait. They
+still exercise real `pthread_cancel`, forced unwinding, competing retirement,
+cleanup callbacks and `pthread_join`; registry socket lifetime assertions stay
+enabled. The fixture releases its wait mutex before running outer cleanup.
+Production synchronization, sanitizer flags and race reporting are unchanged.
+This experiment establishes the specific blocking-call instrumentation limit;
+it does not establish cancellation of blocked network reads under TSan or
+justify dismissing other race reports. The probe was outside the repository.
+
 ## Device checks
 
 Packet trimming was reproduced as a null PCM access before its correction;
