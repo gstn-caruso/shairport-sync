@@ -10,15 +10,32 @@ clock_status_t RtpClock::observe(const ClockSample &sample, uint64_t now) noexce
     return status_;
   if (std::bit_cast<int64_t>(now - sample.mastershipStart) < 400000000)
     return status_ = clock_not_valid;
-  if (sample.id != remote_->id)
-    return status_ = clock_not_valid;
+  if (sample.id != remote_->id) {
+    if (!local_)
+      return status_ = clock_not_valid;
+    if (std::bit_cast<int64_t>(now - local_->updatedAt) > 5000000000) {
+      remote_->time = local_->time + sample.offset;
+      remote_->id = sample.id;
+    }
+    return status_;
+  }
   auto validSince = local_ ? local_->validSince : sample.mastershipStart;
   local_ = LocalAnchor{remote_->frame, remote_->time - sample.offset, now, validSince};
   return status_;
 }
 
-void RtpClock::setAnchor(uint64_t id, uint32_t frame, uint64_t time, uint64_t) noexcept {
+void RtpClock::setAnchor(uint64_t id, uint32_t frame, uint64_t time, uint64_t now) noexcept {
+  if (remote_ && local_ && remote_->id == id &&
+      (remote_->frame != frame || remote_->time != time) &&
+      std::bit_cast<int64_t>(now - local_->validSince) < 5000000000)
+    local_.reset();
   remote_ = RemoteAnchor{id, frame, time};
+}
+
+void RtpClock::reset() noexcept {
+  remote_.reset();
+  local_.reset();
+  status_ = clock_no_anchor_info;
 }
 
 std::optional<uint32_t> RtpClock::anchorFrame(uint32_t rate, double latency) const noexcept {
