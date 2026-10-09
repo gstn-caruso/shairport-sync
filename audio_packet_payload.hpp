@@ -1,5 +1,6 @@
 #pragma once
 #include "converted_audio.hpp"
+#include "leading_audio_trim.hpp"
 #include <cstring>
 
 struct audio_buffer_entry { // decoded audio packets
@@ -7,13 +8,18 @@ struct audio_buffer_entry { // decoded audio packets
     const int32_t remove = target - timestamp;
     if (remove <= 0)
       return;
-    void *destination = data.bytes().data();
-    auto *source = static_cast<char *>(destination) + bytesPerFrame * remove;
     const auto remaining = length - remove;
-    std::memmove(destination, source, remaining * bytesPerFrame);
+    if (data) {
+      void *destination = data.bytes().data();
+      auto *source = static_cast<char *>(destination) + bytesPerFrame * remove;
+      std::memmove(destination, source, remaining * bytesPerFrame);
+    } else {
+      trim_.add(remove);
+    }
     timestamp = target;
     length = remaining;
   }
+  bool prepareForConversion() { return !avframe || trim_.applyTo(*avframe); }
   uint8_t ready;
   uint8_t status; // flags
   uint16_t resend_request_number;
@@ -27,5 +33,7 @@ struct audio_buffer_entry { // decoded audio packets
   size_t length; // the length of the decoded data (or silence requested) in input frames
   ssrc_t ssrc;      // this is the type of this specific frame.
   AVFrame *avframe; // Decoded audio carried by FFmpeg before output conversion.
+private:
+  LeadingAudioTrim trim_;
 };
 using abuf_t = audio_buffer_entry;

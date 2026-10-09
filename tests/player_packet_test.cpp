@@ -30,4 +30,31 @@ int main() {
   pcm.trimBefore(102, 4);
   assert(pcm.timestamp == 102 && pcm.length == 2);
   assert(samples[0] == 5 && samples[3] == 8);
+  abuf_t decoded{};
+  OwnedAudioFrame frame(av_frame_alloc());
+  frame->format = AV_SAMPLE_FMT_S16P;
+  frame->sample_rate = 44100;
+  frame->nb_samples = 16;
+  av_channel_layout_default(&frame->ch_layout, 2);
+  assert(av_frame_get_buffer(frame.get(), 0) == 0);
+  for (int index = 0; index < 16; ++index) {
+    reinterpret_cast<int16_t *>(frame->data[0])[index] = index;
+    reinterpret_cast<int16_t *>(frame->data[1])[index] = 100 + index;
+  }
+  OwnedAudioFrame shared(av_frame_clone(frame.get()));
+  decoded.avframe = frame.release();
+  decoded.timestamp = 200;
+  decoded.length = 16;
+  decoded.trimBefore(205, 4);
+  assert(decoded.timestamp == 205 && decoded.length == 11);
+  assert(decoded.avframe->nb_samples == 16);
+  decoded.prepareForConversion();
+  assert(decoded.avframe->nb_samples == 11);
+  assert(av_frame_is_writable(decoded.avframe));
+  assert(reinterpret_cast<int16_t *>(decoded.avframe->data[0])[0] == 5);
+  assert(reinterpret_cast<int16_t *>(decoded.avframe->data[1])[0] == 105);
+  assert(shared->nb_samples == 16 && reinterpret_cast<int16_t *>(shared->data[0])[0] == 0);
+  decoded.prepareForConversion();
+  assert(decoded.avframe->nb_samples == 11);
+  av_frame_free(&decoded.avframe);
 }

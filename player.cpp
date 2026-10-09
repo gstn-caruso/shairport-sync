@@ -1639,7 +1639,10 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
         setupSoftwareResampler(conn, curframe->ssrc, curframe->avframe ?
             static_cast<AVSampleFormat>(curframe->avframe->format) : AV_SAMPLE_FMT_NONE);
       if (curframe->avframe) {
-        curframe->data = convertIncomingAudio(*conn, *curframe->avframe);
+        if (curframe->prepareForConversion())
+          curframe->data = convertIncomingAudio(*conn, *curframe->avframe);
+        else
+          debug(1, "Could not make a trimmed audio frame writable.");
         curframe->length = curframe->data.frames();
         av_frame_free(&curframe->avframe);
       } else if (curframe->length != 0) {
