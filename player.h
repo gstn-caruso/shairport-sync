@@ -54,6 +54,9 @@ typedef struct {
   sized_buffer plaintext_read_buffer;
   int is_encrypted;
   char *description;
+#ifdef __cplusplus
+  void release();
+#endif
 } pair_cipher_bundle; // cipher context and buffers
 
 typedef struct {

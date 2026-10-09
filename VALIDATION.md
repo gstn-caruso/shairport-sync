@@ -99,6 +99,20 @@ installed binary `--version`, and installed manual/configuration byte
 comparisons passed. Production behavior and native wrapper/object paths are
 unchanged; sanitizer builds and device playback were not rerun.
 
+The first PairCipherBundle contract failed compilation on the missing
+`release()` API (`pair-cipher-bundle-red.log` in ignored `build/redesign-release`).
+The explicit nonvirtual member releases actual allocated plaintext/encrypted
+buffers and description before the watched cipher marker; native wrappers
+record only these addresses in fixed storage and forward unrelated frees.
+The named case checks exactly-once order, cleared ownership/buffer metadata,
+and unchanged encryption flag. C++ standard layout and native C header syntax
+checks pass; no fields, destructor or RTSP cleanup call sites changed.
+All 14 bundle/RTSP/C-adapter cases and 236 Release CTest entries passed (14.80s).
+Staged installation, installed binary `--version`, and manual/configuration
+byte comparisons passed. Criterion #77 puts release beside owned state;
+sanitizers/device playback and later repeat/empty/integration cases were not
+run in this cycle.
+
 The first AudioInputState contract gives packet-shape coherence to a private
 leaf owner (Feature Envy, criterion #77). Its new named test first failed to
 compile because `audio_input_state.hpp` was absent; the red log is in ignored

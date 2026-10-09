@@ -223,6 +223,17 @@ static void buf_drain(sized_buffer *buf, ssize_t len) {
   buf->length -= len;
 }
 
+void pair_cipher_bundle::release() {
+  buf_drain(&plaintext_read_buffer, -1);
+  buf_drain(&encrypted_read_buffer, -1);
+  if (description != nullptr)
+    free(description);
+  description = nullptr;
+  auto *cipher = cipher_ctx;
+  cipher_ctx = nullptr;
+  pair_cipher_free(cipher);
+}
+
 static size_t buf_remove(sized_buffer *buf, uint8_t *out, size_t out_len) {
   size_t bytes = (buf->length > out_len) ? out_len : buf->length;
   memcpy(out, buf->data, bytes);
