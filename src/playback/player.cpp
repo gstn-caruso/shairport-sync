@@ -316,14 +316,12 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t timestamp, uint8
     if (mute)
       packet.mute();
     return packet;
-  }, policy);
-  if (admission.kind == ArrivalKind::first || admission.kind == ArrivalKind::overflow) {
-    if (admission.kind == ArrivalKind::overflow) {
+  }, policy, [conn, now, timestamp](ArrivalKind kind) noexcept {
+    if (kind == ArrivalKind::overflow)
       conn->last_seqno_valid = 0;
-    }
-  }
-  conn->playbackTiming.onArrival(admission.kind);
-  conn->statistics.recordArrival(now, timestamp, admission.kind);
+    conn->playbackTiming.onArrival(kind);
+    conn->statistics.recordArrival(now, timestamp, kind);
+  });
   pthread_setcancelstate(previousState, nullptr);
   for (const auto range : admission.resendRanges) {
     if (!config.disable_resend_requests) {
