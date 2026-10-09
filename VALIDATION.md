@@ -88,6 +88,14 @@ and full Release 90/90 (13.97s) passed; all entries have timeout 5. Native
 cancellation, C ABI and shell checks remain green. Production is unchanged;
 sanitizers/devices were not rerun.
 
+Receiver-encoding discovery (`ctest --test-dir build/redesign-release -R '^ReceiverEncoding\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Three cases retain unsupported encoding/wire SSRC and S16 checks; both C ABI width
+static assertions remain. Group (0.05s), exact unknown-SSRC case and full Release
+92/92 (13.90s) passed; each entry has timeout 5. Linkage CLI, native cancellation,
+C ABI and shell checks are preserved. Production is unchanged; sanitizers/devices
+were not rerun.
+
 CTest covers:
 
 | Test | Contract |
