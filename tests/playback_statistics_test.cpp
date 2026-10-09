@@ -18,4 +18,21 @@ int main() {
   assert(statistics.hasArrivals());
   assert(!statistics.snapshot().inputRateAvailable);
   assert(statistics.snapshot().packets == 501);
+  auto attempt = statistics.recordPlaybackAttempt(1000000000);
+  assert(attempt.playNumber == 1 && statistics.hasPlaybackSinceFlush());
+  assert(statistics.observeFrame(7));
+  statistics.recordSync({.windowSpreadNs = 2000000});
+  statistics.recordSubmitted(8000, 10, -1);
+  assert(!statistics.takeIntervalIfDue(1000));
+  statistics.recordSubmitted(1, -2, 1);
+  auto interval = statistics.takeIntervalIfDue(1000);
+  assert(interval && interval->frames == 8001 && interval->measurements == 2);
+  assert(interval->packets == 501 && interval->playNumber == 1 && interval->hasObservedFrame);
+  assert(interval->minimumBufferOccupancy == 7 && interval->corrections == 0);
+  assert(!statistics.takeIntervalIfDue(1000));
+  statistics.resetInputEpoch();
+  assert(!statistics.hasPlaybackSinceFlush());
+  assert(!statistics.observeFrame(9));
+  statistics.recordPlaybackAttempt(2000000000);
+  assert(statistics.sessionSummary(3000000000).elapsedSeconds == 2);
 }
