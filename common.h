@@ -78,30 +78,7 @@ typedef enum {
 
 // ensure sps_format_sample_size_array and sps_format_description_string_array are in sync with
 // this!
-typedef enum sps_format_type
-#ifdef __cplusplus
-    : uint32_t
-#endif
-{
-  SPS_FORMAT_UNKNOWN = 0,
-  SPS_FORMAT_S8,
-  SPS_FORMAT_LOWEST = SPS_FORMAT_S8,
-  SPS_FORMAT_U8,
-  SPS_FORMAT_S16_LE,
-  SPS_FORMAT_S16_BE,
-  SPS_FORMAT_S24_LE,
-  SPS_FORMAT_S24_BE,
-  SPS_FORMAT_S24_3LE,
-  SPS_FORMAT_S24_3BE,
-  SPS_FORMAT_S32_LE,
-  SPS_FORMAT_S32_BE,
-  SPS_FORMAT_HIGHEST_NATIVE = SPS_FORMAT_S32_BE,
-  SPS_FORMAT_S16,
-  SPS_FORMAT_S24,
-  SPS_FORMAT_S32,
-  SPS_FORMAT_AUTO,
-  SPS_FORMAT_INVALID,
-} sps_format_t;
+#include "audio_types.h"
 
 typedef enum {
   SPS_RATE_UNKNOWN = 0,

@@ -1,7 +1,6 @@
-#include "player.h"
+#include "audio_format.hpp"
 #include <cassert>
 #include <cstring>
-uint32_t get_ssrc_rate(ssrc_t);
 
 int main() {
   struct Expectation { ssrc_t ssrc; unsigned rate; size_t frames; bool aac; const char *name; };
@@ -14,14 +13,19 @@ int main() {
     {AAC_48000_F24_7P1, 48000, 1024, true, "AAC/48000/F24/7.1"}
   };
   for (const auto &format : formats) {
-    assert(ssrc_is_recognised(format.ssrc));
-    assert(bool(ssrc_is_aac(format.ssrc)) == format.aac);
-    assert(get_ssrc_rate(format.ssrc) == format.rate);
-    assert(get_ssrc_block_length(format.ssrc) == format.frames);
-    assert(std::strcmp(get_ssrc_name(format.ssrc), format.name) == 0);
+    auto actual = AudioFormat::fromSsrc(format.ssrc);
+    assert(actual);
+    assert(actual->isAac() == format.aac);
+    assert(actual->sampleRate() == format.rate);
+    assert(actual->framesPerPacket() == format.frames);
+    assert(actual->name() == format.name);
+    assert(actual->ssrc() == format.ssrc);
+    assert(actual->channels() == (format.ssrc == AAC_48000_F24_5P1 ? 6 :
+                                  format.ssrc == AAC_48000_F24_7P1 ? 8 : 2));
+    assert(actual->suggestedSampleFormat() == (format.ssrc == ALAC_44100_S16_2 ? SPS_FORMAT_S16 :
+                                               format.ssrc == ALAC_48000_S24_2 ? SPS_FORMAT_S24 :
+                                                                                 SPS_FORMAT_S32));
   }
-  assert(!ssrc_is_recognised(SSRC_NONE));
-  assert(!ssrc_is_recognised(static_cast<ssrc_t>(0xf00d)));
-  assert(get_ssrc_rate(SSRC_NONE) == 0);
-  assert(get_ssrc_block_length(static_cast<ssrc_t>(0xf00d)) == 0);
+  assert(!AudioFormat::fromSsrc(SSRC_NONE));
+  assert(!AudioFormat::fromSsrc(static_cast<ssrc_t>(0xf00d)));
 }

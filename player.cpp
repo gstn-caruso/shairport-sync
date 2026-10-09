@@ -29,6 +29,7 @@
  */
 
 #include "session_state.hpp"
+#include "audio_format.hpp"
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -229,107 +230,31 @@ void clear_software_resampler(rtsp_conn_info *conn) {
   }
 }
 
-int ssrc_is_recognised(ssrc_t ssrc) {
-  int response = 0;
-  switch (ssrc) {
-  case ALAC_44100_S16_2:
-  case ALAC_48000_S24_2:
-  case AAC_44100_F24_2:
-  case AAC_48000_F24_2:
-  case AAC_48000_F24_5P1:
-  case AAC_48000_F24_7P1:
-    response = 1;
-    break;
-  default:
-    break;
-  }
-  return response;
-}
+int ssrc_is_recognised(ssrc_t ssrc) { return AudioFormat::fromSsrc(ssrc).has_value(); }
 
 int ssrc_is_aac(ssrc_t ssrc) {
-  int response = 0;
-  switch (ssrc) {
-  case AAC_44100_F24_2:
-  case AAC_48000_F24_2:
-  case AAC_48000_F24_5P1:
-  case AAC_48000_F24_7P1:
-    response = 1;
-    break;
-  default:
-    break;
-  }
-  return response;
+  auto format = AudioFormat::fromSsrc(ssrc);
+  return format && format->isAac();
 }
 
-char ssrc_name[1024];
 const char *get_ssrc_name(ssrc_t ssrc) {
-  const char *response = NULL;
-  switch (ssrc) {
-  case ALAC_44100_S16_2:
-    response = "ALAC/44100/S16_LE/2";
-    break;
-  case ALAC_48000_S24_2:
-    response = "ALAC/48000/S24_LE/2";
-    break;
-  case AAC_44100_F24_2:
-    response = "AAC/44100/F24/2";
-    break;
-  case AAC_48000_F24_2:
-    response = "AAC/48000/F24/2";
-    break;
-  case AAC_48000_F24_5P1:
-    response = "AAC/48000/F24/5.1";
-    break;
-  case AAC_48000_F24_7P1:
-    response = "AAC/48000/F24/7.1";
-    break;
-  case SSRC_NONE:
-    response = "None (0)";
-    break;
-  default: {
-    snprintf(ssrc_name, sizeof(ssrc_name), "<unknown ssrc> (0x%" PRIx32 ")", ssrc);
-    response = ssrc_name;
-  } break;
-  }
-  return response;
+  if (auto format = AudioFormat::fromSsrc(ssrc))
+    return format->name().data();
+  if (ssrc == SSRC_NONE)
+    return "None (0)";
+  thread_local char unknown[64];
+  snprintf(unknown, sizeof(unknown), "<unknown ssrc> (0x%" PRIx32 ")", ssrc);
+  return unknown;
 }
 
 uint32_t get_ssrc_rate(ssrc_t ssrc) {
-  uint32_t response = 0;
-  switch (ssrc) {
-  case ALAC_44100_S16_2:
-  case AAC_44100_F24_2:
-    response = 44100;
-    break;
-  case ALAC_48000_S24_2:
-  case AAC_48000_F24_2:
-  case AAC_48000_F24_5P1:
-  case AAC_48000_F24_7P1:
-    response = 48000;
-    break;
-  default:
-    break;
-  }
-  return response;
+  auto format = AudioFormat::fromSsrc(ssrc);
+  return format ? format->sampleRate() : 0;
 }
 
 size_t get_ssrc_block_length(ssrc_t ssrc) {
-  size_t response = 0;
-  switch (ssrc) {
-  case ALAC_44100_S16_2:
-  case ALAC_48000_S24_2:
-    response = 352;
-    break;
-  case AAC_44100_F24_2:
-  case AAC_48000_F24_2:
-  case AAC_48000_F24_5P1:
-  case AAC_48000_F24_7P1:
-    response = 1024;
-    break;
-  default:
-    break;
-  }
-  return response;
+  auto format = AudioFormat::fromSsrc(ssrc);
+  return format ? format->framesPerPacket() : 0;
 }
 
 int setup_software_resampler(rtsp_conn_info *conn, ssrc_t ssrc) {
@@ -340,44 +265,16 @@ int setup_software_resampler(rtsp_conn_info *conn, ssrc_t ssrc) {
   // the output from the software resampler will be the input to the rest of
   // the player chain, so we need to set those parameters according to the SSRC:
 
-  // default values...
+  const auto format = AudioFormat::fromSsrc(ssrc);
   conn->input_bit_depth = 16;
   conn->input_effective_bit_depth = 16;
   conn->input_bytes_per_frame = 4;
-  conn->frames_per_packet = 352;
-
-  // most common values first, changed in the switch statement
-  conn->input_rate = 48000;
-  channels = 2;
-  conn->frames_per_packet = 1024;
-
-  sps_format_t suggested_output_format = SPS_FORMAT_S32; // this may be ignored
-
-  switch (ssrc) {
-  case ALAC_44100_S16_2:
-    conn->input_rate = 44100;
-    conn->frames_per_packet = 352;
-    suggested_output_format = SPS_FORMAT_S16;
-    break;
-  case ALAC_48000_S24_2:
-    conn->frames_per_packet = 352;
-    suggested_output_format = SPS_FORMAT_S24;
-    break;
-  case AAC_44100_F24_2:
-    conn->input_rate = 44100;
-    break;
-  case AAC_48000_F24_2:
-    break;
-  case AAC_48000_F24_5P1:
-    channels = 6;
-    break;
-  case AAC_48000_F24_7P1:
-    channels = 8;
-    break;
-  default:
+  conn->input_rate = format ? format->sampleRate() : 48000;
+  conn->frames_per_packet = format ? format->framesPerPacket() : 1024;
+  channels = format ? format->channels() : 2;
+  const auto suggested_output_format = format ? format->suggestedSampleFormat() : SPS_FORMAT_S32;
+  if (!format)
     debug(1, "Can't set rate for %s.", get_ssrc_name(ssrc));
-    break;
-  }
 
 // Now we ask the backend for its best format, giving it the channels, rate and format
 
@@ -435,27 +332,14 @@ int setup_software_resampler(rtsp_conn_info *conn, ssrc_t ssrc) {
     int64_t input_layout = AV_CH_LAYOUT_STEREO;            // default
     int64_t output_layout = AV_CH_LAYOUT_STEREO;           // default
 
-    switch (ssrc) {
-    case ALAC_44100_S16_2:
-    case ALAC_48000_S24_2: {
-      // seems as if the codec_context is correctly set up for ALAC but not for AAC-LC
+    if (format && !format->isAac())
       input_format = conn->codec_context->sample_fmt;
-    } break;
-    case AAC_44100_F24_2:
-    case AAC_48000_F24_2: {
-      // defaults are fine...
-    } break;
-    case AAC_48000_F24_5P1: {
+    if (channels == 6) {
       input_layout = config.six_channel_layout;
-      output_layout = config.six_channel_layout; // assume no mixdown
-    } break;
-    case AAC_48000_F24_7P1: {
+      output_layout = config.six_channel_layout;
+    } else if (channels == 8) {
       input_layout = config.eight_channel_layout;
-      output_layout = config.eight_channel_layout; // assume no mixdown
-    } break;
-    default:
-      debug(1, "unexpected SSRC: 0x%0x", ssrc);
-      break;
+      output_layout = config.eight_channel_layout;
     }
 
     av_opt_set_sample_fmt(swr, "in_sample_fmt", input_format, 0);
