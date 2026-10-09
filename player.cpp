@@ -362,7 +362,7 @@ int32_t rand_in_range(int32_t exclusive_range_limit) {
   return sp >> 32;
 }
 
-static inline void process_sample(int32_t sample, char **outp, sps_format_t format, int volume,
+void encodePlaybackSample(int32_t sample, char **outp, sps_format_t format, int volume,
                                   int dither, __attribute__((unused)) rtsp_conn_info *conn) {
   int64_t hyper_sample = sample;
   int result = 0;
@@ -568,6 +568,10 @@ static inline void process_sample(int32_t sample, char **outp, sps_format_t form
   }
 
   *outp += result;
+}
+
+void mutePlaybackPcm(char *output, size_t frames, uint32_t format, SessionState &session) {
+  generate_zero_frames(output, frames, session.enable_dither, session.previous_random_number, format);
 }
 
 static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
@@ -1081,7 +1085,7 @@ static int stuff_buffer_basic_32(int32_t *inptr, int length, sps_format_t l_outp
     for (i = 0; i < stuffsamp; i++) { // the whole frame, if no stuffing
       unsigned int channel;
       for (channel = 0; channel < conn->input_num_channels; channel++)
-        process_sample(*inptr++, &l_outptr, l_output_format, conn->fix_volume, dither, conn);
+        encodePlaybackSample(*inptr++, &l_outptr, l_output_format, conn->fix_volume, dither, conn);
     };
     if (tstuff) {
       if (tstuff == 1) {
@@ -1089,7 +1093,7 @@ static int stuff_buffer_basic_32(int32_t *inptr, int length, sps_format_t l_outp
         // interpolate one sample
         unsigned int channel;
         for (channel = 0; channel < conn->input_num_channels; channel++)
-          process_sample(mean_32(inptr[-2], inptr[0]), &l_outptr, l_output_format, conn->fix_volume,
+          encodePlaybackSample(mean_32(inptr[-2], inptr[0]), &l_outptr, l_output_format, conn->fix_volume,
                          dither, conn);
       } else if (stuff == -1) {
         // debug(3, "---------");
@@ -1107,7 +1111,7 @@ static int stuff_buffer_basic_32(int32_t *inptr, int length, sps_format_t l_outp
       for (i = stuffsamp; i < remainder; i++) {
         unsigned int channel;
         for (channel = 0; channel < conn->input_num_channels; channel++)
-          process_sample(*inptr++, &l_outptr, l_output_format, conn->fix_volume, dither, conn);
+          encodePlaybackSample(*inptr++, &l_outptr, l_output_format, conn->fix_volume, dither, conn);
       }
     }
   }
@@ -1144,7 +1148,7 @@ static int stuff_buffer_vernier(int32_t *inptr, int length, sps_format_t l_outpu
       for (i = 0; i < length; i++) { // the whole frame, if no stuffing
         unsigned int channel;
         for (channel = 0; channel < conn->input_num_channels; channel++)
-          process_sample(*inptr++, &l_outptr, l_output_format, conn->fix_volume, dither, conn);
+          encodePlaybackSample(*inptr++, &l_outptr, l_output_format, conn->fix_volume, dither, conn);
       }
     } else {
       // we are using 64 bit integers to represent fixed point numbers
@@ -1246,7 +1250,7 @@ static int stuff_buffer_vernier(int32_t *inptr, int length, sps_format_t l_outpu
           interpolated_sample_value_fp =
               interpolated_sample_value_fp / one_fp; // back to a 32-bit samplle
           int32_t interpolated_sample_value = interpolated_sample_value_fp;
-          process_sample(interpolated_sample_value, &l_outptr, l_output_format, conn->fix_volume,
+          encodePlaybackSample(interpolated_sample_value, &l_outptr, l_output_format, conn->fix_volume,
                          dither, conn);
         }
         current_input_sample_index_fp = current_input_sample_index_fp + step_size_fp;
@@ -2433,9 +2437,7 @@ void *player_thread_func(void *arg) {
                     debug(2, "nothing to play.");
                   else {
                     if (conn->software_mute_enabled) {
-                      generate_zero_frames(conn->outbuf, play_samples, conn->enable_dither,
-                                           conn->previous_random_number,
-                                           config.current_output_configuration);
+                      mutePlaybackPcm(conn->outbuf, play_samples, config.current_output_configuration, *conn);
                     }
                     uint64_t should_be_time;
                     frame_to_local_time(playback.timestamp, &should_be_time, conn);
@@ -2503,9 +2505,7 @@ void *player_thread_func(void *arg) {
                 debug(1, "NULL outbuf to play -- skipping it.");
               else {
                 if (conn->software_mute_enabled) {
-                  generate_zero_frames(conn->outbuf, play_samples, conn->enable_dither,
-                                       conn->previous_random_number,
-                                       config.current_output_configuration);
+                  mutePlaybackPcm(conn->outbuf, play_samples, config.current_output_configuration, *conn);
                 }
                 uint64_t should_be_time;
                 frame_to_local_time(playback.timestamp, &should_be_time, conn);
