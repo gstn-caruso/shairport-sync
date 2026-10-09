@@ -82,6 +82,23 @@ native linkage/configuration contracts. Staged installation, installed binary
 Production behavior and native wrapper/object paths are unchanged; sanitizer
 builds and device playback were not rerun.
 
+The synchronization/preroll isolation cycle puts `playback_sync.cpp` and
+`playback_timing.cpp` in `receiver-playback-timing`, with public
+`Threads::Threads`, original production compile settings and the C++26 source
+guard. Both tests link this library and GoogleTest directly. Before editing,
+a settled build and `touch audio.cpp` scheduled both test links; the actual
+selected-target build compiled `audio.cpp`, archived the receiver and linked
+both tests (0.43s). Afterwards the same selected targets did no work (0.01s);
+the subsequent full build compiled `audio.cpp`, archived the receiver and
+linked 29 executables (3.02s), leaving these tests untouched. Single
+measurements and native logs in ignored
+`build/redesign-release/playback-timing-*.log` establish isolation, not an
+overall speedup. All 16 named cases and 231 Release CTest entries passed
+(14.80s), including native linkage/configuration contracts. Staged installation,
+installed binary `--version`, and installed manual/configuration byte
+comparisons passed. Production behavior and native wrapper/object paths are
+unchanged; sanitizer builds and device playback were not rerun.
+
 The first discovery acceptance check was
 `ctest --test-dir build/cmake -R '^VolumePolicy\.' --no-tests=error`.
 It failed with no tests on the baseline. GoogleTest now registers six named
