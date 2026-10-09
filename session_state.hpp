@@ -5,6 +5,10 @@
 #include "rtp_clock.hpp"
 
 struct SessionState {
+  SessionState() = default;
+  SessionState(const SessionState &) = delete;
+  SessionState &operator=(const SessionState &) = delete;
+  ~SessionState();
   int connection_number;           // for debug ID purposes, nothing else...
   int is_playing;                  // set true by player_play, set false by player_stop
   int input_format_is_valid;       // set when the input format is known and set in this structure
@@ -22,7 +26,7 @@ struct SessionState {
   uint32_t maximum_latency;  // set if an a=max-latency: line appears in the ANNOUNCE message; zero
                              // otherwise
   int software_mute_enabled; // if we don't have a real mute that we can use
-  int fd;
+  int fd = -1;
   SOCKADDR remote, local;
   volatile int stop;
   volatile int running;

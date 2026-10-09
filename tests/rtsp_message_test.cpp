@@ -86,6 +86,7 @@ static void checkBinaryResponseFraming() {
   assert(std::string(received, count) == expected);
   msg_free(&response);
   close(sockets[0]);
+  connection.fd = -1;
   close(sockets[1]);
 }
 
@@ -122,6 +123,7 @@ static void checkCancellationReleasesRequest() {
   assert(completion == PTHREAD_CANCELED);
   assert(pending.message == nullptr);
   close(sockets[0]);
+  pending.connection.fd = -1;
   close(sockets[1]);
 }
 
