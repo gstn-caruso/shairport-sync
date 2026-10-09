@@ -66,14 +66,12 @@
 #include "rtp.h"
 #include "rtsp.h"
 
-#include "alac.h"
 
 
 #include "ptp-utilities.h"
 
 #include <libavutil/version.h>
 
-#include "loudness.h"
 
 #include "activity_monitor.h"
 
@@ -1522,18 +1520,15 @@ int32_t rand_in_range(int32_t exclusive_range_limit) {
 }
 
 static inline void process_sample(int32_t sample, char **outp, sps_format_t format, int volume,
-                                  int dither, rtsp_conn_info *conn) {
+                                  int dither, __attribute__((unused)) rtsp_conn_info *conn) {
   int64_t hyper_sample = sample;
   int result = 0;
 
-  if (conn->do_loudness != 0) {
-    hyper_sample <<=
-        32; // Do not apply volume as it has already been done with the Loudness DSP filter
-  } else {
+
     int64_t hyper_volume = (int64_t)volume << 16;
     hyper_sample = hyper_sample * hyper_volume; // this is 64 bit bit multiplication -- we may need
                                                 // to dither it down to its target resolution
-  }
+
 
   // next, do dither, if necessary
   if (dither) {
@@ -2072,8 +2067,6 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
                 // we need to set up the output device to correspond to
                 // the input format w.r.t. rate, depth and channels
                 // because we'll be sending silence before the first real frame.
-                debug(3, "reset loudness filters.");
-                loudness_reset();
                 // Set up the output chain, including the software resampler.
                 debug(2, "set up the output chain to %s for FFmpeg.",
                       get_ssrc_name(curframe->ssrc));
@@ -2832,7 +2825,6 @@ void player_thread_cleanup_handler(void *arg) {
              conn->connection_number, elapsedHours, elapsedMin, elapsedSec);
   }
 
-  mdns_dacp_monitor_set_id(NULL); // say we're not interested in following that DACP id any more
 
   // four possibilities
   // 1 -- Classic Airplay -- "AirPlay 1"
@@ -3044,7 +3036,6 @@ void *player_thread_func(void *arg) {
   int oldState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
 
-  mdns_dacp_monitor_set_id(conn->dacp_id);
 
   pthread_setcancelstate(oldState, NULL);
 
@@ -3909,42 +3900,8 @@ void *player_thread_func(void *arg) {
 
                 // Apply DSP here
 
-                loudness_update(conn);
 
-                if (conn->do_loudness
-                ) {
 
-                  float (*fbufs)[inframe->length] = malloc(conn->input_num_channels * sizeof(*fbufs));
-                  // debug(1, "size of array allocated is %d bytes.", conn->input_num_channels *
-                  // sizeof(*fbufs));
-                  int32_t *tbuf32 = conn->tbuf;
-
-                  // Deinterleave, and convert to float
-                  unsigned int i, j;
-                  for (i = 0; i < inframe->length; i++) {
-                    for (j = 0; j < conn->input_num_channels; j++) {
-                      fbufs[j][i] = tbuf32[conn->input_num_channels * i + j];
-                    }
-                  }
-
-                  if (conn->do_loudness) {
-                    loudness_process_blocks((float *)fbufs, inframe->length,
-                                            CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration),
-                                            (float)conn->fix_volume / 65536);
-                  }
-
-                  // Interleave and convert back to int32_t
-                  for (i = 0; i < inframe->length; i++) {
-                    for (j = 0; j < CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration); j++) {
-                      tbuf32[conn->input_num_channels * i + j] = fbufs[j][i];
-                    }
-                  }
-
-                  if (fbufs != NULL) {
-                    free(fbufs);
-                    fbufs = NULL;
-                  }
-                }
                 // }
                   if (config.packet_stuffing == ST_basic)
                     play_samples = stuff_buffer_basic_32(

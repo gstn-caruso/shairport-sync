@@ -413,52 +413,6 @@ srp_user_verify_session(struct SRPUser *usr, const unsigned char *bytes_HAMK)
 static int
 encrypt_gcm(unsigned char *ciphertext, int ciphertext_len, unsigned char *tag, unsigned char *plaintext, int plaintext_len, unsigned char *key, unsigned char *iv, const char **errmsg)
 {
-#ifdef CONFIG_OPENSSL
-  EVP_CIPHER_CTX *ctx;
-  int len;
-
-  *errmsg = NULL;
-
-  if ( !(ctx = EVP_CIPHER_CTX_new()) ||
-       (EVP_EncryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, NULL, NULL) != 1) ||
-       (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 16, NULL) != 1) ||
-       (EVP_EncryptInit_ex(ctx, NULL, NULL, key, iv) != 1) )
-    {
-      *errmsg = "Error initialising AES 128 GCM encryption";
-      goto error;
-    }
-
-  if (EVP_EncryptUpdate(ctx, ciphertext, &len, plaintext, plaintext_len) != 1)
-    {
-      *errmsg = "Error GCM encrypting";
-      goto error;
-    }
-
-  if (len > ciphertext_len)
-    {
-      *errmsg = "Bug! Buffer overflow";
-      goto error;
-    }
-
-  if (EVP_EncryptFinal_ex(ctx, ciphertext + len, &len) != 1)
-    {
-      *errmsg = "Error finalising GCM encryption";
-      goto error;
-    }
-
-  if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, AUTHTAG_LENGTH, tag) != 1)
-    {
-      *errmsg = "Error getting authtag";
-      goto error;
-    }
-
-  EVP_CIPHER_CTX_free(ctx);
-  return 0;
-
- error:
-  EVP_CIPHER_CTX_free(ctx);
-  return -1;
-#elif CONFIG_GCRYPT
   gcry_cipher_hd_t hd;
   gcry_error_t err;
 
@@ -503,7 +457,6 @@ encrypt_gcm(unsigned char *ciphertext, int ciphertext_len, unsigned char *tag, u
  error:
   gcry_cipher_close(hd);
   return -1;
-#endif
 }
 
 static int
@@ -511,38 +464,6 @@ encrypt_ctr(unsigned char *ciphertext, int ciphertext_len,
             unsigned char *plaintext1, int plaintext1_len, unsigned char *plaintext2, int plaintext2_len,
             unsigned char *key, unsigned char *iv, const char **errmsg)
 {
-#ifdef CONFIG_OPENSSL
-  EVP_CIPHER_CTX *ctx;
-  int len;
-
-  *errmsg = NULL;
-
-  if ( !(ctx = EVP_CIPHER_CTX_new()) || (EVP_EncryptInit_ex(ctx, EVP_aes_128_ctr(), NULL, key, iv) != 1) )
-    {
-      *errmsg = "Error initialising AES 128 CTR encryption";
-      goto error;
-    }
-
-  if ( (EVP_EncryptUpdate(ctx, ciphertext, &len, plaintext1, plaintext1_len) != 1) ||
-       (EVP_EncryptUpdate(ctx, ciphertext, &len, plaintext2, plaintext2_len) != 1) )
-    {
-      *errmsg = "Error CTR encrypting";
-      goto error;
-    }
-
-  if (EVP_EncryptFinal_ex(ctx, ciphertext + len, &len) != 1)
-    {
-      *errmsg = "Error finalising encryption";
-      goto error;
-    }
-
-  EVP_CIPHER_CTX_free(ctx);
-  return 0;
-
- error:
-  EVP_CIPHER_CTX_free(ctx);
-  return -1;
-#elif CONFIG_GCRYPT
   gcry_cipher_hd_t hd;
   gcry_error_t err;
 
@@ -586,7 +507,6 @@ encrypt_ctr(unsigned char *ciphertext, int ciphertext_len,
  error:
   gcry_cipher_close(hd);
   return -1;
-#endif
 }
 
 

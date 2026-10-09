@@ -30,17 +30,10 @@
 #include "player.h"
 #include "utilities/network_utilities.h"
 
-#ifdef CONFIG_METADATA
-#include "metadata/core.h"
-#endif
 
 void ap2_event_receiver_cleanup_handler(void *arg) {
   rtsp_conn_info *conn = (rtsp_conn_info *)arg;
   // debug(1, "Connection %d: AP2 Event Receiver Cleanup start.", conn->connection_number);
-#ifdef CONFIG_METADATA
-  // this is here to ensure it's only performed once during a teardown of a ptp stream
-  send_ssnc_metadata('disc', conn->client_ip_string, strlen(conn->client_ip_string), 1);
-#endif
   pthread_mutex_lock(&conn->event_sender_mutex);
   pthread_cleanup_push(mutex_unlock, &conn->event_sender_mutex);
   safe_socket_close(&conn->event_channel_fd);

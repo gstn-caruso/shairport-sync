@@ -12,13 +12,17 @@ int shm_open(const char *name, int flags, mode_t mode) {
   (void)flags;
   (void)mode;
   const char *version = getenv("NQPTP_TEST_VERSION");
-  if (strcmp(version, "missing") == 0) {
-    errno = ENOENT;
+  if (strcmp(version, "missing") == 0 || strcmp(version, "permission") == 0) {
+    errno = strcmp(version, "missing") == 0 ? ENOENT : EACCES;
     return -1;
   }
   int fd = memfd_create("nqptp-test", 0);
   struct shm_structure data = {0};
   data.version = atoi(version);
+  if (strcmp(version, "inconsistent") == 0) {
+    data.version = NQPTP_SHM_STRUCTURES_VERSION;
+    data.main.master_clock_id = 1;
+  }
   size_t length = strcmp(version, "truncated") == 0 ? 1 : sizeof(data);
   if (write(fd, &data, length) != (ssize_t)length) {
     close(fd);

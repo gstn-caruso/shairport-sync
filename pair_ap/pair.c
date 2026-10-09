@@ -53,14 +53,12 @@ is_initialized(void)
   if (sodium_init() == -1)
     return false;
 
-#if CONFIG_GCRYPT
   // According to libgcrypt documentation: "It is important that these
   // initialization steps are not done by a library but by the actual
   // application. A library using Libgcrypt might want to check for finished
   // initialization using:"
   if (!gcry_control (GCRYCTL_INITIALIZATION_FINISHED_P))
     return false;
-#endif
 
   return true;
 }
@@ -71,18 +69,6 @@ is_initialized(void)
 int
 hash_init(enum hash_alg alg, HashCTX *c)
 {
-#if CONFIG_OPENSSL
-  switch (alg)
-    {
-      case HASH_SHA1  : return SHA1_Init(&c->sha);
-      case HASH_SHA224: return SHA224_Init(&c->sha256);
-      case HASH_SHA256: return SHA256_Init(&c->sha256);
-      case HASH_SHA384: return SHA384_Init(&c->sha512);
-      case HASH_SHA512: return SHA512_Init(&c->sha512);
-      default:
-        return -1;
-    };
-#elif CONFIG_GCRYPT
   gcry_error_t err;
 
   err = gcry_md_open(c, alg, 0);
@@ -91,44 +77,18 @@ hash_init(enum hash_alg alg, HashCTX *c)
     return -1;
 
   return 0;
-#endif
 }
 
 int
 hash_update(__attribute__((unused)) enum hash_alg alg, HashCTX *c, const void *data, size_t len)
 {
-#if CONFIG_OPENSSL
-  switch (alg)
-    {
-      case HASH_SHA1  : return SHA1_Update(&c->sha, data, len);
-      case HASH_SHA224: return SHA224_Update(&c->sha256, data, len);
-      case HASH_SHA256: return SHA256_Update(&c->sha256, data, len);
-      case HASH_SHA384: return SHA384_Update(&c->sha512, data, len);
-      case HASH_SHA512: return SHA512_Update(&c->sha512, data, len);
-      default:
-        return -1;
-    };
-#elif CONFIG_GCRYPT
   gcry_md_write(*c, data, len);
   return 0;
-#endif
 }
 
 int
 hash_final(enum hash_alg alg, HashCTX *c, unsigned char *md)
 {
-#if CONFIG_OPENSSL
-  switch (alg)
-    {
-      case HASH_SHA1  : return SHA1_Final(md, &c->sha);
-      case HASH_SHA224: return SHA224_Final(md, &c->sha256);
-      case HASH_SHA256: return SHA256_Final(md, &c->sha256);
-      case HASH_SHA384: return SHA384_Final(md, &c->sha512);
-      case HASH_SHA512: return SHA512_Final(md, &c->sha512);
-      default:
-        return -1;
-    };
-#elif CONFIG_GCRYPT
   unsigned char *buf = gcry_md_read(*c, alg);
   if (!buf)
     return -1;
@@ -136,46 +96,19 @@ hash_final(enum hash_alg alg, HashCTX *c, unsigned char *md)
   memcpy(md, buf, gcry_md_get_algo_dlen(alg));
   gcry_md_close(*c);
   return 0;
-#endif
 }
 
 unsigned char *
 hash(enum hash_alg alg, const unsigned char *d, size_t n, unsigned char *md)
 {
-#if CONFIG_OPENSSL
-  switch (alg)
-    {
-      case HASH_SHA1  : return SHA1(d, n, md);
-      case HASH_SHA224: return SHA224(d, n, md);
-      case HASH_SHA256: return SHA256(d, n, md);
-      case HASH_SHA384: return SHA384(d, n, md);
-      case HASH_SHA512: return SHA512(d, n, md);
-      default:
-        return NULL;
-    };
-#elif CONFIG_GCRYPT
   gcry_md_hash_buffer(alg, md, d, n);
   return md;
-#endif
 }
 
 int
 hash_length(enum hash_alg alg)
 {
-#if CONFIG_OPENSSL
-  switch (alg)
-    {
-      case HASH_SHA1  : return SHA_DIGEST_LENGTH;
-      case HASH_SHA224: return SHA224_DIGEST_LENGTH;
-      case HASH_SHA256: return SHA256_DIGEST_LENGTH;
-      case HASH_SHA384: return SHA384_DIGEST_LENGTH;
-      case HASH_SHA512: return SHA512_DIGEST_LENGTH;
-      default:
-        return -1;
-    };
-#elif CONFIG_GCRYPT
   return gcry_md_get_algo_dlen(alg);
-#endif
 }
 
 int

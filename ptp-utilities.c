@@ -34,9 +34,6 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#ifdef COMPILE_FOR_FREEBSD
-#include <netinet/in.h>
-#endif
 #include <netdb.h>
 #include <sys/socket.h>
 #include <sys/types.h>

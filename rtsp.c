@@ -2061,6 +2061,7 @@ void handle_post(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
     debug(1, "Connection %d: Unhandled POST %s Content-Length %d", conn->connection_number,
           req->path, req->contentlength);
     debug_log_rtsp_message(2, "POST request", req);
+    resp->respcode = 501;
   }
 }
 
@@ -2952,6 +2953,25 @@ static void handle_get_parameter(__attribute__((unused)) rtsp_conn_info *conn, r
   resp->respcode = 200;
 }
 
+static int protocol_metadata_is_complete(const rtsp_message *message) {
+  if (message->content == NULL || message->contentlength < 8)
+    return 0;
+  uint32_t length;
+  memcpy(&length, message->content + 4, sizeof(length));
+  if (ntohl(length) != message->contentlength - 8)
+    return 0;
+  uint32_t offset = 8;
+  while (message->contentlength - offset >= 8) {
+    memcpy(&length, message->content + offset + 4, sizeof(length));
+    length = ntohl(length);
+    offset += 8;
+    if (length > message->contentlength - offset)
+      return 0;
+    offset += length;
+  }
+  return offset == message->contentlength;
+}
+
 static void handle_set_parameter(rtsp_conn_info *conn, rtsp_message *req, rtsp_message *resp) {
   debug(4, "Connection %d: SET_PARAMETER", conn->connection_number);
   // if (!req->contentlength)
@@ -2964,7 +2984,13 @@ static void handle_set_parameter(rtsp_conn_info *conn, rtsp_message *req, rtsp_m
   if (ct) {
     // debug(2, "SET_PARAMETER Content-Type:\"%s\".", ct);
 
-        if (!strncmp(ct, "text/parameters", 15)) {
+    if (!strncmp(ct, "application/x-dmap-tagged", 25)) {
+      resp->respcode = protocol_metadata_is_complete(req) ? 200 : 400;
+      return;
+    } else if (!strncmp(ct, "image/", 6)) {
+      resp->respcode = 200;
+      return;
+    } else if (!strncmp(ct, "text/parameters", 15)) {
       debug(3, "received parameters in SET_PARAMETER request.");
       handle_set_parameter_parameter(conn, req, resp); // this could be volume or progress
     } else {

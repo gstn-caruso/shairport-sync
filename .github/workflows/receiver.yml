@@ -1,0 +1,28 @@
+name: AirPlay 2 Linux PulseAudio
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  receiver:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y autoconf automake pkg-config libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
+      - name: Out-of-tree build and contracts
+        run: |
+          autoreconf -fi
+          mkdir build
+          cd build
+          ../configure
+          make -j2
+          make check -j2
+          make DESTDIR="$PWD/stage" install
+          test -f stage/usr/local/bin/shairport-sync
+          test -f stage/usr/local/etc/shairport-sync.conf.sample
+      - name: In-tree build
+        run: |
+          ./configure
+          make -j2
+          make check -j2

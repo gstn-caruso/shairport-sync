@@ -58,12 +58,6 @@ void threaded_poll_unlock(void *arg) { avahi_threaded_poll_unlock((AvahiThreaded
       debug(debugLevelArg, "avahi call response %d at __FILE__, __LINE__)", rc);                   \
   }
 
-typedef struct {
-  AvahiServiceBrowser *service_browser;
-  char *dacp_id;
-} dacp_browser_struct;
-
-dacp_browser_struct private_dbs;
 
 AvahiStringList *text_record_string_list = NULL;
 AvahiStringList *ap2_text_record_string_list = NULL;
@@ -79,94 +73,6 @@ static char *service_name = NULL;
 char *ap2_service_name = NULL;
 
 static int port = 0;
-
-static void resolve_callback(AvahiServiceResolver *r, AVAHI_GCC_UNUSED AvahiIfIndex interface,
-                             AVAHI_GCC_UNUSED AvahiProtocol protocol, AvahiResolverEvent event,
-                             const char *name, const char *type, const char *domain,
-                             __attribute__((unused)) const char *host_name,
-                             __attribute__((unused)) const AvahiAddress *address,
-                             __attribute__((unused)) uint16_t lport,
-                             __attribute__((unused)) AvahiStringList *txt,
-                             __attribute__((unused)) AvahiLookupResultFlags flags, void *userdata) {
-  // debug(1,"resolve_callback, event %d.", event);
-  assert(r);
-
-  dacp_browser_struct *dbs = (dacp_browser_struct *)userdata;
-
-  /* Called whenever a service has been resolved successfully or timed out */
-  switch (event) {
-  case AVAHI_RESOLVER_FAILURE:
-    debug(3, "(Resolver) Failed to resolve service '%s' of type '%s' in domain '%s': %s.", name,
-          type, domain, avahi_strerror(avahi_client_errno(avahi_service_resolver_get_client(r))));
-    break;
-  case AVAHI_RESOLVER_FOUND: {
-    //    char a[AVAHI_ADDRESS_STR_MAX], *t;
-    debug(3, "resolve_callback: Service '%s' of type '%s' in domain '%s':", name, type, domain);
-    if (dbs->dacp_id) {
-      const char *dacpid = strstr(name, "iTunes_Ctrl_");
-      if (dacpid) {
-        dacpid += strlen("iTunes_Ctrl_");
-        while (*dacpid == '0')
-          dacpid++; // skip any leading zeroes
-        if (strcmp(dacpid, dbs->dacp_id) == 0) {
-          debug(4, "resolve_callback: client dacp_id \"%s\" dacp port: %u.", dbs->dacp_id, lport);
-        }
-      } else {
-        debug(1, "Resolve callback: Can't see a DACP string in a DACP Record!");
-      }
-    }
-  }
-  }
-  // debug(1,"service resolver freed by resolve_callback");
-  avahi_service_resolver_free(r);
-}
-
-static void browse_callback(AvahiServiceBrowser *b, AvahiIfIndex interface, AvahiProtocol protocol,
-                            AvahiBrowserEvent event, const char *name, const char *type,
-                            const char *domain, AVAHI_GCC_UNUSED AvahiLookupResultFlags flags,
-                            void *userdata) {
-  // debug(1,"browse_callback, event %d.", event);
-  assert(b);
-  /* Called whenever a new services becomes available on the LAN or is removed from the LAN */
-  switch (event) {
-  case AVAHI_BROWSER_FAILURE:
-    warn("avahi: browser failure: %s.",
-         avahi_strerror(avahi_client_errno(avahi_service_browser_get_client(b))));
-    avahi_threaded_poll_quit(tpoll);
-    break;
-  case AVAHI_BROWSER_NEW:
-    // debug(1, "browse_callback: avahi_service_resolver_new for service '%s' of type '%s' in domain
-    // '%s'.", name, type, domain);
-    /* We ignore the returned resolver object. In the callback
-       function we free it. If the server is terminated before
-       the callback function is called the server will free
-       the resolver for us. */
-    if (!(avahi_service_resolver_new(client, interface, protocol, name, type, domain,
-                                     AVAHI_PROTO_UNSPEC, 0, resolve_callback, userdata)))
-      debug(1, "Failed to resolve service '%s': %s.", name,
-            avahi_strerror(avahi_client_errno(client)));
-    break;
-  case AVAHI_BROWSER_REMOVE:
-    debug(3, "(Browser) REMOVE: service '%s' of type '%s' in domain '%s'.", name, type, domain);
-    dacp_browser_struct *dbs = (dacp_browser_struct *)userdata;
-    const char *dacpid = strstr(name, "iTunes_Ctrl_");
-    if (dacpid) {
-      dacpid += strlen("iTunes_Ctrl_");
-      while (*dacpid == '0')
-        dacpid++; // skip any leading zeroes
-      if ((dbs->dacp_id) && (strcmp(dacpid, dbs->dacp_id) == 0)) {
-      }
-    } else {
-      debug(1, "Browse callback: Can't see a DACP string in a DACP Record!");
-    }
-    break;
-  case AVAHI_BROWSER_ALL_FOR_NOW:
-  case AVAHI_BROWSER_CACHE_EXHAUSTED:
-    // debug(1, "(Browser) %s.", event == AVAHI_BROWSER_CACHE_EXHAUSTED ? "CACHE_EXHAUSTED" :
-    // "ALL_FOR_NOW");
-    break;
-  }
-}
 
 static void register_service(AvahiClient *c);
 
@@ -299,16 +205,6 @@ static void client_callback(AvahiClient *c, AvahiClientState state,
       if (c) {
         // it seems that the avahi_threaded_poll thread is still running and locked here
         deregister_service(c); // delete the group
-        dacp_browser_struct *dbs = &private_dbs;
-        if (dbs->service_browser) {
-          int rc = avahi_service_browser_free(dbs->service_browser); // delete the service browser
-          if (rc != 0)
-            debug(1,
-                  "Error %d freeing the Avahi service browser after the Avahi client has been "
-                  "disconnected.",
-                  rc);
-          dbs->service_browser = NULL;
-        }
         avahi_client_free(c); // delete the client
       }
       if (!(client = avahi_client_new(avahi_threaded_poll_get(tpoll), AVAHI_CLIENT_NO_FAIL,
@@ -463,70 +359,7 @@ static void avahi_unregister(void) {
   }
 }
 
-void avahi_dacp_monitor_start(void) {
-  // debug(1, "avahi_dacp_monitor_start.");
-  memset((void *)&private_dbs, 0, sizeof(dacp_browser_struct));
-  debug(2, "avahi_dacp_monitor_start Avahi DACP monitor successfully started");
-  return;
-}
-
-void avahi_dacp_monitor_set_id(const char *dacp_id) {
-  // debug(1, "avahi_dacp_monitor_set_id: Search for DACP ID \"%s\".", t);
-  dacp_browser_struct *dbs = &private_dbs;
-
-  if (((dbs->dacp_id) && (dacp_id) && (strcmp(dbs->dacp_id, dacp_id) == 0)) ||
-      ((dbs->dacp_id == NULL) && (dacp_id == NULL))) {
-    debug(3, "no change...");
-  } else {
-    if (dbs->dacp_id)
-      free(dbs->dacp_id);
-    if (dacp_id == NULL)
-      dbs->dacp_id = NULL;
-    else {
-      char *t = strdup(dacp_id);
-      if (t) {
-        dbs->dacp_id = t;
-        pthread_avahi_threaded_poll_lock_and_push(tpoll);
-        // avahi_threaded_poll_lock(tpoll);
-        if (dbs->service_browser)
-          avahi_service_browser_free(dbs->service_browser);
-
-        if (!(dbs->service_browser =
-                  avahi_service_browser_new(client, AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC,
-                                            "_dacp._tcp", NULL, 0, browse_callback, (void *)dbs))) {
-          warn("failed to create avahi service browser: %s\n",
-               avahi_strerror(avahi_client_errno(client)));
-        }
-        pthread_cleanup_pop(1); // unlock the avahi_threaded_poll_lock
-        // avahi_threaded_poll_unlock(tpoll);
-        debug(2, "dacp_monitor for \"%s\"", dacp_id);
-      } else {
-        warn("avahi_dacp_set_id: can not allocate a dacp_id string in dacp_browser_struct.");
-      }
-    }
-  }
-}
-
-void avahi_dacp_monitor_stop() {
-  // debug(1, "avahi_dacp_monitor_stop");
-  dacp_browser_struct *dbs = &private_dbs;
-  // stop and dispose of everything
-  pthread_avahi_threaded_poll_lock_and_push(tpoll);
-  // avahi_threaded_poll_lock(tpoll);
-  if (dbs->service_browser) {
-    avahi_service_browser_free(dbs->service_browser);
-    dbs->service_browser = NULL;
-  }
-  pthread_cleanup_pop(1); // unlock the avahi_threaded_poll_lock
-  // avahi_threaded_poll_unlock(tpoll);
-  free(dbs->dacp_id);
-  debug(2, "avahi_dacp_monitor_stop Avahi DACP monitor successfully stopped");
-}
-
 mdns_backend mdns_avahi = {.name = "avahi",
                            .mdns_register = avahi_register,
                            .mdns_update = avahi_update,
-                           .mdns_unregister = avahi_unregister,
-                           .mdns_dacp_monitor_start = avahi_dacp_monitor_start,
-                           .mdns_dacp_monitor_set_id = avahi_dacp_monitor_set_id,
-                           .mdns_dacp_monitor_stop = avahi_dacp_monitor_stop};
+                           .mdns_unregister = avahi_unregister};

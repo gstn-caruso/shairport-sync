@@ -454,22 +454,22 @@ sps_format_t check_configuration_with_formats(
       sps_format_t ordered_initial_search_S8[] = {SPS_FORMAT_S8, SPS_FORMAT_U8};
       sps_format_t ordered_subsequent_search_8_LE[] = {SPS_FORMAT_S16_LE, SPS_FORMAT_S16_BE, SPS_FORMAT_S24_LE, SPS_FORMAT_S24_BE, SPS_FORMAT_S24_3LE, SPS_FORMAT_S24_3BE, SPS_FORMAT_S32_LE, SPS_FORMAT_S32_BE};
       sps_format_t ordered_subsequent_search_8_BE[] = {SPS_FORMAT_S16_BE, SPS_FORMAT_S16_LE, SPS_FORMAT_S24_BE, SPS_FORMAT_S24_LE, SPS_FORMAT_S24_3BE, SPS_FORMAT_S24_3LE, SPS_FORMAT_S32_BE, SPS_FORMAT_S32_LE};
-      
+
       sps_format_t ordered_initial_search_S16_LE[] = {SPS_FORMAT_S16_LE, SPS_FORMAT_S16_BE};
       sps_format_t ordered_initial_search_S16_BE[] = {SPS_FORMAT_S16_BE, SPS_FORMAT_S16_LE};
       sps_format_t ordered_subsequent_search_S16_LE[] = {SPS_FORMAT_S24_LE, SPS_FORMAT_S24_BE, SPS_FORMAT_S24_3LE, SPS_FORMAT_S24_3BE, SPS_FORMAT_S32_LE, SPS_FORMAT_S32_BE, SPS_FORMAT_S8, SPS_FORMAT_U8};
       sps_format_t ordered_subsequent_search_S16_BE[] = {SPS_FORMAT_S24_BE, SPS_FORMAT_S24_LE, SPS_FORMAT_S24_3BE, SPS_FORMAT_S24_3LE, SPS_FORMAT_S32_BE, SPS_FORMAT_S32_LE, SPS_FORMAT_S8, SPS_FORMAT_U8};
-      
+
       sps_format_t ordered_initial_search_S24_LE[] = {SPS_FORMAT_S24_LE, SPS_FORMAT_S24_BE};
       sps_format_t ordered_initial_search_S24_BE[] = {SPS_FORMAT_S24_BE, SPS_FORMAT_S24_LE};
       sps_format_t ordered_subsequent_search_S24_LE[] = {SPS_FORMAT_S24_3LE, SPS_FORMAT_S24_3BE, SPS_FORMAT_S32_LE, SPS_FORMAT_S32_BE, SPS_FORMAT_S16_LE, SPS_FORMAT_S16_BE, SPS_FORMAT_S8, SPS_FORMAT_U8};
       sps_format_t ordered_subsequent_search_S24_BE[] = {SPS_FORMAT_S24_3BE, SPS_FORMAT_S24_3LE, SPS_FORMAT_S32_BE, SPS_FORMAT_S32_LE, SPS_FORMAT_S16_BE, SPS_FORMAT_S16_LE, SPS_FORMAT_S8, SPS_FORMAT_U8};
-      
+
       sps_format_t ordered_initial_search_S24_3le[] = {SPS_FORMAT_S24_3LE, SPS_FORMAT_S24_3BE};
       sps_format_t ordered_initial_search_S24_3be[] = {SPS_FORMAT_S24_3BE, SPS_FORMAT_S24_3LE};
       sps_format_t ordered_subsequent_search_S24_3le[] = {SPS_FORMAT_S24_LE, SPS_FORMAT_S24_BE, SPS_FORMAT_S32_LE, SPS_FORMAT_S32_BE, SPS_FORMAT_S16_LE, SPS_FORMAT_S16_BE, SPS_FORMAT_S8, SPS_FORMAT_U8};
       sps_format_t ordered_subsequent_search_S24_3be[] = {SPS_FORMAT_S24_BE, SPS_FORMAT_S24_LE, SPS_FORMAT_S32_BE, SPS_FORMAT_S32_LE, SPS_FORMAT_S16_BE, SPS_FORMAT_S16_LE, SPS_FORMAT_S8, SPS_FORMAT_U8};
-      
+
       sps_format_t ordered_initial_search_S32_LE[] = {SPS_FORMAT_S32_LE, SPS_FORMAT_S32_BE};
       sps_format_t ordered_initial_search_S32_BE[] = {SPS_FORMAT_S32_BE, SPS_FORMAT_S32_LE};
       sps_format_t ordered_subsequent_search_S32_LE[] = {SPS_FORMAT_S24_LE, SPS_FORMAT_S24_BE, SPS_FORMAT_S24_3LE, SPS_FORMAT_S24_3BE, SPS_FORMAT_S16_LE, SPS_FORMAT_S16_BE, SPS_FORMAT_S8, SPS_FORMAT_U8};
@@ -874,7 +874,6 @@ int32_t search_for_suitable_configuration(unsigned int channels, unsigned int ra
             // check for the exact format only under these conditions, otherwise look for the best
             (config.ignore_volume_control != 0) &&
             (config.volume_max_db_set == 0) &&
-            (config.loudness_enabled == 0) &&
             (local_rate == rate) &&
             (local_channels >= channels) &&
             (config.playback_mode != ST_mono)
@@ -884,7 +883,7 @@ int32_t search_for_suitable_configuration(unsigned int channels, unsigned int ra
             local_format = check_configuration_with_formats(
                 local_channels, local_rate, (sps_format_t)format, check_configuration);
           }
-          
+
           if (local_format == SPS_FORMAT_UNKNOWN) {
             // debug(1, "check best, with any format");
             local_format = check_configuration_with_formats(local_channels, local_rate,

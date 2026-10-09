@@ -148,6 +148,17 @@ int has_fltp_capable_aac_decoder(void) {
 }
 
 
+static void reject_removed_settings(config_t *settings) {
+  const char *removed[] = {"alsa", "jack", "sndio", "ao", "soundio", "pipewire", "pipe",
+                           "stdout", "dummy", "dsp", "metadata", "dbus", "mpris", "mqtt",
+                           "general.service_type", "general.output_backend", "general.mdns_backend",
+                           "general.alac_decoder", "diagnostics.get_plist_metadata"};
+  for (size_t index = 0; index < sizeof(removed) / sizeof(removed[0]); index++) {
+    if (config_lookup(settings, removed[index]) != NULL)
+      die("%s is a removed option in this AirPlay 2 Linux PulseAudio fork.", removed[index]);
+  }
+}
+
 void usage(char *progname) {
 
   if (has_fltp_capable_aac_decoder() == 0) {
@@ -175,24 +186,16 @@ void usage(char *progname) {
     printf("    -c, --configfile=FILE   Read configuration settings from FILE. Default is %s.\n", configuration_file_path);
     printf("    -a, --name=NAME         Set service name. Default is the hostname with first letter capitalised.\n");
     printf("    --password=PASSWORD     Require PASSWORD to connect. Default is no password.\n");
-    printf("    -p, --port=PORT         Set RTSP listening port. Default 5000; 7000 for AirPlay 2.\n");
-    printf("    -L, --latency=FRAMES    [Deprecated] Set the latency for audio sent from an unknown device.\n");
+    printf("    -p, --port=PORT         Set RTSP listening port. Default 7000.\n");
     printf("                            The default is to set it automatically.\n");
     printf("    -S, --stuffing=MODE     Set how to adjust current latency to match desired latency, where:\n");
     printf("                            \"vernier\" recodes a packet of frames to a new packet containing more or fewer frames. Recommended for low powered devices;\n");
     printf("                            \"basic\" inserts or deletes audio frames from packet frames with low processor overhead; and\n");
-    printf("                            \"soxr\" uses libsoxr to minimally resample packet frames -- moderate floating point processor overhead.\n");
-    printf("                            The default \"auto\" setting chooses vernier or soxr depending on processor capability.\n");
-    printf("                            The \"soxr\" option is only available if built with soxr support.\n");
     printf("    -B, --on-start=PROGRAM  Run PROGRAM when playback is about to begin.\n");
     printf("    -E, --on-stop=PROGRAM   Run PROGRAM when playback has ended.\n");
     printf("                            For -B and -E options, specify the full path to the program and arguments, e.g. \"/usr/bin/logger\".\n");
     printf("                            Executable scripts work, but the file must be marked executable have the appropriate shebang (#!/bin/sh) on the first line.\n");
     printf("    -w, --wait-cmd          Wait until the -B or -E programs finish before continuing.\n");
-    printf("    -o, --output=BACKEND    Select audio backend. They are listed at the end of this text. The first one is the default.\n");
-    printf("    -m, --mdns=BACKEND      Use the mDNS backend named BACKEND to advertise the AirPlay service through Bonjour/ZeroConf.\n");
-    printf("                            They are listed at the end of this text.\n");
-    printf("                            If no mdns backend is specified, they are tried in order until one works.\n");
     printf("    -r, --resync=THRESHOLD  [Deprecated] resync if error exceeds this number of frames. Set to 0 to stop resyncing.\n");
     printf("    -t, --timeout=SECONDS   Go back to idle mode from play mode after a break in communications of this many seconds (default 60). Set to 0 never to exit play mode.\n");
     printf("    --tolerance=TOLERANCE   [Deprecated] Allow a synchronization error of TOLERANCE frames (default 88) before trying to correct it.\n");
@@ -214,6 +217,7 @@ int parse_options(int argc, char **argv) {
   // there are potential memory leaks here -- it's called a second time, previously allocated
   // strings will dangle.
   char *cli_service_type_string = NULL;
+  char *cli_backend_string = NULL;
   char *raw_service_name = NULL; /* Used to pick up the service name before possibly expanding it */
   char *stuffing = NULL;         /* used for picking up the stuffing option */
   signed char c; /* used for argument parsing */
@@ -233,11 +237,11 @@ int parse_options(int argc, char **argv) {
       {"displayConfig", 'X', POPT_ARG_NONE, &display_config_selected, 0, NULL, NULL},
       {"port", 'p', POPT_ARG_INT, &config.port, 0, NULL, NULL},
       {"name", 'a', POPT_ARG_STRING, &raw_service_name, 0, NULL, NULL},
-      {"output", 'o', POPT_ARG_STRING, &config.output_name, 0, NULL, NULL},
+      {"output", 'o', POPT_ARG_STRING, &cli_backend_string, 0, NULL, NULL},
       {"on-start", 'B', POPT_ARG_STRING, &config.cmd_start, 0, NULL, NULL},
       {"on-stop", 'E', POPT_ARG_STRING, &config.cmd_stop, 0, NULL, NULL},
       {"wait-cmd", 'w', POPT_ARG_NONE, &config.cmd_blocking, 0, NULL, NULL},
-      {"mdns", 'm', POPT_ARG_STRING, &config.mdns_name, 0, NULL, NULL},
+      {"mdns", 'm', POPT_ARG_STRING, &cli_backend_string, 0, NULL, NULL},
       {"latency", 'L', POPT_ARG_INT, &config.userSuppliedLatency, 0, NULL, NULL},
       {"stuffing", 'S', POPT_ARG_STRING, &stuffing, 'S', NULL, NULL},
       {"resync", 'r', POPT_ARG_INT, &resync_threshold_in_frames, 'r', NULL, NULL},
@@ -310,7 +314,14 @@ int parse_options(int argc, char **argv) {
     die("%s: %s", poptBadOption(optCon, POPT_BADOPTION_NOALIAS), poptStrerror(c));
   }
 
+  if (cli_backend_string != NULL)
+    die("backend selection is a removed option; PulseAudio and Avahi are required.");
+  if (daemonisewith || daemonisewithout || killOption)
+    die("daemon management is a removed option; use the systemd user service.");
+  if (stuffing != NULL && strcasecmp(stuffing, "soxr") == 0)
+    die("soxr is a removed option; use basic, vernier or auto interpolation.");
   poptFreeContext(optCon);
+
 
   if (config.timeout != 0) {
     if (config.timeout < 60) {
@@ -322,12 +333,7 @@ int parse_options(int argc, char **argv) {
 
   if (log_to_syslog_selected) {
     inform("the diagnostic \"log-to-syslog\" command_line_option is obsolete and is ignored. All logging is to STDERR, which is directed to the system log when Shairport Sync is running as a service.");
-/*
-#ifdef CONFIG_LIBDAEMON
-    log_to_default = 0; // a specific log output modality has been selected.
-#endif
-    log_to_syslog();
-*/
+
   }
 
 
@@ -338,8 +344,6 @@ int parse_options(int argc, char **argv) {
   config.fixedLatencyOffset = 11025; // this sounds like it works properly.
   config.diagnostic_drop_packet_fraction = 0.0;
   config.active_state_timeout = 10.0;
-  config.soxr_delay_threshold = 30 * 1000000; // the soxr measurement time (nanoseconds) of two
-                                              // oneshots must not exceed this if soxr interpolation
                                               // is to be chosen automatically.
   config.volume_range_hw_priority =
       0; // if combining software and hardware volume control, give the software priority
@@ -382,7 +386,6 @@ int parse_options(int argc, char **argv) {
     config.firmware_version = strdup(PACKAGE_VERSION);
 
 
-  config.loudness_reference_volume_db = -16;
 
 
   // config_setting_t *setting;
@@ -410,6 +413,7 @@ int parse_options(int argc, char **argv) {
                               1); // allow autoconversion from int/float to int/float
       // make config.cfg point to it
       config.cfg = &config_file_stuff;
+      reject_removed_settings(config.cfg);
 
       /* See if a specific service type has been requested */
       if (config_lookup_non_empty_string(config.cfg, "general.service_type", &str)) {
@@ -420,13 +424,6 @@ int parse_options(int argc, char **argv) {
         raw_service_name = (char *)str;
       }
 
-      /* Get the mdns_backend setting. */
-      if (config_lookup_non_empty_string(config.cfg, "general.mdns_backend", &str))
-        config.mdns_name = (char *)str;
-
-      /* Get the output_backend setting. */
-      if (config_lookup_non_empty_string(config.cfg, "general.output_backend", &str))
-        config.output_name = (char *)str;
 
       /* Get the port setting. */
       if (config_lookup_int(config.cfg, "general.port", &value)) {
@@ -467,9 +464,7 @@ int parse_options(int argc, char **argv) {
         else if (strcasecmp(str, "auto") == 0)
           config.packet_stuffing = ST_auto;
         else if (strcasecmp(str, "soxr") == 0)
-          warn("The soxr option not available because this version of shairport-sync was built "
-               "without libsoxr "
-               "support. Change the \"general/interpolation\" setting in the configuration file.");
+          die("soxr is a removed option; use auto, basic or vernier interpolation.");
         else
           die("Invalid interpolation option choice \"%s\". It should be \"auto\", \"basic\", "
               "\"vernier\" or "
@@ -517,16 +512,6 @@ int parse_options(int argc, char **argv) {
               value);
       }
 
-      if (config_lookup_string(config.cfg, "diagnostics.get_plist_metadata", &str)) {
-        if (strcasecmp(str, "no") == 0)
-          config.get_plist_metadata = 0;
-        else if (strcasecmp(str, "yes") == 0)
-          config.get_plist_metadata = 1;
-        else
-          die("Invalid \"get_plist_metadata\" option choice \"%s\". It should be \"yes\" or "
-              "\"no\"",
-              str);
-      }
 
       /* Get the verbosity setting. */
       if (config_lookup_int(config.cfg, "diagnostics.log_verbosity", &value)) {
@@ -616,22 +601,7 @@ int parse_options(int argc, char **argv) {
 
       /* Get the diagnostics output default. */
       if (config_lookup_string(config.cfg, "diagnostics.log_output_to", &str)) {
-      /*
-#ifdef CONFIG_LIBDAEMON
-        log_to_default = 0; // a specific log output modality has been selected.
-#endif
-        if (strcasecmp(str, "syslog") == 0)
-          log_to_syslog();
-        else if (strcasecmp(str, "stdout") == 0) {
-          log_to_stdout();
-        } else if (strcasecmp(str, "stderr") == 0) {
-          log_to_stderr();
-        } else {
-          config.log_file_path = (char *)str;
-          config.log_fd = -1;
-          log_to_file();
-        }
-      */
+
         warn("the diagnostic \"log_output_to\" setting is obsolete and is ignored. All logging is to STDERR, which is directed to the system log when Shairport Sync is running as a service.");
       }
 
@@ -878,41 +848,6 @@ if (config_lookup(config.cfg, "general.alac_decoder") != NULL)
       }
 
 
-      if (config_lookup_string(config.cfg, "dsp.loudness", &str)) {
-        if (strcasecmp(str, "no") == 0)
-          config.loudness_enabled = 0;
-        else if (strcasecmp(str, "yes") == 0) {
-          config.loudness_enabled = 1;
-        }
-        warn("the \"dsp\" \"loudness\" setting is deprecated and will be removed due to its "
-             "potential ambiguity. Please use \"loudness_enabled\" instead.");
-      }
-
-      if (config_lookup_string(config.cfg, "dsp.loudness_enabled", &str)) {
-        if (strcasecmp(str, "no") == 0)
-          config.loudness_enabled = 0;
-        else if (strcasecmp(str, "yes") == 0) {
-          config.loudness_enabled = 1;
-        } else
-          die("Invalid dsp.loudness_enabled \"%s\". It should be \"yes\" or \"no\"", str);
-      }
-
-      if (config_lookup_float(config.cfg, "dsp.loudness_reference_volume_db", &dvalue)) {
-        config.loudness_reference_volume_db = dvalue;
-        if (dvalue > 0 || dvalue < -100)
-          die("Invalid value \"%f\" for dsp.loudness_reference_volume_db. It should be between "
-              "-100 and 0",
-              dvalue);
-      }
-
-      if (config.loudness_enabled == 1 &&
-          config_lookup_non_empty_string(config.cfg, "alsa.mixer_control_name", &str))
-        die("The loudness filter is activated but cannot be used because the volume is being "
-            "controlled by a hardware mixer. "
-            "You must not use a hardware mixer when using the loudness filter.");
-
-
-
       long long aid;
 
       // replace the airplay_device_id with this, if provided
@@ -1144,16 +1079,16 @@ if (config_lookup(config.cfg, "general.alac_decoder") != NULL)
       config.default_airplay_volume; // if no volume is ever set or requested, default to initial
                                      // default value if nothing else comes in first.
 
-ptp_send_control_message_string("T");
-if (ptp_shm_interface_open() != 0) {
-  die("NQPTP is required for AirPlay 2 and must be running with readable, complete shared memory: %s.", strerror(errno));
-}
-int ptp_clock_version = ptp_get_clock_version();
-if (ptp_clock_version == 0)
-  die("NQPTP shared memory is not initialised or its clock data is inconsistent.");
-if (ptp_clock_version != NQPTP_SHM_STRUCTURES_VERSION)
-  die("NQPTP shared memory version %d is incompatible; version %d is required.",
-      ptp_clock_version, NQPTP_SHM_STRUCTURES_VERSION);
+  ptp_send_control_message_string("T");
+  if (ptp_shm_interface_open() != 0) {
+    die("NQPTP is required for AirPlay 2 and must be running with readable, complete shared memory: %s.", strerror(errno));
+  }
+  int ptp_clock_version = ptp_get_clock_version();
+  if (ptp_clock_version == 0)
+    die("NQPTP shared memory is not initialised or its clock data is inconsistent.");
+  if (ptp_clock_version != NQPTP_SHM_STRUCTURES_VERSION)
+    die("NQPTP shared memory version %d is incompatible; version %d is required.",
+        ptp_clock_version, NQPTP_SHM_STRUCTURES_VERSION);
 
   config.service_name = service_name(raw_service_name);
 
@@ -1172,19 +1107,7 @@ void exit_rtsp_listener() {
 }
 
 void exit_function() {
-    // the following is to ensure that if libdaemon has been included
-    // that most of this code will be skipped when the parent process is exiting
-    // exec
-      /*
-      Actually, there is no terminate_mqtt() function.
-      #ifdef CONFIG_MQTT
-              if (config.mqtt_enabled) {
-                      terminate_mqtt();
-              }
-      #endif
-      */
-
-      debug(2, "Stopping the activity monitor.");
+  debug(2, "Stopping the activity monitor.");
       activity_monitor_stop();
       debug(2, "Stopping the activity monitor done.");
 
@@ -1383,38 +1306,13 @@ void _display_config(const char *filename, const int linenumber, __attribute__((
       fclose(cr);
       // debug(1,"result is \"%s\".",result);
       // remove empty stanzas
-      char *i0 = str_replace(result, "general : \n{\n};\n", "");
-      char *i1 = str_replace(i0, "sessioncontrol : \n{\n};\n", "");
-      char *i2 = str_replace(i1, "alsa : \n{\n};\n", "");
-      char *i3 = str_replace(i2, "sndio : \n{\n};\n", "");
-      char *i4 = str_replace(i3, "pulseaudio : \n{\n};\n", "");
-      char *i5 = str_replace(i4, "jack : \n{\n};\n", "");
-      char *i6 = str_replace(i5, "pipe : \n{\n};\n", "");
-      char *i7 = str_replace(i6, "dsp : \n{\n};\n", "");
-      char *i8 = str_replace(i7, "metadata : \n{\n};\n", "");
-      char *i9 = str_replace(i8, "mqtt : \n{\n};\n", "");
-      char *i10 = str_replace(i9, "diagnostics : \n{\n};\n", "");
-      char *i11 = str_replace(i10, "pipewire : \n{\n};\n", "");
-      char *i12 = str_replace(i11, "stdout : \n{\n};\n", "");
-      char *i13 = str_replace(i12, "pipe : \n{\n};\n", "");
-      char *i14 = str_replace(i13, "ao : \n{\n};\n", "");
-      // debug(1,"i10 is \"%s\".",i10);
-
-      // free intermediate strings
-      free(i13);
-      free(i12);
-      free(i11);
-      free(i10);
-      free(i9);
-      free(i8);
-      free(i7);
-      free(i6);
-      free(i5);
-      free(i4);
-      free(i3);
-      free(i2);
-      free(i1);
-      free(i0);
+char *i0 = str_replace(result, "general : \n{\n};\n", "");
+char *i1 = str_replace(i0, "sessioncontrol : \n{\n};\n", "");
+char *i2 = str_replace(i1, "pulseaudio : \n{\n};\n", "");
+char *i14 = str_replace(i2, "diagnostics : \n{\n};\n", "");
+free(i2);
+free(i1);
+free(i0);
 
       // print it out
       if (strlen(i14) == 0)
@@ -1683,7 +1581,7 @@ int main(int argc, char **argv) {
 
 
 
-    config.port = 7000;
+    if (config.port == 0) config.port = 7000;
 
 
 
@@ -2109,17 +2007,13 @@ int main(int argc, char **argv) {
   debug(option_print_level, "run_this_after_exiting_active_state action is  \"%s\".",
         strnull(config.cmd_active_stop));
   debug(option_print_level, "active_state_timeout is  %f seconds.", config.active_state_timeout);
-  debug(option_print_level, "mdns backend \"%s\".", strnull(config.mdns_name));
   debug(2, "userSuppliedLatency is %d.", config.userSuppliedLatency);
   debug(option_print_level, "interpolation setting is \"%s\".",
         config.packet_stuffing == ST_basic     ? "basic"
         : config.packet_stuffing == ST_vernier ? "vernier"
-        : config.packet_stuffing == ST_soxr    ? "soxr"
                                                : "auto");
-  debug(option_print_level, "interpolation soxr_delay_threshold is %d.",
-        config.soxr_delay_threshold);
   debug(option_print_level, "resync time is %f seconds.", config.resync_threshold);
-  debug(option_print_level, "allow a classic AirPlay session to be interrupted: \"%s\".",
+  debug(option_print_level, "allow session interruption: \"%s\".",
         config.allow_session_interruption == 0 ? "no" : "yes");
   debug(option_print_level, "busy timeout time is %d.", config.timeout);
   debug(option_print_level, "drift tolerance is %f seconds.", config.tolerance);
@@ -2164,11 +2058,6 @@ int main(int argc, char **argv) {
     debug(option_print_level, "audio backend silence lead-in time is %f seconds.",
           config.audio_backend_silent_lead_in_time);
   debug(option_print_level, "zeroconf regtype is \"%s\".", config.regtype);
-  debug(option_print_level,
-        "decoders_supported bit field is %d (1 == hammerton, 2 == apple, 4 == ffmpeg).",
-        config.decoders_supported);
-  debug(option_print_level, "decoder_in_use is %d.", config.decoder_in_use);
-  debug(option_print_level, "alsa_use_hardware_mute is %d.", config.alsa_use_hardware_mute);
   if (config.interface)
     debug(option_print_level, "mdns service interface \"%s\" requested.", config.interface);
   else
@@ -2183,9 +2072,6 @@ int main(int argc, char **argv) {
           config.configfile);
   }
 
-  debug(option_print_level, "loudness_enabled is %s.",
-        config.loudness_enabled != 0 ? "true" : "false");
-  debug(option_print_level, "loudness reference level is %f", config.loudness_reference_volume_db);
 
 
   debug(2, "LIBAVUTIL_VERSION_MAJOR is %d", LIBAVUTIL_VERSION_MAJOR);

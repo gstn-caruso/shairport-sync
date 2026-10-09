@@ -56,3 +56,11 @@ build
 
 # IntelliJ/JetBrains
 .idea/
+/test-driver
+/rtsp-dispatch-test
+*.log
+*.trs
+/test-suite.log
+/shairport-sync-*.tar.gz
+/shairport-sync-*.tar.xz
+/shairport-sync-5.5.1/

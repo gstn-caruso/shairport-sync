@@ -6,7 +6,7 @@ lib_pair_ap_a_CFLAGS = -Wall -g -DCONFIG_GCRYPT -pthread --include=utilities/deb
 lib_pair_ap_a_SOURCES = pair_ap/pair.c pair_ap/pair_fruit.c pair_ap/pair_homekit.c pair_ap/pair-tlv.c
 shairport_sync_LDADD = lib_pair_ap.a
 shairport_sync_SOURCES = shairport.c bonjour_strings.c mdns.c mdns_avahi.c common.c rtp.c \
-  player.c audio.c audio_pa.c loudness.c activity_monitor.c rtsp.c \
+  player.c audio.c audio_pa.c activity_monitor.c rtsp.c \
   ap2_buffered_audio_processor.c ap2_event_receiver.c ap2_event_message_handler.c ptp-utilities.c \
   utilities/debug.c utilities/network_utilities.c utilities/rtsp_message_utilities.c \
   utilities/string_utilities.c utilities/exit.c utilities/buffered_read.c \
@@ -28,8 +28,10 @@ endif
 man_MANS = man/shairport-sync.1
 EXTRA_DIST = scripts/shairport-sync.conf scripts/shairport-sync.user.service \
   plists/get_info_response.xml xml_plist_codegen.sh tests/configure_test.sh \
-  tests/nqptp_test.sh tests/nqptp_fixture.c
-TESTS = tests/configure_test.sh tests/nqptp_test.sh
+  tests/nqptp_test.sh tests/nqptp_fixture.c tests/removed_options_test.sh \
+  verify-gitversion user-service-install.sh README.md BUILD.md AIRPLAY2.md \
+  ADDINGTOHOME.md TROUBLESHOOTING.md CONFIGURATION.md VALIDATION.md
+TESTS = tests/configure_test.sh tests/nqptp_test.sh tests/removed_options_test.sh
 if INSTALL_CONFIG_FILES
 install-exec-hook:
 	$(MKDIR_P) $(DESTDIR)$(sysconfdir)
@@ -37,6 +39,14 @@ install-exec-hook:
 endif
 check_PROGRAMS = rtsp-dispatch-test
 rtsp_dispatch_test_SOURCES = tests/rtsp_dispatch_test.c $(shairport_sync_SOURCES)
-rtsp_dispatch_test_CFLAGS = $(AM_CFLAGS) -Dmain=shairport_receiver_main
+rtsp_dispatch_test_CFLAGS = $(AM_CFLAGS) -Dmain=shairport_receiver_main -UNDEBUG
 rtsp_dispatch_test_LDADD = $(shairport_sync_LDADD)
 TESTS += rtsp-dispatch-test
+noinst_HEADERS = activity_monitor.h ap2_buffered_audio_processor.h ap2_event_message_handler.h \
+  ap2_event_receiver.h audio.h bonjour_strings.h common.h definitions.h mdns.h \
+  nqptp-shm-structures.h player.h ptp-utilities.h rtp.h rtsp.h \
+  pair_ap/pair.h pair_ap/pair-internal.h pair_ap/pair-tlv.h \
+  utilities/buffered_read.h utilities/debug.h utilities/exit.h \
+  utilities/generate_device_uuid.h utilities/generate_random_uuid.h utilities/mod23.h \
+  utilities/network_utilities.h utilities/rtsp_message_utilities.h \
+  utilities/string_utilities.h utilities/structured_buffer.h

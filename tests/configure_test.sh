@@ -4,7 +4,7 @@ source_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT HUP INT TERM
 cd "$test_dir"
-for option in dummy stdout pipe alsa jack sndio ao soundio pipewire external-mdns tinysvcmdns dns_sd apple-alac libdaemon piddir metadata metadata-pipe metadata-multicast dbus-interface dbus-test-client mpris-interface mpris-test-client mqtt-client convolution soxr systemv-startup systemd-startup freebsd-startup cygwin-startup create-user-group systemdsystemunitdir pkg-config; do
+for option in dummy stdout pipe alsa jack sndio ao soundio pipewire external-mdns tinysvcmdns dns_sd dns-sd apple-alac libdaemon piddir metadata metadata-pipe metadata_pipe metadata-multicast metadata_multicast dbus-interface dbus_interface dbus-test-client mpris-interface mpris-test-client mqtt-client convolution soxr systemv-startup systemd-startup freebsd-startup cygwin-startup create-user-group systemdsystemunitdir pkg-config; do
   for prefix in with without; do
     if "$source_dir/configure" "--$prefix-$option" > configure.log 2>&1; then
       echo "Accepted removed option --$prefix-$option" >&2
@@ -24,10 +24,15 @@ for option in --without-airplay-2 --without-pulseaudio --without-avahi --without
   fi
   grep -q 'requires\|only' configure.log
 done
-"$source_dir/configure" > configure.log 2>&1
-grep -q '^#define CONFIG_AIRPLAY_2 1' config.h
-grep -q '^#define CONFIG_PULSEAUDIO 1' config.h
-grep -q '^#define CONFIG_AVAHI 1' config.h
-grep -q '^#define CONFIG_OPENSSL 1' config.h
-grep -q '^#define CONFIG_FFMPEG 1' config.h
+configuration_header=config.h
+if [ -f "$source_dir/config.status" ]; then
+  configuration_header=$source_dir/config.h
+else
+  "$source_dir/configure" > configure.log 2>&1
+fi
+grep -q '^#define CONFIG_AIRPLAY_2 1' "$configuration_header"
+grep -q '^#define CONFIG_PULSEAUDIO 1' "$configuration_header"
+grep -q '^#define CONFIG_AVAHI 1' "$configuration_header"
+grep -q '^#define CONFIG_OPENSSL 1' "$configuration_header"
+grep -q '^#define CONFIG_FFMPEG 1' "$configuration_header"
 echo 'AirPlay 2 Linux PulseAudio configuration contract passed.'

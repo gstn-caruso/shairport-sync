@@ -893,34 +893,6 @@ message_process(const uint8_t *data, size_t data_len, const char **errmsg)
 static int
 hkdf_extract_expand_with_salt_and_info(uint8_t *okm, size_t okm_len, const uint8_t *ikm, size_t ikm_len, const char *salt, const char *info)
 {
-#ifdef CONFIG_OPENSSL
-#include <openssl/kdf.h>
-  EVP_PKEY_CTX *pctx;
-
-  if (okm_len > SHA512_DIGEST_LENGTH)
-    return -1;
-  if (! (pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, NULL)))
-    return -1;
-  if (EVP_PKEY_derive_init(pctx) <= 0)
-    goto error;
-  if (EVP_PKEY_CTX_set_hkdf_md(pctx, EVP_sha512()) <= 0)
-    goto error;
-  if (EVP_PKEY_CTX_set1_hkdf_salt(pctx, salt, strlen(salt)) <= 0)
-    goto error;
-  if (EVP_PKEY_CTX_set1_hkdf_key(pctx, ikm, ikm_len) <= 0)
-    goto error;
-  if (EVP_PKEY_CTX_add1_hkdf_info(pctx, info, strlen(info)) <= 0)
-    goto error;
-  if (EVP_PKEY_derive(pctx, okm, &okm_len) <= 0)
-    goto error;
-
-  EVP_PKEY_CTX_free(pctx);
-  return 0;
-
- error:
-  EVP_PKEY_CTX_free(pctx);
-  return -1;
-#elif CONFIG_GCRYPT
   uint8_t prk[SHA512_DIGEST_LENGTH];
   gcry_md_hd_t hmac_handle;
 
@@ -948,9 +920,6 @@ hkdf_extract_expand_with_salt_and_info(uint8_t *okm, size_t okm_len, const uint8
  error:
   gcry_md_close(hmac_handle);
   return -1;
-#else
-  return -1;
-#endif
 }
 
 /* Executes SHA512 RFC 5869 extract + expand, writing a derived key to okm
@@ -967,40 +936,6 @@ hkdf_extract_expand(uint8_t *okm, size_t okm_len, const uint8_t *ikm, size_t ikm
 static int
 encrypt_chacha(uint8_t *cipher, const uint8_t *plain, size_t plain_len, const uint8_t *key, size_t key_len, const void *ad, size_t ad_len, uint8_t *tag, size_t tag_len, const uint8_t nonce[NONCE_LENGTH])
 {
-#ifdef CONFIG_OPENSSL
-  EVP_CIPHER_CTX *ctx;
-  int len;
-
-  if (! (ctx = EVP_CIPHER_CTX_new()))
-    return -1;
-
-  if (EVP_EncryptInit_ex(ctx, EVP_chacha20_poly1305(), NULL, key, nonce) != 1)
-    goto error;
-
-  if (EVP_CIPHER_CTX_set_padding(ctx, 0) != 1) // Maybe not necessary
-    goto error;
-
-  if (ad_len > 0 && EVP_EncryptUpdate(ctx, NULL, &len, ad, ad_len) != 1)
-    goto error;
-
-  if (EVP_EncryptUpdate(ctx, cipher, &len, plain, plain_len) != 1)
-    goto error;
-
-  assert(len == plain_len);
-
-  if (EVP_EncryptFinal_ex(ctx, NULL, &len) != 1)
-    goto error;
-
-  if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, tag_len, tag) != 1)
-    goto error;
-
-  EVP_CIPHER_CTX_free(ctx);
-  return 0;
-
- error:
-  EVP_CIPHER_CTX_free(ctx);
-  return -1;
-#elif CONFIG_GCRYPT
   gcry_cipher_hd_t hd;
 
   if (gcry_cipher_open(&hd, GCRY_CIPHER_CHACHA20, GCRY_CIPHER_MODE_POLY1305, 0) != GPG_ERR_NO_ERROR)
@@ -1027,46 +962,11 @@ encrypt_chacha(uint8_t *cipher, const uint8_t *plain, size_t plain_len, const ui
  error:
   gcry_cipher_close(hd);
   return -1;
-#else
-  return -1;
-#endif
 }
 
 static int
 decrypt_chacha(uint8_t *plain, const uint8_t *cipher, size_t cipher_len, const uint8_t *key, size_t key_len, const void *ad, size_t ad_len, uint8_t *tag, size_t tag_len, const uint8_t nonce[NONCE_LENGTH])
 {
-#ifdef CONFIG_OPENSSL
-  EVP_CIPHER_CTX *ctx;
-  int len;
-
-  if (! (ctx = EVP_CIPHER_CTX_new()))
-    return -1;
-
-  if (EVP_DecryptInit_ex(ctx, EVP_chacha20_poly1305(), NULL, key, nonce) != 1)
-    goto error;
-
-  if (EVP_CIPHER_CTX_set_padding(ctx, 0) != 1) // Maybe not necessary
-    goto error;
-
-  if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, tag_len, tag) != 1)
-    goto error;
-
-  if (ad_len > 0 && EVP_DecryptUpdate(ctx, NULL, &len, ad, ad_len) != 1)
-    goto error;
-
-  if (EVP_DecryptUpdate(ctx, plain, &len, cipher, cipher_len) != 1)
-    goto error;
-
-  if (EVP_DecryptFinal_ex(ctx, NULL, &len) != 1)
-    goto error;
-
-  EVP_CIPHER_CTX_free(ctx);
-  return 0;
-
- error:
-  EVP_CIPHER_CTX_free(ctx);
-  return -1;
-#elif CONFIG_GCRYPT
   gcry_cipher_hd_t hd;
 
   if (gcry_cipher_open(&hd, GCRY_CIPHER_CHACHA20, GCRY_CIPHER_MODE_POLY1305, 0) != GPG_ERR_NO_ERROR)
@@ -1093,9 +993,6 @@ decrypt_chacha(uint8_t *plain, const uint8_t *cipher, size_t cipher_len, const u
  error:
   gcry_cipher_close(hd);
   return -1;
-#else
-  return -1;
-#endif
 }
 
 static int

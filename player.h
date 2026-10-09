@@ -19,7 +19,6 @@
 #include <libavutil/opt.h>
 #include <libswresample/swresample.h>
 
-#include "alac.h"
 #include "audio.h"
 
 // clang-format off
@@ -272,7 +271,6 @@ typedef struct {
   unsigned int output_sample_ratio;
   unsigned int output_bit_depth;
   int64_t previous_random_number;
-  alac_file *decoder_info;
   uint64_t packet_count;
   uint64_t packet_count_since_flush;
   // int connection_state_to_output;
@@ -300,7 +298,6 @@ typedef struct {
   uint64_t time_of_last_audio_packet;
   seq_t ab_read, ab_write;
 
-  int do_loudness; // if loudness is requested and there is no external mixer
 
 
 

@@ -1,14 +1,8 @@
 AC_PREREQ([2.69])
 AC_INIT([shairport-sync], [5.5.1], [4265913+mikebrady@users.noreply.github.com])
 : ${CFLAGS="-O3"}
-AM_INIT_AUTOMAKE([subdir-objects])
 AC_CONFIG_SRCDIR([shairport.c])
 AC_CONFIG_HEADERS([config.h])
-AC_PROG_CC
-AC_PROG_RANLIB
-AC_CHECK_TOOL([AR], [ar], [:])
-AC_PROG_INSTALL
-PKG_PROG_PKG_CONFIG([0.9.0])
 
 # Reject legacy switches before probing dependencies, including --without forms.
 for product_option in $ac_configure_args; do
@@ -16,6 +10,11 @@ for product_option in $ac_configure_args; do
   case "$product_option" in
     --with-dummy*|--without-dummy*|--with-stdout*|--without-stdout*|--with-pipe|--with-pipe=*|--without-pipe|--without-pipe=*|--with-alsa*|--without-alsa*|--with-jack*|--without-jack*|--with-sndio*|--without-sndio*|--with-ao*|--without-ao*|--with-soundio*|--without-soundio*|--with-pipewire*|--without-pipewire*|--with-external-mdns*|--without-external-mdns*|--with-tinysvcmdns*|--without-tinysvcmdns*|--with-dns_sd*|--without-dns_sd*|--with-apple-alac*|--without-apple-alac*|--with-libdaemon*|--without-libdaemon*|--with-piddir*|--without-piddir*|--with-metadata*|--without-metadata*|--with-dbus*|--without-dbus*|--with-mpris*|--without-mpris*|--with-mqtt*|--without-mqtt*|--with-convolution*|--without-convolution*|--with-soxr*|--without-soxr*|--with-systemv*|--without-systemv*|--with-systemd*|--without-systemd*|--with-freebsd*|--without-freebsd*|--with-cygwin*|--without-cygwin*|--with-create-user-group*|--without-create-user-group*|--with-pkg-config*|--without-pkg-config*|--with-pa|--without-pa)
       AC_MSG_ERROR([removed option: $product_option; this fork supports only AirPlay 2 on Linux with PulseAudio, Avahi and OpenSSL]);;
+    --with-*|--without-*)
+      case "${product_option%%=*}" in
+        --with-os|--without-os|--with-airplay-2|--without-airplay-2|--with-pulseaudio|--without-pulseaudio|--with-avahi|--without-avahi|--with-ffmpeg|--without-ffmpeg|--with-ssl|--without-ssl|--with-configfiles|--without-configfiles) ;;
+        *) AC_MSG_ERROR([removed option: $product_option; this fork has a fixed receiver stack]);;
+      esac;;
   esac
 done
 AC_ARG_WITH([os], [AS_HELP_STRING([--with-os=linux], [Linux is the only supported platform])], [], [with_os=linux])
@@ -27,6 +26,12 @@ AC_ARG_WITH([avahi], [AS_HELP_STRING([--with-avahi], [Avahi is required])], [], 
 AC_ARG_WITH([ffmpeg], [AS_HELP_STRING([--with-ffmpeg], [FFmpeg is required])], [], [with_ffmpeg=yes])
 AC_ARG_WITH([ssl], [AS_HELP_STRING([--with-ssl=openssl], [OpenSSL is required])], [], [with_ssl=openssl])
 AS_IF([test "x$with_airplay_2" != xyes -o "x$with_pulseaudio" != xyes -o "x$with_avahi" != xyes -o "x$with_ffmpeg" != xyes -o "x$with_ssl" != xopenssl], [AC_MSG_ERROR([this fork requires AirPlay 2, PulseAudio, Avahi, FFmpeg and OpenSSL])])
+AM_INIT_AUTOMAKE([subdir-objects])
+AC_PROG_CC
+AC_PROG_RANLIB
+AC_CHECK_TOOL([AR], [ar], [:])
+AC_PROG_INSTALL
+PKG_PROG_PKG_CONFIG([0.9.0])
 AC_ARG_WITH([configfiles], [AS_HELP_STRING([--without-configfiles], [do not install the sample configuration])], [], [with_configfiles=yes])
 AM_CONDITIONAL([INSTALL_CONFIG_FILES], [test "x$with_configfiles" = xyes])
 AC_DEFINE([CONFIG_AIRPLAY_2], [1], [AirPlay 2 receiver])

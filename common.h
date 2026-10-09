@@ -44,8 +44,7 @@ typedef enum {
 typedef enum {
   ST_basic = 0, // straight deletion or insertion of a frame in a 352-frame packet
   ST_vernier,   // interpolate from 352/1024 samples to 353/1025 or 351/1023
-  ST_soxr,      // use libsoxr to make a 352 frame packet one frame longer or shorter
-  ST_auto,      // use soxr if compiled for it and if the soxr_index is low enough
+  ST_auto,      // select interpolation automatically
 } stuffing_type;
 
 typedef enum {
@@ -160,7 +159,6 @@ typedef struct {
   double resend_control_last_check_time; // if the packet is missing this close to the time of use,
                                          // give up
 
-  int get_plist_metadata; // set to non-zero to get richer plist metadata
   pthread_mutex_t lock;
   config_t *cfg;
   int endianness;
@@ -200,7 +198,6 @@ typedef struct {
                           // behaviour; only set by -t 0, cleared by everything else
   char *output_name;
   audio_output *output;
-  char *mdns_name;
   mdns_backend *mdns;
   int buffer_start_fill;
   uint32_t userSuppliedLatency; // overrides all other latencies -- use with caution
@@ -221,8 +218,6 @@ typedef struct {
   int cmd_blocking, cmd_start_returns_output;
   double tolerance; // allow this much drift before attempting to correct it
   stuffing_type packet_stuffing;
-  int soxr_delay_index;
-  int soxr_delay_threshold; // the soxr delay must be less or equal to this for soxr interpolation
                             // to be enabled under the auto setting
   int decoders_supported;
   int decoder_in_use;
@@ -269,10 +264,6 @@ typedef struct {
   uint32_t channel_set;
 
 
-  int loudness_enabled;
-  float loudness_reference_volume_db;
-  int alsa_use_hardware_mute;
-  double alsa_maximum_stall_time;
   disable_standby_mode_type disable_standby_mode;
   volatile int keep_dac_busy;
   yna_type use_precision_timing; // defaults to no
