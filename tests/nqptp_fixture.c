@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-#include "nqptp-shm-structures.h"
+#include "timing/nqptp-shm-structures.h"
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>

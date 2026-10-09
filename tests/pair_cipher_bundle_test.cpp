@@ -1,4 +1,4 @@
-#include "player.h"
+#include "playback/player.h"
 #include <gtest/gtest.h>
 #include <array>
 #include <cassert>

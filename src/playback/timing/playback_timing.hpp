@@ -1,5 +1,5 @@
 #pragma once
-#include "audio_arrival.hpp"
+#include "audio/buffer/audio_arrival.hpp"
 #include <cstdint>
 #include <mutex>
 #include <optional>

@@ -25,7 +25,7 @@ checks passed. Single-run measurements are:
 The isolated targets are volume-policy, rtp-clock, audio-format, channel-mapping,
 pcm-encoder, playback-samples, converted-audio, playback-sync, playback-timing
 and audio-input-state (append `-test` to each name). Reproduce the last check
-with a settled build, `touch audio.cpp`, and `cmake --build` with these targets.
+with a settled build, `touch src/audio/output/audio.cpp`, and `cmake --build` with these targets.
 Full rebuild counts come from actual Ninja build output; dry runs conservatively
 predict changes to the always-checked Git-version header. The final logs live in
 ignored `build/redesign-verified-*.log` and `build/redesign-final-*.log` files.

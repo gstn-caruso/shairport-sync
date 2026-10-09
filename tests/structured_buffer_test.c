@@ -1,4 +1,4 @@
-#include "utilities/structured_buffer.h"
+#include "platform/utilities/structured_buffer.h"
 #include <assert.h>
 #include <string.h>
 

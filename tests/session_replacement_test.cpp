@@ -1,4 +1,4 @@
-#include "runtime_principal_session.hpp"
+#include "session/runtime_principal_session.hpp"
 #include <gtest/gtest.h>
 #include <cassert>
 #include <condition_variable>

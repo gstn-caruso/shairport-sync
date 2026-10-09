@@ -1,5 +1,5 @@
-#include "audio_packet_buffer.hpp"
-#include "resampler.hpp"
+#include "audio/buffer/audio_packet_buffer.hpp"
+#include "audio/resampling/resampler.hpp"
 #include <gtest/gtest.h>
 #include <cassert>
 #include <stdexcept>

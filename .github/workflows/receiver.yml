@@ -64,12 +64,12 @@ jobs:
           cmake --build build/cmake --parallel 2
           case "$BUILD" in
             ASan-UBSan)
-              nm -u build/cmake/CMakeFiles/receiver.dir/utilities/structured_buffer.cpp.o | grep __asan_init
-              nm -u build/cmake/CMakeFiles/receiver.dir/rtsp.cpp.o | grep __ubsan_handle
+              nm -u build/cmake/CMakeFiles/receiver.dir/src/platform/utilities/structured_buffer.cpp.o | grep __asan_init
+              nm -u build/cmake/CMakeFiles/receiver.dir/src/protocol/rtsp/rtsp.cpp.o | grep __ubsan_handle
               ;;
             TSan)
-              nm -u build/cmake/CMakeFiles/receiver.dir/utilities/structured_buffer.cpp.o | grep __tsan_init
-              nm -u build/cmake/CMakeFiles/receiver.dir/rtsp.cpp.o | grep __tsan_init
+              nm -u build/cmake/CMakeFiles/receiver.dir/src/platform/utilities/structured_buffer.cpp.o | grep __tsan_init
+              nm -u build/cmake/CMakeFiles/receiver.dir/src/protocol/rtsp/rtsp.cpp.o | grep __tsan_init
               ;;
           esac
           ctest --test-dir build/cmake --output-on-failure

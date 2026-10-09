@@ -1,5 +1,5 @@
-#include "session_state.hpp"
-#include "audio_decoder.hpp"
+#include "session/session_state.hpp"
+#include "audio/decoding/audio_decoder.hpp"
 #include <gtest/gtest.h>
 #include <cassert>
 #include <string.h>

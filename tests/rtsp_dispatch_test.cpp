@@ -1,8 +1,8 @@
-#include "session_state.hpp"
-#include "common.h"
-#include "rtsp.h"
-#include "rtsp_message.hpp"
-#include "utilities/rtsp_message_utilities.h"
+#include "session/session_state.hpp"
+#include "runtime/common.h"
+#include "protocol/rtsp/rtsp.h"
+#include "protocol/rtsp/rtsp_message.hpp"
+#include "platform/utilities/rtsp_message_utilities.h"
 #include <gtest/gtest.h>
 #include <assert.h>
 #include <libavcodec/avcodec.h>

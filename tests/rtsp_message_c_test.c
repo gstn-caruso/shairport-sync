@@ -1,5 +1,5 @@
-#include "rtsp.h"
-#include "utilities/rtsp_message_utilities.h"
+#include "protocol/rtsp/rtsp.h"
+#include "platform/utilities/rtsp_message_utilities.h"
 #include <assert.h>
 
 int main(void) {

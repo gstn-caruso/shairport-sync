@@ -1,5 +1,5 @@
-#include "common.h"
-#include "utilities/string_utilities.h"
+#include "runtime/common.h"
+#include "platform/utilities/string_utilities.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>

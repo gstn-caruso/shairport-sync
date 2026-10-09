@@ -1,4 +1,4 @@
-#include "activity_state.hpp"
+#include "monitoring/activity_state.hpp"
 #include <gtest/gtest.h>
 
 TEST(ActivityState, ImmediateActivationAndDeactivationAreIdempotent) {

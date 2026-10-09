@@ -4,7 +4,7 @@ source_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 binary=${1:-./shairport-sync}
 test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT HUP INT TERM
-cc -shared -fPIC -I"$source_dir" "$source_dir/tests/nqptp_fixture.c" -o "$test_dir/fixture.so"
+cc -shared -fPIC -I"$source_dir/src" "$source_dir/tests/nqptp_fixture.c" -o "$test_dir/fixture.so"
 printf 'general = { name = "NQPTP Test"; };\n' > "$test_dir/receiver.conf"
 for version in missing permission 0 9 11 truncated inconsistent; do
   if NQPTP_TEST_VERSION=$version LD_PRELOAD="$test_dir/fixture.so" timeout 3 "$binary" -c "$test_dir/receiver.conf" > "$test_dir/output" 2>&1; then
