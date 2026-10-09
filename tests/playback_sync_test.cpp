@@ -76,15 +76,15 @@ int main() {
   assert(sync.observe(observation, {true, 1000000, 0}).correctionFrames == 0);
   observation.playNumber = 20;
   assert(sync.observe(observation, {true, 1000000, 0}).correctionFrames == -1);
-  assert(sync.observe(observation, {false, 1000000, 1}).correctionFrames == 0);
+  assert(sync.observe(observation, {false, 1000000, 1e-9}).correctionFrames == 0);
   for (int sign : {-1, 1}) {
     sync.resetForPlay();
     observation.expectedFrameTime = observation.dacMeasurementTime - sign * int64_t{2000000};
     for (unsigned index = 0; index < 39; ++index)
-      assert(!sync.observe(observation, {true, 2000000, 1999999}).dropPacket);
-    auto exact = sync.observe(observation, {true, 2000000, 2000000});
+      assert(!sync.observe(observation, {true, 2000000, 0.001999999}).dropPacket);
+    auto exact = sync.observe(observation, {true, 2000000, 0.002});
     assert(exact.correctionFrames == 0 && !exact.dropPacket && exact.windowSpreadNs == 0);
-    auto exceeded = sync.observe(observation, {true, 1999999, 1999999});
+    auto exceeded = sync.observe(observation, {true, 1999999, 0.001999999});
     assert(exceeded.dropPacket && exceeded.resyncNext == (sign < 0));
     assert(exceeded.correctionFrames == -sign);
   }
@@ -101,15 +101,15 @@ int main() {
   for (unsigned index = 0; index < 40; ++index)
     sync.observe(observation, {true, 1000000, 0});
   observation.firstFrame = true;
-  sync.observe(observation, {true, 1000000, 1000000});
+  sync.observe(observation, {true, 1000000, 0.001});
   assert(sync.skipFrom(352) == 2);
   observation.firstFrame = false;
   observation.inputRate = observation.outputRate = 2000;
-  assert(sync.observe(observation, {true, 1000000, 1000000}).dropPacket);
+  assert(sync.observe(observation, {true, 1000000, 0.001}).dropPacket);
   observation.expectedFrameTime = observation.dacMeasurementTime + 2000000;
-  assert(!sync.observe(observation, {true, 1000000, 1000000}).dropPacket);
+  assert(!sync.observe(observation, {true, 1000000, 0.001}).dropPacket);
   sync.resetForPlay();
-  assert(!sync.observe(observation, {true, 1000000, 1000000}).dropPacket);
+  assert(!sync.observe(observation, {true, 1000000, 0.001}).dropPacket);
   sync.resetForPlay();
   observation.firstFrame = false;
   observation.inputRate = observation.outputRate = 1000;

@@ -117,9 +117,11 @@ SyncDecision PlaybackSync::observe(const SyncObservation &observation, SyncPolic
       else if (centered < -policy.toleranceNs) decision.correctionFrames = correction;
     }
   }
-  if (policy.enabled && observation.timestamp && policy.resyncThresholdNs > 0 &&
+  const double centeredSeconds = centered * 0.000000001;
+  if (policy.enabled && observation.timestamp && policy.resyncThresholdSeconds > 0 &&
       window_.full() && !window_.crossesZero() &&
-      (centered > policy.resyncThresholdNs || centered < -policy.resyncThresholdNs)) {
+      (centeredSeconds > policy.resyncThresholdSeconds ||
+       centeredSeconds < -policy.resyncThresholdSeconds)) {
     decision.dropPacket = true;
     decision.resyncNext = centered < 0;
   }

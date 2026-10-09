@@ -8,6 +8,7 @@
 #include "audio_packet_buffer.hpp"
 #include "pcm_encoder.hpp"
 #include "playback_samples.hpp"
+#include "playback_sync.hpp"
 #include <cstdlib>
 #include <atomic>
 
@@ -21,9 +22,6 @@ struct SessionState {
   int connection_number;           // for debug ID purposes, nothing else...
   int is_playing;                  // set true by player_play, set false by player_stop
   int input_format_is_valid;       // set when the input format is known and set in this structure
-  unsigned int sync_samples_index; // for estimating the gap between the highest and lowest timing
-                                   // error over the past n samples
-  unsigned int sync_samples_count; // the array of samples is defined locally
   int at_least_one_frame_seen_this_session; // set when the first frame is output
   int resend_interval;                      // this is really just for debugging
   char *UserAgent;                          // free this on teardown
@@ -95,10 +93,6 @@ struct SessionState {
 
 
 
-  int32_t framesProcessedInThisEpoch;
-  int32_t framesGeneratedInThisEpoch;
-  int32_t correctionsRequestedInThisEpoch;
-  int64_t syncErrorsInThisEpoch;
 
   // RTP stuff
   // only one RTP session can be active at a time.
@@ -190,6 +184,7 @@ struct SessionState {
   PlaybackSamples playbackSamples{[](size_t frames) {
     return (std::rand() % (frames - 2)) + 1;
   }};
+  PlaybackSync playbackSync;
 
   // used as the initials values for calculating the rate at which the source thinks it's sending
   // frames
@@ -206,13 +201,11 @@ struct SessionState {
 
   pthread_mutex_t reference_time_mutex;
 
-  int last_stuff_request;
 
   // int64_t play_segment_reference_frame;
   // uint64_t play_segment_reference_frame_remote_time;
 
   int32_t buffer_occupancy; // allow it to be negative because seq_diff may be negative
-  int64_t session_corrections;
 
   int play_number_after_flush;
 

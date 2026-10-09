@@ -13,7 +13,7 @@ struct SyncObservation {
   unsigned inputRate = 0, outputRate = 0;
   size_t blockFrames = 0, playNumber = 0;
 };
-struct SyncPolicy { bool enabled; int64_t toleranceNs, resyncThresholdNs; };
+struct SyncPolicy { bool enabled; int64_t toleranceNs; double resyncThresholdSeconds; };
 struct SyncDecision {
   int64_t errorNs = 0, errorFrames = 0, windowSpreadNs = 0;
   int correctionFrames = 0;

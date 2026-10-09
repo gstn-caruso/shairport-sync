@@ -32,6 +32,7 @@
 #include "audio_format.hpp"
 #include "audio_player_adapter.hpp"
 #include <algorithm>
+#include <bit>
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -930,6 +931,7 @@ void *player_thread_func(void *arg) {
   conn->packet_count = 0;
   conn->packet_count_since_flush = 0;
   conn->pcmEncoder.reset();
+  conn->playbackSync.resetForPlay();
   conn->ab_buffering = 1;
   conn->first_packet_timestamp = 0;
   conn->flush_output_flushed = 0; // only send a flush command to the output device once
@@ -945,20 +947,10 @@ void *player_thread_func(void *arg) {
     conn->ap2_deferred_flush_requests[f].active = 0;
   }
 
-  const unsigned int sync_history_length = 40;
-  int64_t sync_samples[sync_history_length];
-  int64_t sync_samples_highest_error = 0;
-  int64_t sync_samples_lowest_error = 0;
-  int64_t sync_samples_second_highest_error;
-  int64_t sync_samples_second_lowest_error;
-  conn->sync_samples_index = 0;
-  conn->sync_samples_count = 0;
-
   // This must be after init_alac_decoder
   ab_resync(conn);
 
 
-  conn->session_corrections = 0;
   // conn->connection_state_to_output = get_requested_connection_state_to_output();
 
   int number_of_statistics, oldest_statistic, newest_statistic;
@@ -1013,16 +1005,11 @@ void *player_thread_func(void *arg) {
 
   conn->first_packet_timestamp = 0;
   conn->missing_packets = conn->late_packets = conn->too_late_packets = conn->resend_requests = 0;
-  int sync_error_out_of_bounds =
-      0; // number of times in a row that there's been a serious sync error
 
   // conn->statistics = malloc(sizeof(stats_t) * trend_samples);
   // if (conn->statistics == NULL)
   //   die("Failed to allocate a statistics buffer");
 
-  conn->framesProcessedInThisEpoch = 0;
-  conn->framesGeneratedInThisEpoch = 0;
-  conn->correctionsRequestedInThisEpoch = 0;
   statistics_row = 0; // statistics_line 0 means print the headings; anything else 1 means print the
                       // values. Set to 0 the first time out.
 
@@ -1069,13 +1056,10 @@ void *player_thread_func(void *arg) {
 
   debug(2, "Play begin");
 
-  int64_t frames_previously_retained_in_the_resampler = 0;
 
   // uint32_t flush_to_frame;
   // int enable_flush_to_frame = 0;
   int request_resync = 0;      // will be set if a big discontinuity is detected
-  uint32_t frames_to_skip = 0; // when a discontinuity is registered
-  int skipping_frames_at_start_of_play = 0;
   // debug(1, "player begin processing packets");
   while (1) {
 
@@ -1101,7 +1085,6 @@ void *player_thread_func(void *arg) {
         0.000001);
         }
         */
-        unsigned int last_sample_index;
         int frames_played = 0;
         int64_t sync_error = 0;
         int amount_to_stuff = 0;
@@ -1421,308 +1404,39 @@ void *player_thread_func(void *arg) {
               // debug(1, "resp is %d, delay is %ld.", resp, l_delay);
             }
             if (resp == 0) {
-
-              uint64_t the_time_this_frame_should_be_played;
-              frame_to_local_time(playback.timestamp, &the_time_this_frame_should_be_played, conn);
-
-              uint64_t output_buffer_delay_time = current_delay;
-
-              // the current delay should also include the frames that were kept in swr
-              // before the current block was requested
-              output_buffer_delay_time =
-                  output_buffer_delay_time + frames_previously_retained_in_the_resampler;
-              // debug(1,"Allowing for %" PRId64 " frames previously held in the resampler.",
-              // frames_previously_retained_in_the_resampler);
-              // now we'll update frames_previously_retained_in_the_resampler
-              // to the figure after the current block
-              frames_previously_retained_in_the_resampler = conn->resampler.retainedFrames();
-
-              output_buffer_delay_time =
-                  output_buffer_delay_time *
-                  1000000000; // there should be plenty of space in a uint64_t for any
-                              // conceivable current_delay value
-              output_buffer_delay_time =
-                  output_buffer_delay_time /
-                  RATE_FROM_ENCODED_FORMAT(config.current_output_configuration);
-              debug(4,
-                    "current_delay: %" PRId64 ", output_buffer_delay_time: %.3f, output rate: %u.",
-                    current_delay, output_buffer_delay_time * 0.000000001,
-                    RATE_FROM_ENCODED_FORMAT(config.current_output_configuration));
-
-              uint64_t the_time_this_frame_will_be_played =
-                  delay_measurement_time + output_buffer_delay_time;
-
-              double centered_sync_error_time = 0.0;
-              int64_t sync_error_ns = 0;
-              int64_t measurement_time = get_absolute_time_in_ns() - mst;
-
-              // debug(1, "measurement time: %" PRId64 " ns.", measurement_time);
-
-              if (measurement_time < 2000000) {
-
-                sync_error_ns =
-                    the_time_this_frame_will_be_played - the_time_this_frame_should_be_played;
-                sync_error = (sync_error_ns *
-                              RATE_FROM_ENCODED_FORMAT(config.current_output_configuration)) /
-                             1000000000;
-
-                // debug(1, "measurement time: %" PRId64 " ns. Sync error: %" PRId64 " ns, %" PRId64
-                // " frames, skipping_frames_at_start_of_play is %d.", measurement_time,
-                // sync_error_ns, sync_error, skipping_frames_at_start_of_play);
-
-                // A timestamp gap is when the timstamp of the next packet of frames is not equal to
-                // the previous packet's timstamp + number o frames therein.
-
-                // But wait! If there is a timestamp gap, this isn't really an error.
-
-                // Also, if it's a sync error at the start of a play sequence, then
-                // it can be dealt with by inserting a silence or skipping frames.
-
-                // So, here we have enough information to decide what to do with the "frame" of
-                // audio.
-
-                // If we are already skipping frames because of a prior first frame,
-                // we might need to adjust the skipping count due to a better time estimate
-
-                if (skipping_frames_at_start_of_play != 0) {
-                  if (sync_error <= 0) {
-                    debug(3,
-                          "cancel skipping at start of play -- skip estimate was: %" PRId32
-                          ", but sync_error is now: %" PRId64 ".",
-                          frames_to_skip, sync_error);
-                    frames_to_skip = 0;
-                    skipping_frames_at_start_of_play = 0;
-                  } else if (frames_to_skip != sync_error) {
-                    debug(3,
-                          "updating skipping at start of play count from: %" PRId32 " to: %" PRId64
-                          ".",
-                          frames_to_skip, sync_error);
-                    frames_to_skip = sync_error;
-                  }
-                }
-
-                // If it's the first frame or if it's at a timestamp discontinuity, then we can
-                // deal with it straight away.
-                if (inframe.has_value() && ((conn->first_packet_timestamp == playback.timestamp) ||
-                                          (playback.timestampGap != 0))) {
-
-                  // By default, when there is a sync error and some kind of discontinuity,
-                  // e.g. a gap between timestamps of adjacent packets or a first packet,
-                  // then we try to fix the sync error, either by skipping frames or by inserting a
-                  // silence. However, if it's a negative timestamp gap between packets, only try to
-                  // fix the timestamp_gap. The reason for this is that we don't know the purpose of
-                  // the negative gaps. For all we know, it may be that the audio frames before and
-                  // after the gap are meant to be contiguous.
-
-                  int64_t gap_to_fix = sync_error; // this is what we look at normally
-
-                  if (conn->first_packet_timestamp == playback.timestamp) {
-                    debug(3, "first frame: %u, sync_error %" PRId64 " frames.", playback.timestamp,
-                          sync_error);
-                    skipping_frames_at_start_of_play = 1;
-                  } else {
-                    debug(3, "timestamp_gap: %d on frame %u, sync_error %" PRId64 " frames.",
-                          playback.timestampGap, playback.timestamp, sync_error);
-                    if (playback.timestampGap < 0) {
-                      gap_to_fix = -playback.timestampGap; // this is frames at the input rate
-                      int64_t gap_to_fix_ns = (gap_to_fix * 1000000000) / conn->input_rate;
-                      gap_to_fix = (gap_to_fix_ns * RATE_FROM_ENCODED_FORMAT(
-                                                        config.current_output_configuration) +
-                                    1000000000 / 2) /
-                                   1000000000; // this is frames at the output rate
-                      debug(4,
-                            "gap_to_fix: %u frames at input rate, %" PRId64
-                            " frames at output rate.",
-                            -playback.timestampGap, gap_to_fix);
-                      // debug(3, "due to timstamp gap of %d frames, skip %" PRId64 " output
-                      // frames.", playback.timestampGap, gap_to_fix);
-                    }
-                  }
-
-                  if (gap_to_fix > 0) {
-                    // debug(1, "drop %u frames, timestamp: %u, skipping_frames_at_start_of_play is
-                    // %d.", gap_to_fix, playback.timestamp, skipping_frames_at_start_of_play);
-                    frames_to_skip += gap_to_fix;
-                    sync_error_ns = 0;         // don't invoke any sync checking
-                  } else if (gap_to_fix < 0) { // this packet is early, so insert the right number
-                                               // of frames to zero the error
-                    frames_to_skip = 0;
-                    skipping_frames_at_start_of_play = 0;
-                    int64_t gap = -gap_to_fix;
-                    auto silence = conn->pcmEncoder.silence(gap);
-                    config.output->play(silence.bytes().data(), silence.frames(),
-                                        play_samples_are_untimed, 0, 0);
-                    frames_played += silence.frames();
-                    sync_error_ns = 0;
-                    sync_error = 0;
-                  }
-                }
-                // debug(1, "frames_to_skip: %u.", frames_to_skip);
-                // don't do any sync error calculations if you're skipping frames
-                if (frames_to_skip == 0) {
-                  // first, make room in the array if it's full
-                  if (conn->sync_samples_count == sync_history_length) {
-                    conn->sync_samples_count--;
-                  }
-                  last_sample_index = conn->sync_samples_index;
-                  sync_samples[conn->sync_samples_index] = sync_error_ns;
-                  conn->sync_samples_count++;
-                  conn->sync_samples_index = (conn->sync_samples_index + 1) % sync_history_length;
-
-                  // now find the lowest and highest errors
-                  sync_samples_highest_error = sync_samples[0];
-                  sync_samples_lowest_error = sync_samples[0];
-                  sync_samples_second_highest_error = sync_samples[0];
-                  sync_samples_second_lowest_error = sync_samples[0];
-                  unsigned int s;
-                  int64_t mean = 0;
-                  for (s = 0; s < conn->sync_samples_count; s++) {
-                    mean += sync_samples[s];
-                    if (sync_samples[s] > sync_samples_highest_error) {
-                      sync_samples_second_highest_error = sync_samples_highest_error;
-                      sync_samples_highest_error = sync_samples[s];
-                    } else if (sync_samples[s] > sync_samples_second_highest_error) {
-                      sync_samples_second_highest_error = sync_samples[s];
-                    } else if (sync_samples[s] < sync_samples_lowest_error) {
-                      sync_samples_second_lowest_error = sync_samples_lowest_error;
-                      sync_samples_lowest_error = sync_samples[s];
-                    } else if (sync_samples[s] < sync_samples_second_lowest_error) {
-                      sync_samples_second_lowest_error = sync_samples[s];
-                    }
-                  }
-
-                  if (conn->sync_samples_count != 0)
-                    mean = mean / conn->sync_samples_count;
-
-                  tsum_of_gaps = tsum_of_gaps + sync_samples_second_highest_error -
-                                 sync_samples_second_lowest_error;
-
-                  int64_t centered_sync_error_ns =
-                      (sync_samples_second_highest_error + sync_samples_second_lowest_error) / 2;
-                  centered_sync_error_time = centered_sync_error_ns * 0.000000001;
-
-                  // debug(1, "centered_sync_error_ns: %" PRId64 ", %.3f sec.",
-                  // centered_sync_error_ns, centered_sync_error_time);
-
-                  // int64_t centered_sync_error =
-                  //     (centered_sync_error_ns * config.current_output_configuration->rate) /
-                  //     1000000000;
-
-                  // decide whether to do a stuff
-
-                  /*
-                  // calculate the standard deviation
-
-                  double sd = 0.0;
-                  for (s = 0; s < conn->sync_samples_count; s++) {
-                    sd += pow(sync_samples[s] - mean, 2);
-                  }
-                  if (conn->sync_samples_count != 0)
-                    sd = sqrt(sd / conn->sync_samples_count);
-
-                  // debug(1, "samples: %u, mean: %" PRId64 ", standard deviation: %f.",
-                  // conn->sync_samples_count, mean, sd);
-                  */
-
-                  // it seems (?) that the standard deviation settles down markedly after 10 samples
-                  // == 1024 * 10 frames in AAC
-                  if (play_number * inbuflength >= 10 * 1024) {
-                    // the tolerance is on either side of the correct, thus it contributes twice
-                    // to the overall gap
-                    int64_t tolerance_ns = (int64_t)(config.tolerance * 1000000000L);
-                    // int64_t gap = 2 * tolerance_ns + sync_samples_second_highest_error -
-                    //               sync_samples_second_lowest_error;
-                    // int64_t gap = 2 * tolerance_ns;
-                    // since the gap should be symmetrical about 0, stuff accordingly
-                    if (centered_sync_error_ns > tolerance_ns) {
-                      amount_to_stuff = -1 * (inbuflength / 350);
-                      if (amount_to_stuff == 0)
-                        amount_to_stuff = -1;
-                      debug(4, "drop a frame, inbuflength is %d, amount_to_stuff is %d.",
-                            inbuflength, amount_to_stuff);
-                    } else if (centered_sync_error_ns < (-tolerance_ns)) {
-                      amount_to_stuff = +1 * (inbuflength / 350);
-                      if (amount_to_stuff == 0)
-                        amount_to_stuff = 1;
-                      debug(4, "add a frame, inbuflength is %d, amount_to_stuff is %d.",
-                            inbuflength, amount_to_stuff);
-                    } else {
-                      debug(4,
-                            "error is within tolerance: centered_sync_error_ns: %" PRId64
-                            ", tolerance_ns: %" PRId64 " ns.",
-                            centered_sync_error_ns, tolerance_ns);
-                    }
-                  }
-                }
+              uint64_t expectedTime;
+              frame_to_local_time(playback.timestamp, &expectedTime, conn);
+              SyncObservation observation;
+              observation.expectedFrameTime = expectedTime;
+              observation.dacMeasurementTime = delay_measurement_time;
+              observation.measurementDuration =
+                  std::bit_cast<int64_t>(get_absolute_time_in_ns() - mst);
+              observation.framesInDac = current_delay;
+              observation.retainedFrames = nativeAudio.retainedFrames();
+              observation.timestamp = playback.timestamp;
+              observation.timestampGap = playback.timestampGap;
+              observation.firstFrame = conn->first_packet_timestamp == playback.timestamp;
+              observation.measured = true;
+              observation.inputRate = conn->input_rate;
+              observation.outputRate = RATE_FROM_ENCODED_FORMAT(config.current_output_configuration);
+              observation.blockFrames = inbuflength;
+              observation.playNumber = play_number;
+              const SyncPolicy policy{config.no_sync == 0,
+                  static_cast<int64_t>(config.tolerance * 1000000000),
+                  config.resync_threshold};
+              const auto decision = conn->playbackSync.observe(observation, policy);
+              sync_error = decision.errorFrames;
+              amount_to_stuff = decision.correctionFrames;
+              tsum_of_gaps += decision.windowSpreadNs;
+              if (decision.silenceFrames) {
+                auto silence = conn->pcmEncoder.silence(decision.silenceFrames);
+                config.output->play(silence.bytes().data(), silence.frames(),
+                                    play_samples_are_untimed, 0, 0);
+                frames_played += silence.frames();
               }
-
-              if (amount_to_stuff)
-                debug(4,
-                      //                          "stuff: %+d, sync_error: %+5.3f milliseconds.",
-                      //                          amount_to_stuff, sync_error * 1000);
-                      "stuff: %+d, sync_errors actual: %+5.3f milliseconds, bufferlength: %d, "
-                      "sync window : %+5.3f "
-                      "milliseconds, prior second highest: %+5.3f milliseconds, prior second "
-                      "lowest: %+5.3f "
-                      "milliseconds.",
-                      amount_to_stuff, sync_error_ns * 0.000001, inbuflength,
-                      (sync_samples_second_highest_error - sync_samples_second_lowest_error) *
-                          0.000001,
-                      sync_samples_second_highest_error * 0.000001,
-                      sync_samples_second_lowest_error * 0.000001);
-
-              // now, deal with sync errors and anomalies
-
-              if ((config.no_sync == 0) && (playback.timestamp != 0) &&
-                  (config.resync_threshold > 0.0) &&
-                  //                      (fabs(sync_error) > config.resync_threshold)) {
-                  (fabs(centered_sync_error_time) > config.resync_threshold) &&
-                  // don't count it if the error max and min values bracket (i.e. are on either
-                  // size of) zero
-                  !((sync_samples_highest_error >= 0) && ((sync_samples_lowest_error <= 0))) &&
-                  (conn->sync_samples_count == sync_history_length)) {
-                sync_error_out_of_bounds++;
-              } else {
-                sync_error_out_of_bounds = 0;
-              }
-
-              if (sync_error_out_of_bounds != 0) {
-                debug(2,
-                      "sync error for frame %" PRIu32
-                      " out of bounds on %d successive occasions. Error is %.3f milliseconds -- "
-                      "resync requested (%u, %" PRId64 ", %" PRId64 ").",
-                      playback.timestamp, sync_error_out_of_bounds, centered_sync_error_time * 1000,
-                      conn->sync_samples_count, sync_samples_highest_error,
-                      sync_samples_lowest_error);
-
-                if (centered_sync_error_time < 0) {
-                  request_resync = 1; // ask for a resync
-                } else {
-                  int16_t occ = conn->packetBuffer.occupancy();
-                  debug(2,
-                        "drop late packet, timestamp: %u,  late by: %.3f ms, packets remaining in "
-                        "the buffer: %u.",
-                        playback.timestamp, centered_sync_error_time * 1000, occ);
-                  unsigned int s;
-                  for (s = 0; s < conn->sync_samples_count; s++) {
-                    debug(4, "sample: %u, value: %.3f ms", s, sync_samples[s] * 0.000001);
-                  }
-                  debug(4, "sync_history_length: %u, samples_count: %u, sample_index: %u",
-                        sync_history_length, conn->sync_samples_count, last_sample_index);
-                }
-                sync_error_out_of_bounds = 0;
-                // conn->sync_samples_index = 0;
-                // conn->sync_samples_count = 0;
-              } else {
-
-                if (config.no_sync != 0)
-                  amount_to_stuff = 0; // no stuffing if it's been disabled
-
-                // Apply DSP here
-
-
-
-                // }
+              if (decision.resyncNext)
+                request_resync = 1;
+              if (!decision.dropPacket) {
                 encoded = conn->playbackSamples.encode(conn->pcmEncoder,
                     {config.packet_stuffing == ST_basic ? CorrectionStyle::basic :
                                                          CorrectionStyle::vernier, amount_to_stuff});
@@ -1742,44 +1456,15 @@ void *player_thread_func(void *arg) {
                     frame_to_local_time(playback.timestamp, &should_be_time, conn);
                     // debug(1, "play frame %u.", playback.timestamp);
 
-                    // now, see if we are skipping some or all of these frames
-                    if (frames_to_skip == 0) {
-                      config.output->play(encoded.bytes().data(), play_samples, play_samples_are_timed,
+                    const auto skipped = conn->playbackSync.skipFrom(play_samples);
+                    if (skipped < static_cast<size_t>(play_samples)) {
+                      const size_t bytesToSkip = skipped *
+                          CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration) *
+                          sps_format_sample_size(FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration));
+                      config.output->play(encoded.bytes().data() + bytesToSkip,
+                                          play_samples - skipped, play_samples_are_timed,
                                           playback.timestamp, should_be_time);
-                      frames_played += play_samples;
-                    } else {
-                      if (frames_to_skip > (unsigned int)play_samples) {
-                        debug(3, "skipping a packet of %u frames.", play_samples);
-                        debug_print_buffer(
-                            4, encoded.bytes().data(),
-                            play_samples *
-                                CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration) *
-                                sps_format_sample_size(FORMAT_FROM_ENCODED_FORMAT(
-                                    config.current_output_configuration)));
-                        frames_to_skip -= play_samples;
-                      } else {
-
-                        size_t bytes_to_skip =
-                            frames_to_skip *
-                            CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration) *
-                            sps_format_sample_size(
-                                FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration));
-
-                        uint8_t *play_starting_point = encoded.bytes().data() + bytes_to_skip;
-
-                        config.output->play(play_starting_point, play_samples - frames_to_skip,
-                                            play_samples_are_timed, playback.timestamp,
-                                            should_be_time);
-
-                        debug(4, "skipping the first %u frames in a packet of %u frames.",
-                              frames_to_skip, play_samples);
-
-                        debug_print_buffer(4, encoded.bytes().data(), bytes_to_skip);
-
-                        frames_played += play_samples - frames_to_skip;
-                        frames_to_skip = 0;
-                        skipping_frames_at_start_of_play = 0;
-                      }
+                      frames_played += play_samples - skipped;
                     }
 
                   }
