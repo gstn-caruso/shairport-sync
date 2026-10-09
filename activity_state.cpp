@@ -38,3 +38,10 @@ ActivityState::Effect ActivityState::timeoutExpired() noexcept {
   state_ = am_inactive;
   return Effect::deactivate;
 }
+
+ActivityState::Effect ActivityState::stop() noexcept {
+  if (state_ == am_inactive)
+    return Effect::none;
+  state_ = am_inactive;
+  return Effect::deactivate;
+}

@@ -37,4 +37,17 @@ int main() {
   expired.signifyActivity(true, 2.0);
   assert(expired.timeoutExpired() == ActivityState::Effect::none);
   assert(expired.status() == am_active);
+  ActivityState stopped;
+  assert(stopped.stop() == ActivityState::Effect::none);
+  stopped.signifyActivity(true, 2.0);
+  assert(stopped.stop() == ActivityState::Effect::deactivate);
+  assert(stopped.status() == am_inactive);
+  assert(stopped.advance() == ActivityState::Wait::signal);
+  assert(stopped.stop() == ActivityState::Effect::none);
+  stopped.signifyActivity(true, 2.0);
+  stopped.signifyActivity(false, 2.0);
+  stopped.advance();
+  assert(stopped.stop() == ActivityState::Effect::deactivate);
+  assert(stopped.status() == am_inactive);
+  assert(stopped.advance() == ActivityState::Wait::signal);
 }
