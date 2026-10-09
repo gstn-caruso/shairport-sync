@@ -173,6 +173,15 @@ case and Release 164/164 (14.82s) passed; each entry has timeout 5. C ABI, nativ
 cancellation and shell checks remain green; production is unchanged and
 sanitizers/devices were not rerun.
 
+Playback-samples discovery (`ctest --test-dir build/redesign-release -R '^PlaybackSamples\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Seven independent cases replay original preparation/configuration history and
+retain native layouts/modes, invalid payloads, per-channel Basic means, random
+choice counts, Vernier lengths and exact handoff bytes/bounds. Group (0.12s), exact
+handoff case and Release 170/170 (14.89s) passed; each entry has timeout 5. Native
+assertions remain in non-void helpers/callbacks. C ABI, cancellation and shell checks
+remain green; production is unchanged and sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
