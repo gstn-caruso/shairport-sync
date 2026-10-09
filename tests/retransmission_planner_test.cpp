@@ -30,6 +30,27 @@ TEST(RetransmissionPlanner, RetryIntervalIncludesExactBoundary) {
   EXPECT_EQ(repeat.size(), 2);
 }
 
+TEST(RetransmissionPlanner, RejectedChecksPreserveInitialAndRepeatedRequestBoundaries) {
+  RetransmissionPlanner planner;
+  planner.noteMissing(7, 1000);
+  const RetryPolicy policy{100, 50, 20, 1000};
+  const PacketWindow window{7, 8};
+
+  EXPECT_TRUE(planner.due(999, policy, window).empty());
+  EXPECT_TRUE(planner.due(1099, policy, window).empty());
+  const auto initial = planner.due(1100, policy, window);
+  ASSERT_EQ(initial.size(), 1);
+  EXPECT_EQ(initial[0].first, 7);
+  EXPECT_EQ(initial[0].count, 1);
+
+  EXPECT_TRUE(planner.due(1099, policy, window).empty());
+  EXPECT_TRUE(planner.due(1149, policy, window).empty());
+  const auto repeated = planner.due(1150, policy, window);
+  ASSERT_EQ(repeated.size(), 1);
+  EXPECT_EQ(repeated[0].first, 7);
+  EXPECT_EQ(repeated[0].count, 1);
+}
+
 TEST(RetransmissionPlanner, ResolutionShrinksRangesAtFinalOpportunityBoundary) {
   auto planner = missingPacketsAcrossWraparound();
   const RetryPolicy policy{100, 50, 20, 1000};
