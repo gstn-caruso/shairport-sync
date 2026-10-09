@@ -21,6 +21,31 @@ Reproduce with a clean build, one settling build, `touch volume_policy.cpp`,
 `ninja -C build/cmake -n`, and `/usr/bin/time -p cmake --build build/cmake --parallel 2`.
 Touching the source only updates its timestamp; it does not change its contents.
 
+The first build-isolation acceptance cycle separates `receiver-volume-policy`
+and `receiver-rtp-clock`; the receiver publicly links both, while their tests
+link only their respective library and GoogleTest. Before this change, a
+settled Release build followed by `touch audio.cpp` and `ninja -C
+build/redesign-release -n` scheduled both test links. The actual baseline build
+linked 38 executables in 3.85s. After the split, the same touch followed by
+`cmake --build build/redesign-release --target volume-policy-test rtp-clock-test
+--parallel 2` did no work (0.01s); the subsequent full build compiled only
+`audio.cpp`, archived the receiver and linked 36 executables (3.65s), neither
+isolated test. Touching `volume_policy.cpp` rebuilt the two selected targets
+with exactly one policy compile, its archive and its test link (0.27s), without
+relinking the clock test. A separate policy-touch full build compiled and
+archived only the policy library and linked 37 executables in 3.65s, versus the
+initial 38-link/3.51s baseline above. These single measurements establish
+isolation, not an overall speedup. Native dry-run, actual build and timing logs
+are in ignored `build/redesign-release/isolation-*.log`; the always-run
+Git-version check makes full dry runs conservative about `common.cpp`.
+The 14 named policy/clock cases and all 231 Release CTest entries passed
+(full suite 15.65s), including native linkage and configuration contracts.
+Staged installation, installed executable `--version`, and byte comparisons
+of the installed manual/configuration passed. Both new production targets
+retain the original compile options/definitions and join the C++26 source
+guard; sanitizer object paths and native wrapper flags remain unchanged.
+Sanitizer builds and device playback were not rerun in this cycle.
+
 The first discovery acceptance check was
 `ctest --test-dir build/cmake -R '^VolumePolicy\.' --no-tests=error`.
 It failed with no tests on the baseline. GoogleTest now registers six named
