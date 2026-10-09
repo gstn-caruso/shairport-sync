@@ -57,3 +57,13 @@ the extraction, `make -C build/ap2-only check -j2` passed all four contracts.
 `main.c` delegates to `shairport_receiver_main`; the test no longer renames main
 through a compiler definition. This structural step uses responsibility-driven
 design and intention-revealing-selector (#4).
+
+Expectation: a C++ caller can link the C receiver entry point without converting
+receiver sources. Compiling `tests/receiver_linkage_test.cpp` with `g++ -I.` and
+linking `build/ap2-only/lib_receiver.a`, `lib_pair_ap.a` and the receiver's native
+libraries first failed with undefined reference to
+`shairport_receiver_main(int, char**)`. After adding the C linkage guard in
+`receiver.h`, the same command linked successfully and
+`build/cpp-receiver-linkage-test --version` exited zero with the AirPlay2/smi10/
+OpenSSL/Avahi/PulseAudio feature string. GCC 15 established the ABI contract;
+the pinned Clang CMake build validates it separately. This check starts no service.
