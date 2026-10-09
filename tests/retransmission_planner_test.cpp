@@ -74,3 +74,28 @@ TEST(RetransmissionPlanner, ResetLeavesNoRetransmissionsDue) {
   planner.reset();
   EXPECT_TRUE(planner.due(2000, policy, {65535, 3}).empty());
 }
+
+TEST(RetransmissionPlanner, EmptyWindowPreservesPendingRequest) {
+  shairport::packets::RetransmissionPlanner planner;
+  planner.noteMissing(65535, 1000);
+  const shairport::packets::RetryPolicy policy{100, 50, 20, 1000};
+
+  EXPECT_TRUE(planner.due(1100, policy, {65535, 65535}).empty());
+  const auto ranges = planner.due(1100, policy, {65535, 0});
+  ASSERT_EQ(ranges.size(), 1);
+  EXPECT_EQ(ranges[0].first, 65535);
+  EXPECT_EQ(ranges[0].count, 1);
+}
+
+TEST(RetransmissionPlanner, OversizedWindowPreservesMaximumWrappedRequest) {
+  shairport::packets::RetransmissionPlanner planner;
+  for (unsigned offset = 0; offset < 1024; ++offset)
+    planner.noteMissing(static_cast<uint16_t>(65024 + offset), 1000);
+  const shairport::packets::RetryPolicy policy{100, 50, 20, 1000};
+
+  EXPECT_TRUE(planner.due(1100, policy, {65024, 513}).empty());
+  const auto ranges = planner.due(1100, policy, {65024, 512});
+  ASSERT_EQ(ranges.size(), 1);
+  EXPECT_EQ(ranges[0].first, 65024);
+  EXPECT_EQ(ranges[0].count, 1024);
+}
