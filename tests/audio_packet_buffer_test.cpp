@@ -1,4 +1,5 @@
 #include "audio_packet_buffer.hpp"
+#include "resampler.hpp"
 #include <cassert>
 
 static QueuedAudioPacket packet(uint16_t sequence, uint32_t timestamp) {
@@ -8,6 +9,10 @@ static QueuedAudioPacket packet(uint16_t sequence, uint32_t timestamp) {
   frame->sample_rate = 44100;
   av_channel_layout_default(&frame->ch_layout, 2);
   assert(av_frame_get_buffer(frame.get(), 0) == 0);
+  for (int index = 0; index < 16; ++index) {
+    reinterpret_cast<int16_t *>(frame->data[0])[index] = index;
+    reinterpret_cast<int16_t *>(frame->data[1])[index] = 100 + index;
+  }
   return QueuedAudioPacket::decoded(*AudioFormat::fromSsrc(ALAC_44100_S16_2), sequence,
                                     timestamp, 0, std::move(frame));
 }
@@ -46,4 +51,21 @@ int main() {
   auto overflow = buffer.accept(2000, 500, [&] { ++factories; return packet(2000, 5000); });
   assert(overflow.kind == ArrivalKind::overflow && buffer.occupancy() == 1);
   assert(buffer.front()->packet.sequence == 2000);
+  auto trimmed = packet(20, 6000);
+  assert(trimmed.trimBefore(6005));
+  assert(trimmed.metadata().timestamp == 6005 && trimmed.metadata().frames == 11);
+  Resampler resampler;
+  assert(resampler.configure(trimmed.format(), *trimmed.decodedSampleFormat(), {44100, 2}));
+  assert(trimmed.convertWith(resampler));
+  assert(trimmed.metadata().frames == 11 && trimmed.audioBytes().size() == 44);
+  auto samples = reinterpret_cast<const int16_t *>(trimmed.audioBytes().data());
+  assert(samples[0] == 5 && samples[1] == 105);
+  auto muted = QueuedAudioPacket::decoded(*AudioFormat::fromSsrc(ALAC_44100_S16_2),
+                                         21, 7000, 0, {});
+  muted.mute();
+  assert(muted.samplesDecoded() == 0 && muted.metadata().frames == 352);
+  assert(muted.convertWith(resampler));
+  assert(muted.metadata().frames == 352);
+  for (auto byte : muted.audioBytes())
+    assert(byte == 0);
 }
