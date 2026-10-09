@@ -33,6 +33,16 @@ The same acceptance check for `'^RtpClock\.'` initially failed with no tests.
 Eight independently initialized clock cases now preserve the original anchor,
 validity, latency, wraparound, fallback, reset and boundary checks.
 
+For converted audio, the original `converted-audio` entry passed before migration,
+while `ctest --test-dir build/redesign-release -R '^ConvertedAudio\.' --no-tests=error`
+failed with no matching tests (exit 8). Three independently initialized scenarios
+now preserve the move-construction, move-assignment and repeated-reset operations
+and assertions. The same discovery check passed all three (0.05s); an exact
+move-assignment scenario selection passed alone. Generated CTest entries each
+have a five-second timeout. The full Release regression passed all 54 entries
+(14.05s), including native cancellation, C ABI and shell checks. This migration
+leaves production behavior unchanged; sanitizer builds and device checks were not rerun.
+
 CTest covers:
 
 | Test | Contract |
