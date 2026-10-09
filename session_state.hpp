@@ -4,6 +4,7 @@
 #include "player.h"
 #include "rtp_clock.hpp"
 #include "audio_decoder.hpp"
+#include "resampler.hpp"
 #include <atomic>
 
 struct SessionState {
@@ -186,55 +187,7 @@ struct SessionState {
   uint64_t compressionType;
 
   AudioDecoder decoder;
-  ssrc_t resampler_ssrc; // the SSRC of packets for which the software resampler has been set up.
-  // normally it's the same as that of incoming packets, but if the encoding of incoming packets
-  // changes dynamically and the decoding chain hasn't been reset, the resampler will have to deal
-  // with queued AVFrames encoded according to the previous SSRC.
-  // the swr can't be used just after the incoming packet has been decoded as explained below
-
-  // The reasons that resampling can not occur when the packet initially arrives are twofold.
-  // Resampling requires input samples from before and after the resampling instant.
-  // So, at the end of a block, since the subsequent samples aren't in the block, resampling
-  // is deferred until the next block is loaded. From this, the two reasons follow:
-  // First, the "next" block to be provided in player_put_packet is not guaranteed to be
-  // the next block in sequence -- packets can arrive out of sequence in UDP transmission.
-  // Second, not all the frames that should be generated for a block will be generated
-  // by a call to swr_convert. The frames that can't be calculated will not be provided, and
-  // will be held back and provided to the subsequent call.
-  // Tht means that the first frame output by swr_convert will not in general,
-  // not correspond to the first frame provided to it, throwing
-  // timing calculations off.
-
-  // In summary, we have to wait until (1) we have all the blocks in order,
-  // and (2) we have to track the number of resampler output frames to
-  // keep the correspondence between them and the input frames.
-
-  // We can calculate the "deficit" between the number of frames that should be generated
-  // versus the number of frames actually generated.
-
-  // For example, converting 352 frames at 44,100 to 48,000 should result
-  // in 352 * 48000 / 44100, or 383.129252 frames.
-
-  // Say only 360 frames are actually produced, then the deficit is 23.129252.
-
-  // If those 360 frames are sent to the output device, then the timing of the next
-  // block of 352 frames will be ahead by 23.129252 frames at 48,000 fps -- about 0.48 ms.
-
-  // We need to add the delay corresponding to the frames that should have been sent to
-  // keep timing correct. I.e. when calculating the buffer delay at the start of the following
-  // block, those 23.129252 frames the were not actually sent should be added to it.
-
-  // The "deficit" can readily be kept up to date and can be always added to the
-  // DAC buffer delay to exactly compensate for the
-
-  SwrContext *swr; // this will do transcoding anf resampling, if necessary, just prior to output
-  int64_t resampler_output_channels;
-  int resampler_output_bytes_per_sample;
-  int64_t frames_retained_in_the_resampler; // swr will retain frames it hasn't finished processing
-  // they'll come out before the frames corresponding to the start of next block passed to
-  // swrconvert so we need to compensate for their absence in sync timing
-  unsigned int output_channel_to_resampler_channel_map[8];
-  unsigned int output_channel_map_size;
+  Resampler resampler;
 
   // used as the initials values for calculating the rate at which the source thinks it's sending
   // frames

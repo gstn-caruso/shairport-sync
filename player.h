@@ -28,21 +28,11 @@ typedef uint16_t seq_t;
 // Dolby Atmos seems to be 7P1
 #include "audio_types.h"
 
-typedef struct audio_buffer_entry { // decoded audio packets
-  uint8_t ready;
-  uint8_t status; // flags
-  uint16_t resend_request_number;
-  signed short *data;
-  seq_t sequence_number;
-  uint64_t initialisation_time; // the time the packet was added or the time it was noticed the
-                                // packet was missing
-  uint64_t resend_time;         // time of last resend request or zero
-  uint32_t timestamp;           // for timing
-  int32_t timestamp_gap;        // the difference between the timestamp and the expected timestamp.
-  size_t length; // the length of the decoded data (or silence requested) in input frames
-  ssrc_t ssrc;      // this is the type of this specific frame.
-  AVFrame *avframe; // Decoded audio carried by FFmpeg before output conversion.
-} abuf_t;
+#ifdef __cplusplus
+#include "audio_packet_payload.hpp"
+#else
+typedef struct audio_buffer_entry abuf_t;
+#endif
 
 typedef struct stats { // statistics for running averages
   uint32_t timestamp;  // timestamp (denominated in input frames)

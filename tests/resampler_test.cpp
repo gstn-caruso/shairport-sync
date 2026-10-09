@@ -1,5 +1,6 @@
 #include "session_state.hpp"
 #include "resampler.hpp"
+#include "audio_player_adapter.hpp"
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
@@ -106,7 +107,6 @@ static void checkSilenceAndErrors() {
 
 int setup_software_resampler(rtsp_conn_info *, ssrc_t);
 void clear_software_resampler(rtsp_conn_info *);
-int64_t avframe_to_audio(rtsp_conn_info *, AVFrame *, uint8_t **, size_t *, size_t *);
 static int32_t chooseStereo(unsigned, unsigned, unsigned) {
   return CHANNELS_TO_ENCODED_FORMAT(2) | RATE_TO_ENCODED_FORMAT(44100) |
          FORMAT_TO_ENCODED_FORMAT(SPS_FORMAT_S16_LE);
@@ -133,22 +133,20 @@ int main() {
     left[index] = 5;
     right[index] = 9;
   }
-  uint8_t *bytes;
-  size_t length, count;
-  auto retained = avframe_to_audio(&session, frame.get(), &bytes, &length, &count);
-  assert(retained == 0 && count == 64 && length == 256);
-  auto *result = reinterpret_cast<int16_t *>(bytes);
+  auto initial = convertIncomingAudio(session, *frame);
+  assert(initial.retainedFrames() == 0 && initial.frames() == 64 && initial.bytes().size() == 256);
+  auto *result = reinterpret_cast<int16_t *>(initial.bytes().data());
   assert(result[0] == 5 && result[1] == 9);
-  free(bytes);
+  initial.reset();
   config.output_channel_mapping_enable = 1;
   config.output_channel_map_size = 2;
   config.output_channel_map[0] = "FM";
   config.output_channel_map[1] = "--";
   assert(setup_software_resampler(&session, ALAC_44100_S16_2) == 0);
-  avframe_to_audio(&session, frame.get(), &bytes, &length, &count);
-  result = reinterpret_cast<int16_t *>(bytes);
+  auto mapped = convertIncomingAudio(session, *frame);
+  result = reinterpret_cast<int16_t *>(mapped.bytes().data());
   assert(result[0] == 6 && result[1] == 0);
-  free(bytes);
+  mapped.reset();
   backend.get_configuration = rejectOutput;
   const auto previousRate = session.input_rate, previousFrames = session.frames_per_packet;
   const auto previousConfiguration = config.current_output_configuration;

@@ -72,8 +72,6 @@
 
 #include "activity_monitor.h"
 
-const unsigned int silent_channel_index = 65;
-const unsigned int front_mono_channel_index = 66;
 
 // default buffer size
 // needs to be a power of 2 because of the way BUFIDX(seqno) works
@@ -92,10 +90,9 @@ size_t avflush(rtsp_conn_info *conn);
 int free_audio_buffer_payload(abuf_t *abuf) {
   int items_freed = 0;
   if (abuf) {
-    if (abuf->data != NULL) {
-      free(abuf->data);
+    if (abuf->data) {
+      abuf->data.reset();
       items_freed++;
-      abuf->data = NULL;
     }
     if (abuf->avframe != NULL) {
       av_frame_free(&abuf->avframe);
@@ -140,7 +137,7 @@ void reset_input_flow_metrics(rtsp_conn_info *conn) {
 static void init_buffer(rtsp_conn_info *conn) {
   int i;
   for (i = 0; i < BUFFER_FRAMES; i++) {
-    conn->audio_buffer[i].data = NULL;
+    conn->audio_buffer[i].data.reset();
     conn->audio_buffer[i].avframe = NULL;
     conn->audio_buffer[i].ssrc = SSRC_NONE;
   }
@@ -202,12 +199,6 @@ const char *get_category_string(airplay_stream_c cat) {
 }
 
 
-static void swr_alloc_cleanup_handler(void *arg) {
-  debug(3, "swr_alloc_cleanup_handler");
-  SwrContext **swr = static_cast<SwrContext **>(arg);
-  swr_free(swr);
-}
-
 void clear_decoding_chain(rtsp_conn_info *conn) {
   int previousState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
@@ -216,13 +207,10 @@ void clear_decoding_chain(rtsp_conn_info *conn) {
 }
 
 void clear_software_resampler(rtsp_conn_info *conn) {
-  if (conn->swr != NULL) {
-    debug(2, "clear_software_resampler");
-    pthread_cleanup_push(swr_alloc_cleanup_handler, &conn->swr);
-    pthread_cleanup_pop(1); // deallocate the swr
-    conn->swr = NULL;
-    conn->resampler_ssrc = SSRC_NONE;
-  }
+  int previousState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+  conn->resampler.reset();
+  pthread_setcancelstate(previousState, nullptr);
 }
 
 int ssrc_is_recognised(ssrc_t ssrc) { return AudioFormat::fromSsrc(ssrc).has_value(); }
@@ -247,475 +235,60 @@ size_t get_ssrc_block_length(ssrc_t ssrc) {
   return format ? format->framesPerPacket() : 0;
 }
 
-int setup_software_resampler(rtsp_conn_info *conn, ssrc_t ssrc) {
-  int response = 0;
-
-  unsigned int channels;
-
-  // the output from the software resampler will be the input to the rest of
-  // the player chain, so we need to set those parameters according to the SSRC:
-
-  const auto format = AudioFormat::fromSsrc(ssrc);
-  const auto inputRate = format ? format->sampleRate() : 48000;
-  channels = format ? format->channels() : 2;
-  const auto suggested_output_format = format ? format->suggestedSampleFormat() : SPS_FORMAT_S32;
+static int setupSoftwareResampler(rtsp_conn_info *conn, ssrc_t ssrc,
+                                  AVSampleFormat decodedFormat) {
+  auto format = AudioFormat::fromSsrc(ssrc);
   if (!format)
-    debug(1, "Can't set rate for %s.", get_ssrc_name(ssrc));
-
-// Now we ask the backend for its best format, giving it the channels, rate and format
-
-// default format is S32_LE/48000/2 for AP2, S16_LE/44100/2 otherwise
-  uint32_t output_configuration = CHANNELS_TO_ENCODED_FORMAT(2) | RATE_TO_ENCODED_FORMAT(48000) |
-                                  FORMAT_TO_ENCODED_FORMAT(SPS_FORMAT_S32_LE);
-
-  int output_configuration_changed = 0;
-
-  if (config.output->get_configuration) {
-    output_configuration =
-        config.output->get_configuration(channels, inputRate, suggested_output_format);
-  }
-
-  // if you can set up a configuration...
-  if (output_configuration != 0) {
-    conn->input_bit_depth = 16;
-    conn->input_effective_bit_depth = 16;
-    conn->input_bytes_per_frame = 4;
-    conn->input_rate = inputRate;
-    conn->frames_per_packet = format ? format->framesPerPacket() : 1024;
-    if (config.current_output_configuration != output_configuration) {
-      output_configuration_changed = 1;
-      debug(2, "Connection %d: outgoing audio switching to: %s.", conn->connection_number,
-            short_format_description(output_configuration));
-    }
-    config.current_output_configuration = output_configuration;
-    char *output_device_channel_map = NULL;
-    if (config.output->configure) {
-      config.output->configure(output_configuration, &output_device_channel_map);
-    }
-
-    // create a software resampler
-    if (conn->swr != NULL) {
-      debug(3, "software resampler already set up");
-      if (swr_is_initialized(conn->swr)) {
-        debug(3, "software resampler already initialised -- close it...");
-        swr_close(conn->swr);
-      }
-      debug(3, "software resampler free it...");
-      swr_free(&conn->swr);
-      if (conn->swr == NULL) {
-        debug(3, "software resampler released");
-      }
-    }
-
-    // input channels to the player
-    conn->input_num_channels = CHANNELS_FROM_ENCODED_FORMAT(output_configuration);
-
-    SwrContext *swr = swr_alloc();
-    conn->swr = swr;
-    if (swr == NULL) {
-      die("can not allocate an swr context");
-    }
-
-    // push a deallocator -- av_packet_free(pkt);
-    pthread_cleanup_push(swr_alloc_cleanup_handler, &conn->swr);
-
-    enum AVSampleFormat input_format = AV_SAMPLE_FMT_FLTP; // default
-    int64_t input_layout = AV_CH_LAYOUT_STEREO;            // default
-    int64_t output_layout = AV_CH_LAYOUT_STEREO;           // default
-
-    if (format && !format->isAac())
-      input_format = conn->decoder.decodedSampleFormat().value_or(AV_SAMPLE_FMT_FLTP);
-    if (channels == 6) {
-      input_layout = config.six_channel_layout;
-      output_layout = config.six_channel_layout;
-    } else if (channels == 8) {
-      input_layout = config.eight_channel_layout;
-      output_layout = config.eight_channel_layout;
-    }
-
-    av_opt_set_sample_fmt(swr, "in_sample_fmt", input_format, 0);
-
-    // If mixdown is enabled, set the resampler's channel layout,
-    // either automatically based on the number of ooutput channels,
-    // or by using the setting that has been given.
-
-    // Upmixing will not be done if the setting is "auto".
-
-    // Similarly, on the "auto" setting, downmixing will be done
-    // only if the number of output channels available
-    // is strictly less than the number of input channels.
-
-    // If the number of output channels equals the number of input channels,
-    // no mixing is done on the "auto" setting.
-
-    // To do an upmix or a custom downmix, specify
-    // the target format, e.g. "7.1" in the mixdown setting.
-
-    // NOTE: upmixing, by default, simply copies the input channels to their
-    // equivalents in the output channels. All other channels are
-    // left silent.
-
-#if LIBAVUTIL_VERSION_MAJOR >= 57
-    {
-      AVChannelLayout input_channel_layout;
-      av_channel_layout_from_mask(&input_channel_layout, input_layout);
-      int input_channel_count = input_channel_layout.nb_channels;
-      av_opt_set_chlayout(swr, "in_chlayout", &input_channel_layout, 0);
-      av_channel_layout_uninit(&input_channel_layout);
-
-      AVChannelLayout output_channel_layout;
-      if (config.mixdown_enable != 0) {
-        if (config.mixdown_channel_layout == 0) {
-          if (CHANNELS_FROM_ENCODED_FORMAT(output_configuration) < (unsigned)input_channel_count) {
-            av_channel_layout_default(&output_channel_layout,
-                                      CHANNELS_FROM_ENCODED_FORMAT(output_configuration));
-          } else {
-            av_channel_layout_from_mask(&output_channel_layout, input_layout);
-          }
-        } else {
-          av_channel_layout_from_mask(&output_channel_layout, config.mixdown_channel_layout);
-        }
-      } else {
-        av_channel_layout_from_mask(&output_channel_layout, output_layout);
-      }
-      char layout_desc[2048];
-      av_channel_layout_describe(&output_channel_layout, layout_desc, sizeof(layout_desc));
-      // debug(1,"output channel layout: \"%s\"", layout_desc);
-      av_opt_set_chlayout(swr, "out_chlayout", &output_channel_layout, 0);
-      av_channel_layout_uninit(&output_channel_layout);
-    }
-#else
-    av_opt_set_int(swr, "in_channel_layout", input_layout, 0);
-    if (config.mixdown_enable != 0) {
-      if (config.mixdown_channel_layout == 0) {
-        if ((signed)CHANNELS_FROM_ENCODED_FORMAT(output_configuration) <
-            (av_get_channel_layout_nb_channels(input_layout))) {
-          output_layout =
-              av_get_default_channel_layout(CHANNELS_FROM_ENCODED_FORMAT(output_configuration));
-        } // else leave output_layout as it was: the sames as the input_layout.
-      } else {
-        output_layout = config.mixdown_channel_layout;
-      }
-    }
-    av_opt_set_int(swr, "out_channel_layout", output_layout, 0); // assume no mixdown
-#endif
-
-    av_opt_set_int(swr, "in_sample_rate", conn->input_rate, 0);
-    // now set the resampler's output rate to match the output device's rate
-    av_opt_set_int(swr, "out_sample_rate", RATE_FROM_ENCODED_FORMAT(output_configuration), 0);
-
-    // Ask for S16 output for AAC/S16 input and for S32 output from resampler for F24 and S24.
-    // This is to avoid FFmpeg unnecessarily transcoding S16 to S32.
-    // Dither will be added by Shairport Sync itself later, if needed.
-
-    if (ssrc == ALAC_44100_S16_2) {
-      av_opt_set_sample_fmt(swr, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
-      conn->input_bytes_per_frame =
-          2 * CHANNELS_FROM_ENCODED_FORMAT(
-                  output_configuration); // the output from the decoder will be input to the player
-      conn->input_bit_depth = 16;
-      conn->input_effective_bit_depth = 16;
+    return 0;
+  int previousState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+  uint32_t encoded = CHANNELS_TO_ENCODED_FORMAT(2) | RATE_TO_ENCODED_FORMAT(48000) |
+                     FORMAT_TO_ENCODED_FORMAT(SPS_FORMAT_S32_LE);
+  if (config.output->get_configuration)
+    encoded = config.output->get_configuration(format->channels(), format->sampleRate(),
+                                               format->suggestedSampleFormat());
+  if (encoded != 0) {
+    char *deviceMap = nullptr;
+    if (config.output->configure)
+      config.output->configure(encoded, &deviceMap);
+    std::unique_ptr<char, decltype(&free)> ownedDeviceMap(deviceMap, &free);
+    OutputFormat output{RATE_FROM_ENCODED_FORMAT(encoded), CHANNELS_FROM_ENCODED_FORMAT(encoded)};
+    output.inputLayout = format->channels() == 6 ? config.six_channel_layout :
+                         format->channels() == 8 ? config.eight_channel_layout : AV_CH_LAYOUT_STEREO;
+    output.mixdown = config.mixdown_enable != 0;
+    output.mixdownLayout = config.mixdown_channel_layout;
+    output.mapping.enabled = config.output_channel_mapping_enable != 0;
+    for (unsigned index = 0; index < config.output_channel_map_size; ++index)
+      output.mapping.names.emplace_back(config.output_channel_map[index]);
+    if (ownedDeviceMap)
+      output.mapping.deviceNames = ownedDeviceMap.get();
+    const auto decoded = decodedFormat != AV_SAMPLE_FMT_NONE ? decodedFormat :
+        format->isAac() ? AV_SAMPLE_FMT_FLTP :
+        conn->decoder.decodedSampleFormat().value_or(AV_SAMPLE_FMT_FLTP);
+    auto configured = conn->resampler.configure(*format, decoded, std::move(output));
+    if (configured) {
+      if (config.current_output_configuration != encoded)
+        debug(2, "Connection %d: outgoing audio switching to: %s.", conn->connection_number,
+              short_format_description(encoded));
+      config.current_output_configuration = encoded;
+      conn->input_num_channels = CHANNELS_FROM_ENCODED_FORMAT(encoded);
+      conn->input_rate = format->sampleRate();
+      conn->frames_per_packet = format->framesPerPacket();
+      conn->input_bit_depth = conn->resampler.sampleBits();
+      conn->input_effective_bit_depth = conn->resampler.effectiveSampleBits();
+      conn->input_bytes_per_frame = conn->input_num_channels * conn->input_bit_depth / 8;
     } else {
-      av_opt_set_sample_fmt(swr, "out_sample_fmt", AV_SAMPLE_FMT_S32, 0);
-      conn->input_bytes_per_frame =
-          4 * CHANNELS_FROM_ENCODED_FORMAT(
-                  output_configuration); // the output from the decoder will be input to the player
-      conn->input_bit_depth = 32;
-      // this is important when it comes to deciding on dither
-      // AFAIK 24-bit ALAC comes out in 32-bit format but is actually 24 bit
-      // so don't dither if it is truncated from 32 to 24 bit
-      if (ssrc == ALAC_48000_S24_2)
-        conn->input_effective_bit_depth = 24;
-      else
-        conn->input_effective_bit_depth = 32;
+      debug(1, "Could not configure resampler: %d.", configured.error().nativeCode);
     }
-
-    // now, having set up the resampler, we can initialise it
-
-    int sres = swr_init(swr);
-    if (sres != 0)
-      debug(1, "swr_init returned %d with SSRC of 0x%0x and LIBAVUTIL_VERSION_MAJOR of %u.", sres,
-            ssrc, LIBAVUTIL_VERSION_MAJOR);
-
-    typedef struct {
-      char *name;
-      int allocated;
-    } channel_info_t;
-
-    char resampler_channel_list[1024] = "";
-    unsigned int c;
-    channel_info_t resampler_channels[64]; // can't be more than 64. This will list the channel
-                                           // names in the order they appear in the output from
-                                           // the software resampler.
-    for (c = 0; c < sizeof(resampler_channels) / sizeof(channel_info_t); c++) {
-      resampler_channels[c].name = NULL;
-      resampler_channels[c].allocated = 0;
-    }
-
-    // get information about the output from the resampler
-    int64_t resampler_output_format = 0;
-    int resampler_channels_found = 0;
-
-    int oldState;
-    pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
-
-#if LIBAVUTIL_VERSION_MAJOR >= 57
-
-    AVChannelLayout output_channel_layout{};
-    av_opt_get_chlayout(swr, "out_chlayout", 0, &output_channel_layout);
-    conn->resampler_output_channels = output_channel_layout.nb_channels;
-    for (c = 0; c < 64; c++) {
-      enum AVChannel channel = av_channel_layout_channel_from_index(&output_channel_layout, c);
-      if (channel != AV_CHAN_NONE) {
-        char buffer[32];
-        if (av_channel_name(buffer, 32, channel) > 0) {
-          if (resampler_channels_found == 0) {
-            strcat(resampler_channel_list, "\"");
-          } else {
-            strcat(resampler_channel_list, "\", \"");
-          }
-          strcat(resampler_channel_list, buffer);
-          resampler_channels[resampler_channels_found].name = strdup(buffer);
-          resampler_channels_found++;
-        }
-      }
-    }
-    av_channel_layout_uninit(&output_channel_layout);
-
-#else
-
-    int64_t resampler_output_channel_layout = 0;
-    {
-      int res = av_opt_get_int(swr, "out_channel_layout", 0, &resampler_output_channel_layout);
-      if (res == 0) {
-        conn->resampler_output_channels =
-            (int64_t)av_get_channel_layout_nb_channels((uint64_t)resampler_output_channel_layout);
-      } else {
-        debug(1, "Error %d getting resampler output channel layout.", res);
-      }
-    }
-    int64_t mask = 1;
-    for (c = 0; c < 64; c++) {
-      if ((resampler_output_channel_layout & mask) != 0) {
-        if (resampler_channels_found == 0) {
-          strcat(resampler_channel_list, "\"");
-        } else {
-          strcat(resampler_channel_list, "\", \"");
-        }
-        strcat(resampler_channel_list, av_get_channel_name(1 << c));
-        resampler_channels[resampler_channels_found].name = strdup(av_get_channel_name(1 << c));
-        resampler_channels_found++;
-      }
-      mask = mask << 1;
-    }
-
-#endif
-
-    if (resampler_channels_found != 0) {
-      strcat(resampler_channel_list, "\"");
-    }
-
-    if (strlen(resampler_channel_list) == 0) {
-      debug(3, "resampler output channel list is empty.");
-    } else {
-      debug(3, "resampler output channel list: %s.", resampler_channel_list);
-    }
-
-    if (output_device_channel_map != NULL) {
-      debug(3, "output device's channel map is: \"%s\".", output_device_channel_map);
-      // free(output_device_channel_map);
-      // output_device_channel_map = NULL;
-    }
-    int output_channel_map_faulty = 0;
-    if (resampler_channels_found != 0) {
-      // now we have the names of the channels produced by the resampler in the order they
-      // appear in the output from the resampler. We need to map them to the channel ordering
-      // of the output device.
-
-      // create an output channel list. It will be 64 channels long.
-      // It may not have names for all channels.
-      // In fact, it will have no names at all if mapping is disabled or set to auto
-      // with no device channel map. That will be okay, as unallocated resampler
-      // channels will be assigned to unused output channels at the end anyway
-
-      channel_info_t
-          output_channels[64]; // can't be more than 64. This will list the output channel names
-                               // in the order they appear in the device channel map.
-      for (c = 0; c < sizeof(output_channels) / sizeof(channel_info_t); c++) {
-        output_channels[c].name = NULL;
-        output_channels[c].allocated = 0;
-      }
-
-      // if channel mapping is enabled
-      if (config.output_channel_mapping_enable != 0) {
-        // if a channel map is given
-        if (config.output_channel_map_size != 0) {
-          for (c = 0; c < config.output_channel_map_size; c++) {
-            output_channels[c].name = strdup(config.output_channel_map[c]);
-          }
-        } else if (output_device_channel_map != NULL) { // if there is a device channel map...
-          char *device_channels = strdup(output_device_channel_map);
-          char delim[] = " ";
-          char *ptr = strtok(device_channels, delim);
-          c = 0;
-          while (ptr != NULL) {
-            output_channels[c].name = strdup(ptr);
-            if (strcasecmp(ptr, "UNKNOWN") == 0)
-              output_channel_map_faulty = 1;
-            ptr = strtok(NULL, delim);
-            c++;
-          }
-          free(device_channels);
-        }
-      }
-
-      pthread_setcancelstate(oldState, NULL);
-
-      if (output_channel_map_faulty != 0) {
-        once(inform("The output device's %u-channel map is incomplete or faulty: \"%s\".",
-                    CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration),
-                    output_device_channel_map));
-      }
-
-      // at this point, we should have two arrays
-      // the first is all the resampler channels
-      // the second is device channel map channels, which may be empty or incomplete
-
-      for (c = 0; c < 64; c++)
-        if (resampler_channels[c].name != NULL)
-          debug(3, "audio channel %u is \"%s\".", c, resampler_channels[c].name);
-      for (c = 0; c < 64; c++)
-        if (output_channels[c].name != NULL)
-          debug(3, "output device channel %u is \"%s\".", c, output_channels[c].name);
-
-      conn->output_channel_map_size =
-          CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration);
-
-      // construct a map to match named resampler channels to named output channels
-
-      unsigned int cmi;
-      for (cmi = 0; cmi < conn->output_channel_map_size; cmi++) {
-        // debug(1,"checking output channel %u, (\"%s\").", cmi, output_channels[cmi].name);
-        conn->output_channel_to_resampler_channel_map[cmi] =
-            silent_channel_index; // by default the channel is silent
-        if ((output_channels[cmi].name != NULL) && (strcmp(output_channels[cmi].name, "--") == 0)) {
-          conn->output_channel_to_resampler_channel_map[cmi] = silent_channel_index;
-          output_channels[cmi].allocated = 1;
-          debug(1, "output device channel %u (\"--\") will be silent.", cmi);
-        } else if ((output_channels[cmi].name != NULL) &&
-                   (strcmp(output_channels[cmi].name, "FM") == 0) &&
-                   (resampler_channels_found >= 2)) {
-          conn->output_channel_to_resampler_channel_map[cmi] = front_mono_channel_index;
-          output_channels[cmi].allocated = 1;
-        } else {
-          int resampler_channel_index;
-          int found = 0;
-          for (resampler_channel_index = 0;
-               ((resampler_channel_index < resampler_channels_found) && (found == 0));
-               resampler_channel_index++) {
-            if ((output_channels[cmi].name != NULL) &&
-                (resampler_channels[resampler_channel_index].name != NULL) &&
-                (strcmp(output_channels[cmi].name,
-                        resampler_channels[resampler_channel_index].name) == 0)) {
-              conn->output_channel_to_resampler_channel_map[cmi] = resampler_channel_index;
-              output_channels[cmi].allocated = 1;
-              resampler_channels[resampler_channel_index].allocated = 1;
-              found = 1;
-              if ((resampler_channels_found > 2) && (output_configuration_changed != 0)) {
-                if (output_channel_map_faulty != 0)
-                  debug(3, "%s -> %s/%u.", resampler_channels[resampler_channel_index].name,
-                        output_channels[cmi].name, cmi);
-                else
-                  debug(3, "%s -> %s/%u.", resampler_channels[resampler_channel_index].name,
-                        output_channels[cmi].name, cmi);
-              }
-            }
-          }
-        }
-      }
-
-      // now there may be unmapped resampler channels and unallocated output channels
-      // allocate them on a first-come-first-served basis
-
-      for (cmi = 0; cmi < conn->output_channel_map_size; cmi++) {
-        if (output_channels[cmi].allocated == 0)
-          debug(3, "output device channel %u (\"%s\") is unallocated.", cmi,
-                output_channels[cmi].name);
-      }
-      for (c = 0; c < 64; c++) {
-        if ((resampler_channels[c].name != NULL) && (resampler_channels[c].allocated == 0))
-          debug(3, "audio channel %u (\"%s\") is unmapped.", c, resampler_channels[c].name);
-      }
-
-      c = 0; // for indexing through the unmapped resampler channels
-      for (cmi = 0; (cmi < conn->output_channel_map_size) && (c < 64); cmi++) {
-        if (output_channels[cmi].allocated == 0) {
-          do {
-            if ((resampler_channels[c].name != NULL) && (resampler_channels[c].allocated == 0)) {
-              output_channels[cmi].allocated = 1;
-              resampler_channels[c].allocated = 1;
-              conn->output_channel_to_resampler_channel_map[cmi] = c;
-              if (output_channel_map_faulty != 0)
-                debug(3, "%s -> %s/%u.", resampler_channels[c].name, output_channels[cmi].name,
-                      cmi);
-              else
-                debug(3, "%s -> %s/%u.", resampler_channels[c].name, output_channels[cmi].name,
-                      cmi);
-            } else {
-              c++;
-            }
-          } while ((output_channels[cmi].allocated == 0) && (c < 64));
-        }
-      }
-
-      if (output_configuration_changed != 0) {
-        char channel_mapping_list[256] = "";
-        for (c = 0; c < SPS_GREATEST_CHANNEL_COUNT; c++) {
-          if ((output_channels[c].allocated != 0) &&
-              (conn->output_channel_to_resampler_channel_map[c] != silent_channel_index)) {
-            char channel_mapping[32] = "";
-            if (output_channels[c].name != NULL)
-              snprintf(channel_mapping, sizeof(channel_mapping) - 1, " %u (\"%s\") <- %s |", c,
-                       output_channels[c].name,
-                       resampler_channels[conn->output_channel_to_resampler_channel_map[c]].name);
-            else
-              snprintf(channel_mapping, sizeof(channel_mapping) - 1, " %u <- %s |", c,
-                       resampler_channels[conn->output_channel_to_resampler_channel_map[c]].name);
-            strncat(channel_mapping_list, channel_mapping,
-                    sizeof(channel_mapping_list) - 1 - strlen(channel_mapping_list));
-          }
-        }
-        debug(1, "Channel Mapping: |%s", channel_mapping_list);
-      }
-
-      for (c = 0; c < 64; c++) {
-        if (output_channels[c].name != NULL)
-          free(output_channels[c].name);
-      }
-      for (c = 0; c < 64; c++) {
-        if (resampler_channels[c].name != NULL)
-          free(resampler_channels[c].name);
-      }
-    }
-
-    {
-      int res = av_opt_get_int(swr, "out_sample_fmt", 0, &resampler_output_format);
-      if (res == 0) {
-        conn->resampler_output_bytes_per_sample =
-            av_get_bytes_per_sample(static_cast<AVSampleFormat>(resampler_output_format));
-        debug(3, "resampler output bytes per sample in swr: %d.",
-              conn->resampler_output_bytes_per_sample);
-      } else {
-        debug(1, "Error %d getting resampler output bytes per sample.", res);
-      }
-    }
-    conn->resampler_ssrc = ssrc;
-
-    pthread_cleanup_pop(0); // successful exit -- don't deallocate the swr
   } else {
     debug(1, "Error setting the configuration of the output backend.");
   }
-  return response; // 0 if everything is okay
+  pthread_setcancelstate(previousState, nullptr);
+  return 0;
+}
+
+int setup_software_resampler(rtsp_conn_info *conn, ssrc_t ssrc) {
+  return setupSoftwareResampler(conn, ssrc, AV_SAMPLE_FMT_NONE);
 }
 void prepareIncomingAudio(SessionState &session, ssrc_t ssrc) {
   auto format = AudioFormat::fromSsrc(ssrc);
@@ -748,121 +321,24 @@ void prepare_decoding_chain(rtsp_conn_info *conn, ssrc_t ssrc) {
 
 // returns the length of time in nanoseconds associated with the frames that are being retained
 
-int64_t avframe_to_audio(rtsp_conn_info *conn, AVFrame *decoded_frame, uint8_t **decoded_audio,
-                         size_t *decoded_audio_data_length, size_t *decoded_audio_samples_count) {
-  uint8_t *pcm_audio = NULL;
-  int dst_linesize;
+ConvertedAudio convertIncomingAudio(SessionState &session, const AVFrame &frame) {
+  int previousState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+  auto converted = session.resampler.convert(frame);
+  if (!converted)
+    debug(1, "Could not convert audio frame: %d.", converted.error().nativeCode);
+  pthread_setcancelstate(previousState, nullptr);
+  return converted ? std::move(*converted) : ConvertedAudio{};
+}
 
-  int oldState;
-  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState); // make this un-cancellable
-
-  int number_of_output_samples_expected = swr_get_out_samples(conn->swr, decoded_frame->nb_samples);
-
-  debug(4, "A maximum of %d output samples expected for %d input samples.",
-        number_of_output_samples_expected, decoded_frame->nb_samples);
-  // allocate enough space for the required number of output channels
-  // and the number of samples decoded
-  // the format is always S32
-  av_samples_alloc(&pcm_audio, &dst_linesize, conn->resampler_output_channels,
-                   number_of_output_samples_expected, AV_SAMPLE_FMT_S32, 0);
-  uint64_t conversion_start_time = get_absolute_time_in_ns();
-  int samples_generated =
-      swr_convert(conn->swr, &pcm_audio, number_of_output_samples_expected,
-                  (const uint8_t **)decoded_frame->extended_data, decoded_frame->nb_samples);
-  debug(4, "conversion time for %u incoming samples: %.3f milliseconds.", decoded_frame->nb_samples,
-        (get_absolute_time_in_ns() - conversion_start_time) * 0.000001);
-  if (samples_generated > 0) {
-    debug(4, "swr generated %d frames of %" PRId64 " channels.", samples_generated,
-          conn->resampler_output_channels);
-    // samples_generated will be different from
-    // the number of samples input if the output rate is different from the input
-    // now, allocate a buffer and transfer the audio into it.
-
-    ssize_t sample_buffer_size = conn->resampler_output_bytes_per_sample *
-                                 CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration) *
-                                 samples_generated;
-    void *sample_buffer = malloc(sample_buffer_size);
-
-    memset(sample_buffer, 0, sample_buffer_size); // silence
-
-    unsigned int input_stride = conn->resampler_output_channels;
-    unsigned int output_stride = CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration);
-
-    unsigned int channels_to_map =
-        CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration); // the output width
-    // if (conn->output_channel_map_size < channels_to_map)
-    //  channels_to_map = conn->output_channel_map_size; // or the channel map given
-
-    switch (conn->resampler_output_bytes_per_sample) {
-    case 4: {
-      int32_t *inframe = (int32_t *)pcm_audio;
-      int32_t *outframe = (int32_t *)sample_buffer;
-      int i;
-      for (i = 0; i < samples_generated; i++) {
-        unsigned int j;
-        for (j = 0; j < channels_to_map; j++) {
-          if (conn->output_channel_to_resampler_channel_map[j] == front_mono_channel_index) {
-            // asking for the "FM" channel, which is a made-up name for
-            // Front Mono
-            int32_t monoValue = (inframe[0] / 2) + (inframe[1] / 2);
-            outframe[j] = monoValue;
-          } else if (conn->output_channel_to_resampler_channel_map[j] !=
-                     silent_channel_index) // means you're asking for the
-                                           // silent channel
-            outframe[j] = inframe[conn->output_channel_to_resampler_channel_map[j]];
-        }
-        inframe += input_stride;   // address increment is scaled by the
-                                   // size of an int32_t
-        outframe += output_stride; // address increment is scaled by the
-                                   // size of an int32_t
-      }
-    } break;
-    case 2: {
-      int16_t *inframe = (int16_t *)pcm_audio;
-      int16_t *outframe = (int16_t *)sample_buffer;
-      int i;
-      for (i = 0; i < samples_generated; i++) {
-        unsigned int j;
-        for (j = 0; j < channels_to_map; j++) {
-          if (conn->output_channel_to_resampler_channel_map[j] == front_mono_channel_index) {
-            // asking for the "FM" channel, which is a made-up name for
-            // Front Mono
-            int16_t monoValue = (inframe[0] / 2) + (inframe[1] / 2);
-            outframe[j] = monoValue;
-          } else if (conn->output_channel_to_resampler_channel_map[j] !=
-                     silent_channel_index) // means you're asking for the
-                                           // silent channel
-            outframe[j] = inframe[conn->output_channel_to_resampler_channel_map[j]];
-        }
-        inframe += input_stride;   // address increment is scaled by the
-                                   // size of an int16_t
-        outframe += output_stride; // address increment is scaled by the
-                                   // size of an int16_t
-      }
-    } break;
-    default:
-      debug(1, "resampler output byte size of %u not handled.",
-            conn->resampler_output_bytes_per_sample);
-      break;
-    }
-
-    *decoded_audio = static_cast<uint8_t *>(sample_buffer);
-    *decoded_audio_data_length = sample_buffer_size;
-    *decoded_audio_samples_count = samples_generated;
-  } else {
-    // samples_generated contains the negative of the error code
-    debug(1, "swr_convert error %d. No samples generated from this avframe", -samples_generated);
-    *decoded_audio = NULL;
-    *decoded_audio_data_length = 0;
-    *decoded_audio_samples_count = 0;
-  }
-  av_freep(&pcm_audio);
-  int64_t response = swr_get_delay(
-      conn->swr,
-      RATE_FROM_ENCODED_FORMAT(
-          config.current_output_configuration)); // number of frames left in the resampler
-  pthread_setcancelstate(oldState, NULL);
-  return response;
+static ConvertedAudio silenceIncomingAudio(SessionState &session, size_t frames) {
+  int previousState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+  auto converted = session.resampler.silence(frames);
+  if (!converted)
+    debug(1, "Could not convert silence: %d.", converted.error().nativeCode);
+  pthread_setcancelstate(previousState, nullptr);
+  return converted ? std::move(*converted) : ConvertedAudio{};
 }
 
 OwnedAudioFrame decodeIncomingAudio(SessionState &session, std::span<const uint8_t> bytes) {
@@ -885,17 +361,13 @@ static const char *incomingAudioName(const SessionState &session) {
 }
 
 size_t avflush(rtsp_conn_info *conn) {
-  size_t response = 0;
-  if (conn->swr != NULL) {
-
-    int number_of_output_samples_expected = swr_get_out_samples(conn->swr, 0);
-    debug(3, "avflush of %d samples.", number_of_output_samples_expected);
-    int ret = swr_init(conn->swr);
-    if (ret)
-      debug(1, "error %d in swr_init().", ret);
-    response = (size_t)number_of_output_samples_expected;
-  }
-  return response;
+  int previousState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+  auto flushed = conn->resampler.flush();
+  if (!flushed)
+    debug(1, "Could not reset resampler: %d.", flushed.error().nativeCode);
+  pthread_setcancelstate(previousState, nullptr);
+  return flushed.value_or(0);
 }
 
 
@@ -1595,7 +1067,7 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
                         conn->flush_rtp_timestamp - current_packet->timestamp;
                     if (frames_to_remove > 0) {
                       debug(2, "%u frames to remove from current buffer", frames_to_remove);
-                      void *dest = (void *)current_packet->data;
+                      void *dest = current_packet->data.bytes().data();
                       void *source = static_cast<char *>(dest) + conn->input_bytes_per_frame * frames_to_remove;
                       size_t frames_remaining = (current_packet->length - frames_to_remove);
                       memmove(dest, source, frames_remaining * conn->input_bytes_per_frame);
@@ -1794,7 +1266,8 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
                 // Set up the output chain, including the software resampler.
                 debug(2, "set up the output chain to %s for FFmpeg.",
                       get_ssrc_name(curframe->ssrc));
-                setup_software_resampler(conn, curframe->ssrc);
+                setupSoftwareResampler(conn, curframe->ssrc, curframe->avframe ?
+                    static_cast<AVSampleFormat>(curframe->avframe->format) : AV_SAMPLE_FMT_NONE);
                 conn->output_sample_ratio = 1; // it's always 1 if we're using FFmpeg
                 // calculate the output bit depth
                 conn->output_bit_depth = 16; // default;
@@ -2161,50 +1634,17 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
     // clang-format on
 
     if (curframe) {
-      if (conn->resampler_ssrc != curframe->ssrc) {
-        if (conn->resampler_ssrc == SSRC_NONE) {
-          debug(2, "setting up software resampler for %s for the first time.",
-                get_ssrc_name(curframe->ssrc));
-        } else {
-          debug(2, "Connection %d: queued audio buffers switching to \"%s\".",
-                conn->connection_number, get_ssrc_name(curframe->ssrc));
-          clear_software_resampler(conn);
-          // ask the backend if it can give us its best choice for an ffmpeg configuration:
-        }
-        debug(3, "setup software resampler for %s", get_ssrc_name(curframe->ssrc));
-        if (curframe->ssrc != SSRC_NONE) {
-          setup_software_resampler(conn, curframe->ssrc);
-        } else {
-          debug(1, "attempt to setup_software_resampler for SSRC_NONE");
-        }
-      }
-      size_t number_of_output_frames;
-      uint8_t *pp;
-      size_t pl;
+      auto format = AudioFormat::fromSsrc(curframe->ssrc);
+      if (format && !conn->resampler.configuredFor(*format))
+        setupSoftwareResampler(conn, curframe->ssrc, curframe->avframe ?
+            static_cast<AVSampleFormat>(curframe->avframe->format) : AV_SAMPLE_FMT_NONE);
       if (curframe->avframe) {
-        conn->frames_retained_in_the_resampler =
-            avframe_to_audio(conn, curframe->avframe, &pp, &pl, &number_of_output_frames);
-        curframe->data = (short *)pp;
-        curframe->length = number_of_output_frames;
+        curframe->data = convertIncomingAudio(*conn, *curframe->avframe);
+        curframe->length = curframe->data.frames();
         av_frame_free(&curframe->avframe);
-        curframe->avframe = NULL;
       } else if (curframe->length != 0) {
-        // if there's no data and no avframe, then the length is
-        // the number of frames of silence requested.
-        int ret = swr_inject_silence(conn->swr, curframe->length); // hardwired, ugh!
-        if (ret)
-          debug(1, "error %d", ret);
-        // We need to get those frames of silence out of the resampler
-        // so we'll pass in an empty AVFrame to flush them through
-        int oldState;
-        pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
-        AVFrame *avf = av_frame_alloc();
-        conn->frames_retained_in_the_resampler =
-            avframe_to_audio(conn, avf, &pp, &pl, &number_of_output_frames);
-        av_frame_free(&avf);
-        pthread_setcancelstate(oldState, NULL);
-        curframe->data = (short *)pp;
-        curframe->length = number_of_output_frames;
+        curframe->data = silenceIncomingAudio(*conn, curframe->length);
+        curframe->length = curframe->data.frames();
       }
     }
 
@@ -2791,7 +2231,7 @@ void *player_thread_func(void *arg) {
         conn, request_resync); // this has a guaranteed [and needed!] cancellation point
     request_resync = 0;
     if (inframe) {
-      if (inframe->data != NULL) {
+      if (inframe->data) {
         /*
         {
           uint64_t the_time_this_frame_should_be_played;
@@ -2871,7 +2311,7 @@ void *player_thread_func(void *arg) {
                 unsigned int i, j;
                 int16_t ls, rs;
                 int32_t ll = 0, rl = 0;
-                int16_t *inps = inframe->data;
+                int16_t *inps = reinterpret_cast<int16_t *>(inframe->data.bytes().data());
                 // int16_t *outps = tbuf;
                 int32_t *outpl = (int32_t *)conn->tbuf;
                 for (i = 0; i < (inframe->length); i++) {
@@ -2932,7 +2372,7 @@ void *player_thread_func(void *arg) {
                 unsigned int i, j;
                 int32_t ls, rs;
                 int32_t ll = 0, rl = 0;
-                int32_t *inps = (int32_t *)inframe->data;
+                int32_t *inps = reinterpret_cast<int32_t *>(inframe->data.bytes().data());
                 int32_t *outpl = (int32_t *)conn->tbuf;
                 for (i = 0; i < (inframe->length); i++) {
                   ls = *inps++;
@@ -2986,7 +2426,7 @@ void *player_thread_func(void *arg) {
                 unsigned int i;
                 int16_t ss;
                 int32_t sl;
-                int16_t *inps = inframe->data;
+                int16_t *inps = reinterpret_cast<int16_t *>(inframe->data.bytes().data());
                 int32_t *outpl = (int32_t *)conn->tbuf;
                 for (i = 0; i < (inframe->length) * conn->input_num_channels; i++) {
                   ss = *inps++;
@@ -2999,7 +2439,7 @@ void *player_thread_func(void *arg) {
                 }
               } else if (conn->input_bit_depth == 32) {
                 unsigned int i;
-                int32_t *inpl = (int32_t *)inframe->data;
+                int32_t *inpl = reinterpret_cast<int32_t *>(inframe->data.bytes().data());
                 int32_t *outpl = (int32_t *)conn->tbuf;
                 for (i = 0; i < (inframe->length) * conn->input_num_channels; i++) {
                   int32_t sl = *inpl++;
@@ -3313,7 +2753,7 @@ void *player_thread_func(void *arg) {
               // frames_previously_retained_in_the_resampler);
               // now we'll update frames_previously_retained_in_the_resampler
               // to the figure after the current block
-              frames_previously_retained_in_the_resampler = conn->frames_retained_in_the_resampler;
+              frames_previously_retained_in_the_resampler = conn->resampler.retainedFrames();
 
               output_buffer_delay_time =
                   output_buffer_delay_time *

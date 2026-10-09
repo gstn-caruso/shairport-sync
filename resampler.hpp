@@ -11,7 +11,7 @@ struct OutputFormat {
   uint64_t inputLayout = 0;
   bool mixdown = false;
   uint64_t mixdownLayout = 0;
-  ChannelMapping::Specification mapping;
+  ChannelMapping::Specification mapping{};
   bool operator==(const OutputFormat &) const = default;
 };
 enum class ResamplerChange { changed, unchanged };

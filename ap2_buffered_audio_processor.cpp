@@ -105,8 +105,8 @@ void *rtp_buffered_audio_processor(void *arg) {
   int previousDecoderCancellationState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousDecoderCancellationState);
   conn->decoder.reset();
+  conn->resampler.reset();
   pthread_setcancelstate(previousDecoderCancellationState, nullptr);
-  conn->resampler_ssrc = SSRC_NONE;
 
   // turn off all flush requests that might have been pending in the connection. Not sure if this is
   // right...
