@@ -13,6 +13,11 @@ public:
     framesPerPacket_ = format.framesPerPacket();
   }
 
+  void recordDecodedFormat(const AudioFormat &format) {
+    recordPacketShape(format);
+    decodedFormatValid_ = true;
+  }
+
 private:
   unsigned sampleRate_ = 0;
   unsigned framesPerPacket_ = 0;

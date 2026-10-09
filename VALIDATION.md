@@ -107,6 +107,13 @@ with zero rate/frames and false decoder validity, then records ALAC 44.1 kHz's
 44100/352 shape while remaining invalid. The nine relevant input-state/format
 cases and all 232 Release CTest entries passed (14.87s). Existing session state
 is not yet integrated; sanitizer builds and device playback were not rerun.
+The next contract first failed compilation on the missing `recordDecodedFormat`
+method (`audio-input-state-decoded-red.log` in that ignored build directory).
+It replaces an invalid ALAC 44100/352 packet shape with the decoded AAC
+48000/1024 shape and marks it valid. The ten relevant cases and all 233 Release
+CTest entries passed (14.84s); session integration, sanitizers and device
+playback remain outside this cycle. Criterion #77 keeps this transition with
+the state it owns.
 
 The first discovery acceptance check was
 `ctest --test-dir build/cmake -R '^VolumePolicy\.' --no-tests=error`.
