@@ -101,6 +101,13 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(audio-packet-wait-test tests/audio_packet_wait_test.cpp)
+  target_compile_options(audio-packet-wait-test PRIVATE -UNDEBUG)
+  target_link_libraries(audio-packet-wait-test PRIVATE receiver)
+  target_link_options(audio-packet-wait-test PRIVATE -Wl,--wrap=pthread_cond_timedwait
+    -Wl,--wrap=av_frame_free)
+  add_test(NAME audio-packet-wait COMMAND audio-packet-wait-test)
+  set_tests_properties(audio-packet-wait PROPERTIES TIMEOUT 5)
   add_executable(retransmission-planner-test tests/retransmission_planner_test.cpp)
   target_compile_options(retransmission-planner-test PRIVATE -UNDEBUG)
   target_link_libraries(retransmission-planner-test PRIVATE receiver)

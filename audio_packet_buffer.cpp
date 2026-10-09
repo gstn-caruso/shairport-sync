@@ -45,13 +45,13 @@ std::optional<BufferedAudioPacket> AudioPacketBuffer::takeFrontIf(uint64_t revis
                                               BufferedAudioPacket(MissingAudioPacket{read_});
   entry.reset();
   ++read_;
-  ++revision_;
+  advanceRevision();
   return packet;
 }
 void AudioPacketBuffer::reset() {
   Lock lock(mutex_);
   resetUnderLock();
-  ++revision_;
+  advanceRevision();
 }
 void AudioPacketBuffer::resetUnderLock() {
   for (auto &entry : entries_)
@@ -62,4 +62,26 @@ void AudioPacketBuffer::resetUnderLock() {
 size_t AudioPacketBuffer::occupancy() const {
   Lock lock(mutex_);
   return synced_ ? static_cast<uint16_t>(write_ - read_) : 0;
+}
+uint64_t AudioPacketBuffer::revision() const {
+  Lock lock(mutex_);
+  return revision_;
+}
+void AudioPacketBuffer::advanceRevision() {
+  ++revision_;
+  pthread_cond_broadcast(&changed_);
+}
+void AudioPacketBuffer::unlockWaitingMutex(void *mutex) {
+  pthread_mutex_unlock(static_cast<pthread_mutex_t *>(mutex));
+}
+int AudioPacketBuffer::waitForChange(uint64_t revision, timespec deadline) {
+  int result = 0;
+  pthread_mutex_lock(&mutex_);
+  pthread_cleanup_push(unlockWaitingMutex, &mutex_);
+  while (revision == revision_ && result == 0)
+    result = pthread_cond_timedwait(&changed_, &mutex_, &deadline);
+  if (revision != revision_)
+    result = 0;
+  pthread_cleanup_pop(1);
+  return result;
 }
