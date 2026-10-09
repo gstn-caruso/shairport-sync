@@ -3,6 +3,13 @@
 Build and run the suite with the commands in [BUILD.md](BUILD.md).
 CI runs Release, Debug, ASan+UBSan and TSan builds and checks staged installation.
 
+The cipher bundle's C++ release method requires a tagged struct declaration.
+The acceptance command
+`clang++ -std=c++26 -Werror=non-c-typedef-for-linkage -Ibuild/redesign-final-release -I. -fsyntax-only tests/receiver_encoding_cpp_test.cpp`
+failed on the anonymous declaration and passed after adding the
+`pair_cipher_bundle` tag. Native C syntax checking of
+`tests/rtsp_message_c_test.c` also passed; fields and layout remain unchanged.
+
 ## Redesign measurements
 
 The initial baseline at `43f85b50` used Clang 23.1.3, CMake 4.2.3, Ninja,

@@ -48,7 +48,7 @@ typedef struct {
   size_t size;
 } sized_buffer;
 
-typedef struct {
+typedef struct pair_cipher_bundle {
   struct pair_cipher_context *cipher_ctx;
   sized_buffer encrypted_read_buffer;
   sized_buffer plaintext_read_buffer;
