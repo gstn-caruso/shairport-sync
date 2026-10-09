@@ -1456,15 +1456,15 @@ void *player_thread_func(void *arg) {
                     frame_to_local_time(playback.timestamp, &should_be_time, conn);
                     // debug(1, "play frame %u.", playback.timestamp);
 
-                    const auto skipped = conn->playbackSync.skipFrom(play_samples);
-                    if (skipped < static_cast<size_t>(play_samples)) {
-                      const size_t bytesToSkip = skipped *
+                    const auto discard = conn->playbackSync.skipFrom(play_samples);
+                    if (discard.submitBlock) {
+                      const size_t bytesToSkip = discard.frames *
                           CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration) *
                           sps_format_sample_size(FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration));
                       config.output->play(encoded.bytes().data() + bytesToSkip,
-                                          play_samples - skipped, play_samples_are_timed,
+                                          play_samples - discard.frames, play_samples_are_timed,
                                           playback.timestamp, should_be_time);
-                      frames_played += play_samples - skipped;
+                      frames_played += play_samples - discard.frames;
                     }
 
                   }

@@ -10,6 +10,9 @@ void *player_thread_func(void *);
 static std::mutex observation;
 static std::condition_variable changed;
 static bool waiting = false, played = false;
+static bool waitingAfterPacket = false;
+static SessionState *activeSession = nullptr;
+static uint64_t expectedFrameTime = 999000000;
 static int16_t outputSample = 0;
 static int outputFrames = 0;
 extern "C" int __real_pthread_cond_timedwait(pthread_cond_t *, pthread_mutex_t *, const timespec *);
@@ -18,6 +21,8 @@ extern "C" int __wrap_pthread_cond_timedwait(pthread_cond_t *condition, pthread_
   {
     std::lock_guard lock(observation);
     waiting = true;
+    if (activeSession && activeSession->play_number_after_flush != 0)
+      waitingAfterPacket = true;
   }
   changed.notify_one();
   return __real_pthread_cond_timedwait(condition, mutex, deadline);
@@ -25,7 +30,7 @@ extern "C" int __wrap_pthread_cond_timedwait(pthread_cond_t *condition, pthread_
 extern "C" uint64_t __wrap_get_absolute_time_in_ns() { return 1000000000; }
 extern "C" int __wrap_have_timestamp_timing_information(rtsp_conn_info *) { return 1; }
 extern "C" int __wrap_frame_to_local_time(uint32_t, uint64_t *time, rtsp_conn_info *) {
-  *time = 999000000;
+  *time = expectedFrameTime;
   return 0;
 }
 extern "C" int __wrap_local_time_to_frame(uint64_t, uint32_t *frame, rtsp_conn_info *) {
@@ -44,11 +49,12 @@ static int underrunDelay(long *frames) {
 }
 static int play(void *buffer, int frames, int type, uint32_t timestamp, uint64_t) {
   if (type == play_samples_are_timed && timestamp == 1000) {
-    assert(frames > 0);
+    assert(frames >= 0);
     const auto *bytes = static_cast<const uint8_t *>(buffer);
     {
       std::lock_guard lock(observation);
-      outputSample = static_cast<int16_t>(uint16_t(bytes[0]) | uint16_t(bytes[1]) << 8);
+      if (frames > 0)
+        outputSample = static_cast<int16_t>(uint16_t(bytes[0]) | uint16_t(bytes[1]) << 8);
       outputFrames = frames;
       played = true;
     }
@@ -84,11 +90,13 @@ static std::vector<uint8_t> encodedConstant() {
   avcodec_free_context(&encoder);
   return bytes;
 }
-static void checkPlayback(bool hasDelay) {
-  waiting = played = false;
+static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames, bool submit) {
+  waiting = played = waitingAfterPacket = false;
+  expectedFrameTime = frameTime;
   outputFrames = 0;
   auto packet = encodedConstant();
   SessionState session{};
+  activeSession = &session;
   assert(pthread_mutex_init(&session.volume_control_mutex, nullptr) == 0);
   assert(pthread_mutex_init(&session.flush_mutex, nullptr) == 0);
   session.airplay_stream_type = realtime_stream;
@@ -121,18 +129,26 @@ static void checkPlayback(bool hasDelay) {
                            &session) == 352);
   {
     std::unique_lock lock(observation);
-    changed.wait(lock, [] { return played; });
+    changed.wait(lock, [] { return waitingAfterPacket; });
   }
   assert(pthread_cancel(player) == 0);
   void *completion;
   assert(pthread_join(player, &completion) == 0 && completion == PTHREAD_CANCELED);
+  activeSession = nullptr;
   assert(pthread_mutex_destroy(&session.flush_mutex) == 0);
   assert(pthread_mutex_destroy(&session.volume_control_mutex) == 0);
-  const int expected = 6000 * gain / 65536;
-  assert(outputSample >= expected - 1 && outputSample <= expected + 1);
-  assert(outputFrames == (hasDelay ? 308 : 352));
+  assert(played == submit);
+  if (submit) {
+    assert(outputFrames == expectedFrames);
+    if (expectedFrames > 0) {
+      const int expected = 6000 * gain / 65536;
+      assert(outputSample >= expected - 1 && outputSample <= expected + 1);
+    }
+  }
 }
 int main() {
-  checkPlayback(false);
-  checkPlayback(true);
+  checkPlayback(false, 999000000, 352, true);
+  checkPlayback(true, 999000000, 308, true);
+  checkPlayback(true, 991000000, 0, false);
+  checkPlayback(true, 992000000, 0, true);
 }

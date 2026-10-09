@@ -20,11 +20,12 @@ struct SyncDecision {
   uint64_t silenceFrames = 0;
   bool dropPacket = false, resyncNext = false;
 };
+struct PrefixDiscard { size_t frames; bool submitBlock; };
 
 class PlaybackSync {
 public:
   SyncDecision observe(const SyncObservation &, SyncPolicy);
-  size_t skipFrom(size_t encodedFrames);
+  PrefixDiscard skipFrom(size_t encodedFrames);
   void resetForPlay();
 private:
   struct Window {

@@ -127,13 +127,13 @@ SyncDecision PlaybackSync::observe(const SyncObservation &observation, SyncPolic
   }
   return decision;
 }
-size_t PlaybackSync::skipFrom(size_t encodedFrames) {
+PrefixDiscard PlaybackSync::skipFrom(size_t encodedFrames) {
   if (!pendingSkip_)
-    return 0;
+    return {0, true};
   const auto skipped = static_cast<size_t>(std::min(pendingSkip_, uint64_t(encodedFrames)));
   pendingSkip_ -= skipped;
   if (!pendingSkip_)
     skippingInitial_ = false;
-  return skipped;
+  return {skipped, pendingSkip_ == 0};
 }
 void PlaybackSync::resetForPlay() { *this = PlaybackSync{}; }
