@@ -64,6 +64,14 @@ regression passed all 69 entries (13.43s), including native cancellation, C ABI 
 shell checks. Production, sanitizer-build evidence and device-check evidence are
 unchanged by this migration.
 
+Retransmission discovery (`ctest --test-dir build/redesign-release -R '^RetransmissionPlanner\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Four independent cases preserve age/retry boundaries, wraparound ranges, resolution,
+final opportunity and reset checks. The group passed (0.07s), the exact retry case
+passed alone, and all four entries have timeout 5. Full Release passed 72/72
+(13.56s), including native cancellation, C ABI and shell checks; sanitizers/devices
+were not rerun. Production is unchanged.
+
 CTest covers:
 
 | Test | Contract |
