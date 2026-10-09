@@ -11,6 +11,8 @@ enum class DitherPolicy { automatic, disabled, enabled };
 
 class EncodedPcm {
 public:
+  EncodedPcm() = default;
+  std::span<uint8_t> bytes() { return bytes_; }
   std::span<const uint8_t> bytes() const { return bytes_; }
   size_t frames() const { return frames_; }
 private:
@@ -18,7 +20,7 @@ private:
   EncodedPcm(std::vector<uint8_t> bytes, size_t frames)
       : bytes_(std::move(bytes)), frames_(frames) {}
   std::vector<uint8_t> bytes_;
-  size_t frames_;
+  size_t frames_ = 0;
 };
 
 class PcmEncoder {

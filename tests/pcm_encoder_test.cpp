@@ -1,4 +1,3 @@
-#include "session_state.hpp"
 #include "audio_player_adapter.hpp"
 #include "pcm_encoder.hpp"
 #include <array>
@@ -29,16 +28,9 @@ int main() {
     Case{SPS_FORMAT_S32_LE, {0x78,0x56,0x34,0x12}, {0x88,0xa9,0xcb,0xed}},
     Case{SPS_FORMAT_S32_BE, {0x12,0x34,0x56,0x78}, {0xed,0xcb,0xa9,0x88}}
   };
-  SessionState session{};
   for (const auto &test : cases) {
     for (bool negative : {false, true}) {
-      std::array<char, 4> bytes{};
-      char *next = bytes.data();
-      encodePlaybackSample(negative ? -0x12345678 : 0x12345678, &next, test.format,
-                           0x10000, 0, &session);
       const auto &expected = negative ? test.negative : test.positive;
-      assert(next == bytes.data() + expected.size());
-      assert(std::memcmp(bytes.data(), expected.data(), expected.size()) == 0);
       assert(encoder.configure({test.format, 1}, 0));
       encoder.beginFrame(0x10000, false);
       encoder.appendSample(negative ? -0x12345678 : 0x12345678);
@@ -47,40 +39,27 @@ int main() {
       assert(std::equal(owned.bytes().begin(), owned.bytes().end(),
                         expected.begin(), expected.end()));
     }
-    std::array<char, 8> silence{};
-    r64init(123);
-    const auto configuration = CHANNELS_TO_ENCODED_FORMAT(2) | FORMAT_TO_ENCODED_FORMAT(test.format);
-    generate_zero_frames(silence.data(), 1, 0, 0, configuration);
-    for (size_t byte = 0; byte < test.positive.size() * 2; ++byte)
-      assert(static_cast<uint8_t>(silence[byte]) == (test.format == SPS_FORMAT_U8 ? 128 : 0));
     assert(encoder.configure({test.format, 2}, 0));
-    auto ownedSilence = encoder.silence(1);
-    assert(ownedSilence.frames() == 1);
-    assert(std::memcmp(ownedSilence.bytes().data(), silence.data(), ownedSilence.bytes().size()) == 0);
+    auto silence = encoder.silence(1);
+    assert(silence.frames() == 1);
+    for (auto byte : silence.bytes())
+      assert(byte == (test.format == SPS_FORMAT_U8 ? 128 : 0));
   }
   for (auto format : {SPS_FORMAT_S16, SPS_FORMAT_S24, SPS_FORMAT_S32}) {
-    alignas(int32_t) std::array<char, 4> bytes{};
-    char *next = bytes.data();
-    encodePlaybackSample(-0x12345678, &next, format, 0x10000, 0, &session);
+    assert(encoder.configure({format, 1}, 0));
+    encoder.beginFrame(0x10000, false);
+    encoder.appendSample(-0x12345678);
+    auto bytes = encoder.finishFrame();
     if (format == SPS_FORMAT_S16) {
       int16_t value;
-      std::memcpy(&value, bytes.data(), sizeof(value));
+      std::memcpy(&value, bytes.bytes().data(), sizeof(value));
       assert(value == -0x1235);
     } else {
       int32_t value;
-      std::memcpy(&value, bytes.data(), sizeof(value));
+      std::memcpy(&value, bytes.bytes().data(), sizeof(value));
       assert(value == (format == SPS_FORMAT_S24 ? -0x123457 : -0x12345678));
     }
   }
-  std::array<char, 8> mute{};
-  session.enable_dither = 1;
-  session.previous_random_number = 17;
-  const auto configuration = CHANNELS_TO_ENCODED_FORMAT(2) | FORMAT_TO_ENCODED_FORMAT(SPS_FORMAT_S16_LE);
-  r64init(456);
-  const auto lastRandom = generate_zero_frames(mute.data(), 2, 1, 17, configuration);
-  r64init(456);
-  mutePlaybackPcm(mute.data(), 2, configuration, session);
-  assert(lastRandom != 17 && session.previous_random_number == lastRandom);
   int calls = 0;
   PcmEncoder deterministic([&] {
     return (++calls % 2) ? (int64_t{1} << 48) - 1 : int64_t{0};
@@ -112,4 +91,24 @@ int main() {
   assert(deterministic.dithers());
   deterministic.beginFrame(0x10000, true);
   assert(deterministic.dithers());
+  assert(encoder.configure({SPS_FORMAT_S16_LE, 1}, 16));
+  encoder.beginFrame(0x8000, false);
+  encoder.appendSample(0x12345678);
+  auto attenuated = encoder.finishFrame();
+  assert(attenuated.bytes()[0] == 0x1a && attenuated.bytes()[1] == 0x09);
+  std::array<int32_t, 512> playback;
+  playback.fill(0x12340000);
+  assert(encoder.configure({SPS_FORMAT_S16_LE, 2}, 16));
+  for (bool interpolate : {false, true})
+    for (int adjustment : {-1, 0, 1}) {
+      encoder.beginFrame(0x10000, false);
+      auto output = interpolate ?
+          encodeInterpolatedPlaybackPcm(playback, 2, adjustment, encoder) :
+          encodeBasicPlaybackPcm(playback, 2, adjustment, encoder);
+      assert(output.frames() == static_cast<size_t>(256 + adjustment));
+      assert(output.bytes().size() == output.frames() * 4);
+      for (size_t offset = 0; offset < output.bytes().size(); offset += 2)
+        assert(output.bytes()[offset] == 0x34 && output.bytes()[offset + 1] == 0x12);
+    }
+
 }

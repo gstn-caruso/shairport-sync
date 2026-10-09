@@ -6,6 +6,7 @@
 #include "audio_decoder.hpp"
 #include "resampler.hpp"
 #include "audio_packet_buffer.hpp"
+#include "pcm_encoder.hpp"
 #include <atomic>
 
 struct SessionState {
@@ -43,7 +44,6 @@ struct SessionState {
 
   // buffers to delete on exit
   int32_t *tbuf;
-  char *outbuf;
 
   // for generating running statistics...
 
@@ -72,8 +72,6 @@ struct SessionState {
       input_rate;
   int input_bytes_per_frame;
   unsigned int output_sample_ratio;
-  unsigned int output_bit_depth;
-  int64_t previous_random_number;
   uint64_t packet_count;
   uint64_t packet_count_since_flush;
   // int connection_state_to_output;
@@ -185,6 +183,12 @@ struct SessionState {
 
   AudioDecoder decoder;
   Resampler resampler;
+  PcmEncoder pcmEncoder{[] {
+    r64_lock;
+    const auto random = r64i();
+    r64_unlock;
+    return random;
+  }};
 
   // used as the initials values for calculating the rate at which the source thinks it's sending
   // frames
@@ -221,7 +225,6 @@ struct SessionState {
   char *dacp_active_remote;   // key to send to the remote controller
   void *dapo_private_storage; // this is used for compatibility, if dacp stuff isn't enabled.
 
-  int enable_dither; // needed for filling silences before play actually starts
 private:
   std::atomic<bool> retiring_{false};
 };

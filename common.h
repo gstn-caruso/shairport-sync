@@ -414,8 +414,6 @@ extern pthread_mutex_t r64_mutex;
 
 char *get_version_string(); // mallocs a string space -- remember to free it afterwards
 
-int64_t generate_zero_frames(char *outp, size_t number_of_frames, int with_dither,
-                             int64_t random_number_in, uint32_t encoded_output_format);
 
 
 int string_update_with_size(char **str, int *flag, char *s, size_t len);

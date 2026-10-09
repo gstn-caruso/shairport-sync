@@ -204,6 +204,10 @@ static int setupSoftwareResampler(rtsp_conn_info *conn, ssrc_t ssrc,
       conn->input_bit_depth = conn->resampler.sampleBits();
       conn->input_effective_bit_depth = conn->resampler.effectiveSampleBits();
       conn->input_bytes_per_frame = conn->input_num_channels * conn->input_bit_depth / 8;
+      if (!conn->pcmEncoder.configure(
+              {FORMAT_FROM_ENCODED_FORMAT(encoded), conn->input_num_channels},
+              conn->input_effective_bit_depth))
+        die("Unsupported PCM output format.");
     } else {
       debug(1, "Could not configure resampler: %d.", configured.error().nativeCode);
     }
@@ -362,219 +366,6 @@ int32_t rand_in_range(int32_t exclusive_range_limit) {
   return sp >> 32;
 }
 
-void encodePlaybackSample(int32_t sample, char **outp, sps_format_t format, int volume,
-                                  int dither, __attribute__((unused)) rtsp_conn_info *conn) {
-  int64_t hyper_sample = sample;
-  int result = 0;
-
-
-    int64_t hyper_volume = (int64_t)volume << 16;
-    hyper_sample = hyper_sample * hyper_volume; // this is 64 bit bit multiplication -- we may need
-                                                // to dither it down to its target resolution
-
-
-  // next, do dither, if necessary
-  if (dither) {
-
-    // Add a TPDF dither -- see
-    // http://educypedia.karadimov.info/library/DitherExplained.pdf
-    // and the discussion around https://www.hydrogenaud.io/forums/index.php?showtopic=16963&st=25
-
-    // I think, for a 32 --> 16 bits, the range of
-    // random numbers needs to be from -2^16 to 2^16, i.e. from -65536 to 65536 inclusive, not from
-    // -32768 to +32767
-
-    // Actually, what would be generated here is from -65535 to 65535, i.e. one less on the limits.
-
-    // See the original paper at
-    // http://www.ece.rochester.edu/courses/ECE472/resources/Papers/Lipshitz_1992.pdf
-    // by Lipshitz, Wannamaker and Vanderkooy, 1992.
-
-    int64_t dither_mask = 0;
-    switch (format) {
-    case SPS_FORMAT_S32:
-    case SPS_FORMAT_S32_LE:
-    case SPS_FORMAT_S32_BE:
-      dither_mask = (int64_t)1 << (64 - 32);
-      break;
-    case SPS_FORMAT_S24:
-    case SPS_FORMAT_S24_LE:
-    case SPS_FORMAT_S24_BE:
-    case SPS_FORMAT_S24_3LE:
-    case SPS_FORMAT_S24_3BE:
-      dither_mask = (int64_t)1 << (64 - 24);
-      break;
-    case SPS_FORMAT_S16:
-    case SPS_FORMAT_S16_LE:
-    case SPS_FORMAT_S16_BE:
-      dither_mask = (int64_t)1 << (64 - 16);
-      break;
-    case SPS_FORMAT_S8:
-    case SPS_FORMAT_U8:
-      dither_mask = (int64_t)1 << (64 - 8);
-      break;
-    case SPS_FORMAT_UNKNOWN:
-      die("Unexpected SPS_FORMAT_UNKNOWN while calculating dither mask.");
-      break;
-    case SPS_FORMAT_AUTO:
-      die("Unexpected SPS_FORMAT_AUTO while calculating dither mask.");
-      break;
-    case SPS_FORMAT_INVALID:
-      die("Unexpected SPS_FORMAT_INVALID while calculating dither mask.");
-      break;
-    }
-    dither_mask -= 1;
-    int64_t r = r64i();
-
-    int64_t tpdf = (r & dither_mask) - (conn->previous_random_number & dither_mask);
-    conn->previous_random_number = r;
-    // add dither, allowing for clipping
-
-    if (tpdf >= 0) {
-      if (INT64_MAX - tpdf >= hyper_sample)
-        hyper_sample += tpdf;
-      else
-        hyper_sample = INT64_MAX;
-    } else {
-      if (INT64_MIN - tpdf <= hyper_sample)
-        hyper_sample += tpdf;
-      else
-        hyper_sample = INT64_MIN;
-    }
-    // dither is complete here
-  }
-
-  // move the result to the desired position in the int64_t
-  char *op = *outp;
-  uint8_t byt;
-  switch (format) {
-  case SPS_FORMAT_S32_LE:
-    hyper_sample >>= (64 - 32);
-    byt = (uint8_t)hyper_sample;
-    *op++ = byt;
-    byt = (uint8_t)(hyper_sample >> 8);
-    *op++ = byt;
-    byt = (uint8_t)(hyper_sample >> 16);
-    *op++ = byt;
-    byt = (uint8_t)(hyper_sample >> 24);
-    *op++ = byt;
-    result = 4;
-    break;
-  case SPS_FORMAT_S32_BE:
-    hyper_sample >>= (64 - 32);
-    byt = (uint8_t)(hyper_sample >> 24);
-    *op++ = byt;
-    byt = (uint8_t)(hyper_sample >> 16);
-    *op++ = byt;
-    byt = (uint8_t)(hyper_sample >> 8);
-    *op++ = byt;
-    byt = (uint8_t)hyper_sample;
-    *op++ = byt;
-    result = 4;
-    break;
-  case SPS_FORMAT_S32:
-    hyper_sample >>= (64 - 32);
-    *(int32_t *)op = hyper_sample;
-    result = 4;
-    break;
-  case SPS_FORMAT_S24_3LE:
-    hyper_sample >>= (64 - 24);
-    byt = (uint8_t)hyper_sample;
-    *op++ = byt;
-    byt = (uint8_t)(hyper_sample >> 8);
-    *op++ = byt;
-    byt = (uint8_t)(hyper_sample >> 16);
-    *op++ = byt;
-    result = 3;
-    break;
-  case SPS_FORMAT_S24_3BE:
-    hyper_sample >>= (64 - 24);
-    byt = (uint8_t)(hyper_sample >> 16);
-    *op++ = byt;
-    byt = (uint8_t)(hyper_sample >> 8);
-    *op++ = byt;
-    byt = (uint8_t)hyper_sample;
-    *op++ = byt;
-    result = 3;
-    break;
-  case SPS_FORMAT_S24_LE:
-    hyper_sample >>= (64 - 24);
-    byt = (uint8_t)hyper_sample;
-    *op++ = byt;
-    byt = (uint8_t)(hyper_sample >> 8);
-    *op++ = byt;
-    byt = (uint8_t)(hyper_sample >> 16);
-    *op++ = byt;
-    *op++ = 0;
-    result = 4;
-    break;
-  case SPS_FORMAT_S24_BE:
-    hyper_sample >>= (64 - 24);
-    *op++ = 0;
-    byt = (uint8_t)(hyper_sample >> 16);
-    *op++ = byt;
-    byt = (uint8_t)(hyper_sample >> 8);
-    *op++ = byt;
-    byt = (uint8_t)hyper_sample;
-    *op++ = byt;
-    result = 4;
-    break;
-  case SPS_FORMAT_S24:
-    hyper_sample >>= (64 - 24);
-    *(int32_t *)op = hyper_sample;
-    result = 4;
-    break;
-  case SPS_FORMAT_S16_LE:
-    hyper_sample >>= (64 - 16);
-    byt = (uint8_t)hyper_sample;
-    *op++ = byt;
-    byt = (uint8_t)(hyper_sample >> 8);
-    *op++ = byt;
-    result = 2;
-    break;
-  case SPS_FORMAT_S16_BE:
-    hyper_sample >>= (64 - 16);
-    byt = (uint8_t)(hyper_sample >> 8);
-    *op++ = byt;
-    byt = (uint8_t)hyper_sample;
-    *op++ = byt;
-    result = 2;
-    break;
-  case SPS_FORMAT_S16:
-    hyper_sample >>= (64 - 16);
-    *(int16_t *)op = (int16_t)hyper_sample;
-    result = 2;
-    break;
-  case SPS_FORMAT_S8:
-    hyper_sample >>= (int8_t)(64 - 8);
-    *op = hyper_sample;
-    result = 1;
-    break;
-  case SPS_FORMAT_U8:
-    hyper_sample >>= (uint8_t)(64 - 8);
-    hyper_sample += 128;
-    *op = hyper_sample;
-    result = 1;
-    break;
-  case SPS_FORMAT_UNKNOWN:
-    die("Unexpected SPS_FORMAT_UNKNOWN while outputting samples");
-    break;
-  case SPS_FORMAT_AUTO:
-    die("Unexpected SPS_FORMAT_AUTO while outputting samples");
-    break;
-  case SPS_FORMAT_INVALID:
-    die("Unexpected SPS_FORMAT_INVALID while outputting samples");
-    break;
-  }
-
-  *outp += result;
-}
-
-void mutePlaybackPcm(char *output, size_t frames, uint32_t format, SessionState &session) {
-  session.previous_random_number = generate_zero_frames(
-      output, frames, session.enable_dither, session.previous_random_number, format);
-}
-
 static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
                                                         int resync_requested) {
   AudioPacketMetadata snapshot{};
@@ -664,45 +455,6 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
                       get_ssrc_name(curframe->encoding));
                 setupSoftwareResampler(conn, curframe->encoding, front->sampleFormat);
                 conn->output_sample_ratio = 1; // it's always 1 if we're using FFmpeg
-                // calculate the output bit depth
-                conn->output_bit_depth = 16; // default;
-                switch (FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration)) {
-                case SPS_FORMAT_S8:
-                case SPS_FORMAT_U8:
-                  conn->output_bit_depth = 8;
-                  break;
-                case SPS_FORMAT_S16:
-                case SPS_FORMAT_S16_LE:
-                case SPS_FORMAT_S16_BE:
-                  conn->output_bit_depth = 16;
-                  break;
-                case SPS_FORMAT_S24:
-                case SPS_FORMAT_S24_LE:
-                case SPS_FORMAT_S24_BE:
-                case SPS_FORMAT_S24_3LE:
-                case SPS_FORMAT_S24_3BE:
-                  conn->output_bit_depth = 24;
-                  break;
-                case SPS_FORMAT_S32:
-                case SPS_FORMAT_S32_LE:
-                case SPS_FORMAT_S32_BE:
-                  conn->output_bit_depth = 32;
-                  break;
-                case SPS_FORMAT_UNKNOWN:
-                  die("An unknown format was encountered while choosing output bit depth. Please "
-                      "check your configuration and settings.");
-                  break;
-                case SPS_FORMAT_AUTO:
-                  die("Invalid format -- SPS_FORMAT_AUTO -- choosing output bit depth. Please "
-                      "check your configuration and settings.");
-                  break;
-                case SPS_FORMAT_INVALID:
-                  die("Invalid format -- SPS_FORMAT_INVALID -- choosing output bit depth. Please "
-                      "check your configuration and settings.");
-                  break;
-                }
-                debug(3, "output bit depth is %u.", conn->output_bit_depth);
-
                 uint64_t should_be_time;
                 frame_to_local_time(conn->first_packet_timestamp, // this will go modulo 2^32
                                     &should_be_time, conn);
@@ -793,29 +545,11 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
                           fs = exact_frame_gap;
                           conn->ab_buffering = 0;
                         }
-                        void *silence;
                         if (fs > 0) {
-                          silence = malloc(
-                              sps_format_sample_size(
-                                  FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration)) *
-                              CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration) *
-                              fs);
-                          if (silence == NULL)
-                            debug(1, "Failed to allocate %" PRId64 " byte silence buffer.", fs);
-                          else {
-                            // generate frames of silence with dither if necessary
-                            pthread_cleanup_push(malloc_cleanup, &silence);
-
-                            conn->previous_random_number = generate_zero_frames(
-                                static_cast<char *>(silence), fs, conn->enable_dither, conn->previous_random_number,
-                                config.current_output_configuration);
-
-                            debug(3, "Send %" PRId64 " frames of silence.", fs);
-                            config.output->play(silence, fs, play_samples_are_untimed, 0, 0);
-                            debug(3, "Sent %" PRId64 " frames of silence.", fs);
-                            pthread_cleanup_pop(1); // deallocate silence
-                            output_device_has_been_primed = 1;
-                          }
+                          auto silence = conn->pcmEncoder.silence(fs);
+                          config.output->play(silence.bytes().data(), silence.frames(),
+                                              play_samples_are_untimed, 0, 0);
+                          output_device_has_been_primed = 1;
                         }
                       } else {
                         if ((resp == -EAGAIN) || (resp == -EIO) || (resp == -ENODEV)) {
@@ -843,7 +577,6 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
                   // if the output device doesn't have a delay, we simply send the lead-in
                   int64_t lead_time = conn->first_packet_time_to_play -
                                       get_absolute_time_in_ns(); // negative if we are late
-                  void *silence;
                   int64_t frame_gap =
                       (lead_time * RATE_FROM_ENCODED_FORMAT(config.current_output_configuration)) /
                       1000000000;
@@ -854,21 +587,9 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
                     if (fs > frame_gap)
                       fs = frame_gap;
 
-                    silence = malloc(
-                        sps_format_sample_size(
-                            FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration)) *
-                        CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration) * fs);
-                    if (silence == NULL)
-                      debug(1, "Failed to allocate %" PRId64 " frame silence buffer.", fs);
-                    else {
-                      // debug(1, "No delay function -- outputting %d frames of silence.", fs);
-                      pthread_cleanup_push(malloc_cleanup, &silence);
-                      conn->previous_random_number = generate_zero_frames(
-                          static_cast<char *>(silence), fs, conn->enable_dither, conn->previous_random_number,
-                          config.current_output_configuration);
-                      config.output->play(silence, fs, play_samples_are_untimed, 0, 0);
-                      pthread_cleanup_pop(1); // deallocate silence
-                    }
+                    auto silence = conn->pcmEncoder.silence(fs);
+                    config.output->play(silence.bytes().data(), silence.frames(),
+                                        play_samples_are_untimed, 0, 0);
                     frame_gap -= fs;
                   }
                   conn->ab_buffering = 0;
@@ -1059,14 +780,15 @@ static inline int32_t mean_32(int32_t a, int32_t b) {
 
 // can only accept a plus or minus 1
 // stuff: 1 means add 1; 0 means do nothing; -1 means remove 1
-static int stuff_buffer_basic_32(int32_t *inptr, int length, sps_format_t l_output_format,
-                                 char *outptr, int stuff, int dither, rtsp_conn_info *conn) {
+EncodedPcm encodeBasicPlaybackPcm(std::span<const int32_t> samples, unsigned channels,
+                                 int stuff, PcmEncoder &encoder) {
+  const int32_t *inptr = samples.data();
+  const int length = samples.size() / channels;
   int tstuff = 0;
   if (length >= 3) {
     tstuff = stuff;
     if (tstuff)
-      debug(3, "stuff_buffer_basic_32 %+d.", tstuff);
-    char *l_outptr = outptr;
+      debug(3, "basic frame adjustment %+d.", tstuff);
     if (stuff > 1)
       stuff = 1;
     if (stuff < -1)
@@ -1085,21 +807,20 @@ static int stuff_buffer_basic_32(int32_t *inptr, int length, sps_format_t l_outp
 
     for (i = 0; i < stuffsamp; i++) { // the whole frame, if no stuffing
       unsigned int channel;
-      for (channel = 0; channel < conn->input_num_channels; channel++)
-        encodePlaybackSample(*inptr++, &l_outptr, l_output_format, conn->fix_volume, dither, conn);
+      for (channel = 0; channel < channels; channel++)
+        encoder.appendSample(*inptr++);
     };
     if (tstuff) {
       if (tstuff == 1) {
         // debug(3, "+++++++++");
         // interpolate one sample
         unsigned int channel;
-        for (channel = 0; channel < conn->input_num_channels; channel++)
-          encodePlaybackSample(mean_32(inptr[-2], inptr[0]), &l_outptr, l_output_format, conn->fix_volume,
-                         dither, conn);
+        for (channel = 0; channel < channels; channel++)
+          encoder.appendSample(mean_32(inptr[-2], inptr[0]));
       } else if (stuff == -1) {
         // debug(3, "---------");
         unsigned int channel;
-        for (channel = 0; channel < conn->input_num_channels; channel++)
+        for (channel = 0; channel < channels; channel++)
           inptr++;
       }
 
@@ -1111,12 +832,12 @@ static int stuff_buffer_basic_32(int32_t *inptr, int length, sps_format_t l_outp
 
       for (i = stuffsamp; i < remainder; i++) {
         unsigned int channel;
-        for (channel = 0; channel < conn->input_num_channels; channel++)
-          encodePlaybackSample(*inptr++, &l_outptr, l_output_format, conn->fix_volume, dither, conn);
+        for (channel = 0; channel < channels; channel++)
+          encoder.appendSample(*inptr++);
       }
     }
   }
-  return length + tstuff;
+  return encoder.finishFrame();
 }
 
 // this takes an array of channels of n signed 32-bit integers and
@@ -1129,27 +850,28 @@ static int stuff_buffer_basic_32(int32_t *inptr, int length, sps_format_t l_outp
 
 // stuff: 1 means add 1; 0 means do nothing; -1 means remove 1
 
-static int stuff_buffer_vernier(int32_t *inptr, int length, sps_format_t l_output_format,
-                                char *outptr, int stuff, int dither, rtsp_conn_info *conn) {
+EncodedPcm encodeInterpolatedPlaybackPcm(std::span<const int32_t> samples, unsigned channels,
+                                        int stuff, PcmEncoder &encoder) {
+  const int32_t *inptr = samples.data();
+  const int length = samples.size() / channels;
   int tstuff = 0;
   if (length >= 3) {
     tstuff = stuff;
     if ((stuff > INTERPOLATION_LIMIT) || (stuff < -INTERPOLATION_LIMIT) || (length < 100)) {
       debug(2,
-            "Stuff argument %d to stuff_buffer_vernier of length %d must be from -%d to +%d and "
+            "Interpolation adjustment %d for length %d must be from -%d to +%d and "
             "length > 100.",
             stuff, length, INTERPOLATION_LIMIT, INTERPOLATION_LIMIT);
       tstuff = 0; // if any of these conditions hold, don't stuff anything/
     }
 
-    char *l_outptr = outptr;
     int i;
 
     if (tstuff == 0) {
       for (i = 0; i < length; i++) { // the whole frame, if no stuffing
         unsigned int channel;
-        for (channel = 0; channel < conn->input_num_channels; channel++)
-          encodePlaybackSample(*inptr++, &l_outptr, l_output_format, conn->fix_volume, dither, conn);
+        for (channel = 0; channel < channels; channel++)
+          encoder.appendSample(*inptr++);
       }
     } else {
       // we are using 64 bit integers to represent fixed point numbers
@@ -1235,11 +957,11 @@ static int stuff_buffer_vernier(int32_t *inptr, int length, sps_format_t l_outpu
         }
         */
         unsigned int channel;
-        for (channel = 0; channel < conn->input_num_channels; channel++) {
+        for (channel = 0; channel < channels; channel++) {
           int32_t current_sample =
-              inptr[current_input_sample_floor_index * conn->input_num_channels + channel];
+              inptr[current_input_sample_floor_index * channels + channel];
           int32_t next_sample =
-              inptr[current_input_sample_ceil_index * conn->input_num_channels + channel];
+              inptr[current_input_sample_ceil_index * channels + channel];
           int64_t current_sample_fp = current_sample;
           // current_sample_fp = current_sample_fp << 32;
           int64_t next_sample_fp = next_sample;
@@ -1251,14 +973,13 @@ static int stuff_buffer_vernier(int32_t *inptr, int length, sps_format_t l_outpu
           interpolated_sample_value_fp =
               interpolated_sample_value_fp / one_fp; // back to a 32-bit samplle
           int32_t interpolated_sample_value = interpolated_sample_value_fp;
-          encodePlaybackSample(interpolated_sample_value, &l_outptr, l_output_format, conn->fix_volume,
-                         dither, conn);
+          encoder.appendSample(interpolated_sample_value);
         }
         current_input_sample_index_fp = current_input_sample_index_fp + step_size_fp;
       }
     }
   }
-  return length + tstuff;
+  return encoder.finishFrame();
 }
 
 
@@ -1388,10 +1109,6 @@ void player_thread_cleanup_handler(void *arg) {
     // debug(1, "FFmpeg clearup done");
   }
 
-  if (conn->outbuf) {
-    free(conn->outbuf);
-    conn->outbuf = NULL;
-  }
   if (conn->tbuf) {
     free(conn->tbuf);
     conn->tbuf = NULL;
@@ -1424,7 +1141,7 @@ void *player_thread_func(void *arg) {
       0; // be permitted to generate a warning each time a play is attempted
   conn->packet_count = 0;
   conn->packet_count_since_flush = 0;
-  conn->previous_random_number = 0;
+  conn->pcmEncoder.reset();
   conn->ab_buffering = 1;
   conn->first_packet_timestamp = 0;
   conn->flush_output_flushed = 0; // only send a flush command to the output device once
@@ -1577,20 +1294,7 @@ void *player_thread_func(void *arg) {
 
     pthread_testcancel(); // allow a pthread_cancel request to take effect.
 
-    // if we are using the software attenuator or downsampling or mixing to mono, enable dithering
-
-    if ((conn->fix_volume != 0x10000) || // if not 0x10000, it is attenuating...
-        ((conn->output_bit_depth > 0) &&
-         (conn->input_effective_bit_depth > conn->output_bit_depth)) ||
-        (config.playback_mode == ST_mono)) {
-      if (conn->enable_dither == 0)
-        debug(2, "enabling dither");
-      conn->enable_dither = 1;
-    } else {
-      if (conn->enable_dither != 0)
-        debug(2, "disabling dither");
-      conn->enable_dither = 0;
-    }
+    conn->pcmEncoder.beginFrame(conn->fix_volume, config.playback_mode == ST_mono);
 
     auto inframe = buffer_get_frame(
         conn, request_resync); // this has a guaranteed [and needed!] cancellation point
@@ -1627,24 +1331,12 @@ void *player_thread_func(void *arg) {
                   conn->last_seqno_read + 1, play_number, 0u, 0u);
             conn->last_seqno_read++; // manage the packet out of sequence minder
 
-            void *silence =
-                malloc(sps_format_sample_size(
-                           FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration)) *
-                       CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration) *
-                       conn->frames_per_packet);
-            if (silence == NULL) {
-              debug(1, "Failed to allocate memory for a silent frame silence buffer.");
-            } else {
-              // the player may change the contents of the buffer, so it has to be zeroed each
-              // time; might as well malloc and free it locally
-              conn->previous_random_number = generate_zero_frames(
-                  static_cast<char *>(silence), conn->frames_per_packet, conn->enable_dither,
-                  conn->previous_random_number, config.current_output_configuration);
-              config.output->play(silence, conn->frames_per_packet, play_samples_are_untimed, 0, 0);
-              free(silence);
-              frames_played += conn->frames_per_packet;
-            }
+            auto silence = conn->pcmEncoder.silence(conn->frames_per_packet);
+            config.output->play(silence.bytes().data(), silence.frames(),
+                                play_samples_are_untimed, 0, 0);
+            frames_played += silence.frames();
           } else {
+            EncodedPcm encoded;
             // process the frame
             // here, let's transform the frame of data, if necessary
             // we need an intermediate "transition" buffer
@@ -1659,15 +1351,6 @@ void *player_thread_func(void *arg) {
                        ((playback.frames) * conn->output_sample_ratio + INTERPOLATION_LIMIT)));
             if (conn->tbuf == NULL)
               die("Failed to allocate memory for the transition buffer.");
-            // size change
-            conn->outbuf =
-                static_cast<char *>(malloc(sps_format_sample_size(
-                           FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration)) *
-                       CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration) *
-                       ((playback.frames) * conn->output_sample_ratio + INTERPOLATION_LIMIT)));
-            if (conn->outbuf == NULL)
-              die("Failed to allocate memory for an output buffer.");
-
             if (conn->input_num_channels == 2) {
               // if (0) {
 
@@ -2232,25 +1915,12 @@ void *player_thread_func(void *arg) {
                     frames_to_skip = 0;
                     skipping_frames_at_start_of_play = 0;
                     int64_t gap = -gap_to_fix;
-                    void *silence = malloc(
-                        sps_format_sample_size(
-                            FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration)) *
-                        CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration) * gap);
-                    if (silence == NULL) {
-                      debug(1, "Failed to allocate memory for a silent gap.");
-                    } else {
-                      // the player may change the contents of the buffer, so it has to be zeroed
-                      // each time; might as well malloc and free it locally
-                      conn->previous_random_number = generate_zero_frames(
-                          static_cast<char *>(silence), gap, conn->enable_dither, conn->previous_random_number,
-                          config.current_output_configuration);
-                      config.output->play(silence, gap, play_samples_are_untimed, 0, 0);
-                      free(silence);
-                      frames_played += gap;
-                      // debug(1,"sent %d frames of silence.", gap);
-                      sync_error_ns = 0; // don't invoke any sync checking
-                      sync_error = 0;
-                    }
+                    auto silence = conn->pcmEncoder.silence(gap);
+                    config.output->play(silence.bytes().data(), silence.frames(),
+                                        play_samples_are_untimed, 0, 0);
+                    frames_played += silence.frames();
+                    sync_error_ns = 0;
+                    sync_error = 0;
                   }
                 }
                 // debug(1, "frames_to_skip: %u.", frames_to_skip);
@@ -2419,26 +2089,25 @@ void *player_thread_func(void *arg) {
 
 
                 // }
-                  if (config.packet_stuffing == ST_basic)
-                    play_samples = stuff_buffer_basic_32(
-                        (int32_t *)conn->tbuf, inbuflength,
-                        FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration),
-                        conn->outbuf, amount_to_stuff, conn->enable_dither, conn);
-                  else
-                    play_samples = stuff_buffer_vernier(
-                        (int32_t *)conn->tbuf, inbuflength,
-                        FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration),
-                        conn->outbuf, amount_to_stuff, conn->enable_dither, conn);
+                if (config.packet_stuffing == ST_basic)
+                  encoded = encodeBasicPlaybackPcm(
+                      {conn->tbuf, size_t(inbuflength) * conn->input_num_channels},
+                      conn->input_num_channels, amount_to_stuff, conn->pcmEncoder);
+                else
+                  encoded = encodeInterpolatedPlaybackPcm(
+                      {conn->tbuf, size_t(inbuflength) * conn->input_num_channels},
+                      conn->input_num_channels, amount_to_stuff, conn->pcmEncoder);
 
 
-                if (conn->outbuf == NULL)
-                  debug(1, "NULL outbuf to play -- skipping it.");
+                play_samples = encoded.frames();
+                if (encoded.bytes().empty())
+                  debug(1, "No encoded PCM to play -- skipping it.");
                 else {
                   if (play_samples == 0)
                     debug(2, "nothing to play.");
                   else {
                     if (conn->software_mute_enabled) {
-                      mutePlaybackPcm(conn->outbuf, play_samples, config.current_output_configuration, *conn);
+                      encoded = conn->pcmEncoder.silence(play_samples);
                     }
                     uint64_t should_be_time;
                     frame_to_local_time(playback.timestamp, &should_be_time, conn);
@@ -2446,14 +2115,14 @@ void *player_thread_func(void *arg) {
 
                     // now, see if we are skipping some or all of these frames
                     if (frames_to_skip == 0) {
-                      config.output->play(conn->outbuf, play_samples, play_samples_are_timed,
+                      config.output->play(encoded.bytes().data(), play_samples, play_samples_are_timed,
                                           playback.timestamp, should_be_time);
                       frames_played += play_samples;
                     } else {
                       if (frames_to_skip > (unsigned int)play_samples) {
                         debug(3, "skipping a packet of %u frames.", play_samples);
                         debug_print_buffer(
-                            4, conn->outbuf,
+                            4, encoded.bytes().data(),
                             play_samples *
                                 CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration) *
                                 sps_format_sample_size(FORMAT_FROM_ENCODED_FORMAT(
@@ -2467,7 +2136,7 @@ void *player_thread_func(void *arg) {
                             sps_format_sample_size(
                                 FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration));
 
-                        char *play_starting_point = conn->outbuf + bytes_to_skip;
+                        uint8_t *play_starting_point = encoded.bytes().data() + bytes_to_skip;
 
                         config.output->play(play_starting_point, play_samples - frames_to_skip,
                                             play_samples_are_timed, playback.timestamp,
@@ -2476,7 +2145,7 @@ void *player_thread_func(void *arg) {
                         debug(4, "skipping the first %u frames in a packet of %u frames.",
                               frames_to_skip, play_samples);
 
-                        debug_print_buffer(4, conn->outbuf, bytes_to_skip);
+                        debug_print_buffer(4, encoded.bytes().data(), bytes_to_skip);
 
                         frames_played += play_samples - frames_to_skip;
                         frames_to_skip = 0;
@@ -2493,25 +2162,24 @@ void *player_thread_func(void *arg) {
               // released, which will be its time plus latency and any offset_time
 
               if (config.packet_stuffing == ST_basic)
-                play_samples = stuff_buffer_basic_32(
-                    (int32_t *)conn->tbuf, inbuflength,
-                    FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration), conn->outbuf,
-                    0, conn->enable_dither, conn);
+                encoded = encodeBasicPlaybackPcm(
+                    {conn->tbuf, size_t(inbuflength) * conn->input_num_channels},
+                    conn->input_num_channels, 0, conn->pcmEncoder);
               else
-                play_samples = stuff_buffer_vernier(
-                    (int32_t *)conn->tbuf, inbuflength,
-                    FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration), conn->outbuf,
-                    0, conn->enable_dither, conn);
-              if (conn->outbuf == NULL)
-                debug(1, "NULL outbuf to play -- skipping it.");
+                encoded = encodeInterpolatedPlaybackPcm(
+                    {conn->tbuf, size_t(inbuflength) * conn->input_num_channels},
+                    conn->input_num_channels, 0, conn->pcmEncoder);
+              play_samples = encoded.frames();
+              if (encoded.bytes().empty())
+                debug(1, "No encoded PCM to play -- skipping it.");
               else {
                 if (conn->software_mute_enabled) {
-                  mutePlaybackPcm(conn->outbuf, play_samples, config.current_output_configuration, *conn);
+                  encoded = conn->pcmEncoder.silence(play_samples);
                 }
                 uint64_t should_be_time;
                 frame_to_local_time(playback.timestamp, &should_be_time, conn);
                 debug(3, "play frame %u.", playback.timestamp);
-                config.output->play(conn->outbuf, play_samples, play_samples_are_timed,
+                config.output->play(encoded.bytes().data(), play_samples, play_samples_are_timed,
                                     playback.timestamp, should_be_time);
                 frames_played += play_samples;
               }
@@ -2522,10 +2190,6 @@ void *player_thread_func(void *arg) {
               conn->tbuf = NULL;
             }
 
-            if (conn->outbuf) {
-              free(conn->outbuf);
-              conn->outbuf = NULL;
-            }
           }
           tsum_of_frames = tsum_of_frames + frames_played;
           if (frames_played) {
