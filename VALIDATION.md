@@ -210,6 +210,15 @@ globals; lifetime counters still use local baselines. Native assertions, both sw
 wrap flags, C ABI/cancellation/shell checks are preserved; production is unchanged
 and sanitizers/devices were not rerun.
 
+Packet-buffer discovery (`ctest --test-dir build/redesign-release -R '^AudioPacketBuffer\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Seven independent cases retain factory failures, ownership, modular admission,
+revision/flush history, shared-frame trimming, mute and empty-packet retention.
+Queue resets and resampler reuse replay their original prerequisite operations.
+Group (0.12s), exact flush-history case and Release 195/195 (15.31s) passed; each
+entry has timeout 5. Native assertions and C ABI/cancellation/shell checks remain;
+production is unchanged and sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |

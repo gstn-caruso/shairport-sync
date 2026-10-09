@@ -1,5 +1,6 @@
 #include "audio_packet_buffer.hpp"
 #include "resampler.hpp"
+#include <gtest/gtest.h>
 #include <cassert>
 #include <stdexcept>
 
@@ -20,7 +21,7 @@ static QueuedAudioPacket packet(uint16_t sequence, uint32_t timestamp) {
   return QueuedAudioPacket::decoded(*AudioFormat::fromSsrc(ALAC_44100_S16_2), sequence,
                                     timestamp, 0, decodedFrame());
 }
-int main() {
+static void checkFactoryFailures() {
   AudioPacketBuffer transactional;
   const auto emptyRevision = transactional.revision();
   try {
@@ -44,7 +45,9 @@ int main() {
   auto nextAfterFailure = transactional.accept(72, 3, [] { return packet(72, 116); });
   assert(nextAfterFailure.kind == ArrivalKind::inOrder && transactional.occupancy() == 2);
   assert(firstAfterFailure.kind == ArrivalKind::first);
-  AudioPacketBuffer buffer;
+}
+
+static void checkOwnershipAfterReset(AudioPacketBuffer &buffer) {
   assert(!buffer.front() && buffer.occupancy() == 0);
   int factories = 0;
   auto accepted = buffer.accept(7, 100, [&] { ++factories; return packet(7, 1000); });
@@ -58,7 +61,11 @@ int main() {
   auto &owned = std::get<QueuedAudioPacket>(*extracted);
   assert(owned.metadata().frames == 16 && owned.decodedSampleFormat() == AV_SAMPLE_FMT_S16P);
   assert(!buffer.front() && buffer.occupancy() == 0);
-  factories = 0;
+}
+
+static void checkModularAdmission(AudioPacketBuffer &buffer) {
+  checkOwnershipAfterReset(buffer);
+  int factories = 0;
   buffer.accept(65535, 200, [&] { ++factories; return packet(65535, 2000); });
   buffer.accept(1, 300, [&] { ++factories; return packet(1, 2032); });
   assert(buffer.occupancy() == 3);
@@ -78,13 +85,15 @@ int main() {
   auto overflow = buffer.accept(2000, 500, [&] { ++factories; return packet(2000, 5000); });
   assert(overflow.kind == ArrivalKind::overflow && buffer.occupancy() == 1);
   assert(buffer.front()->packet.sequence == 2000);
+}
+
+static void checkTrimmedFrameConversion(Resampler &resampler) {
   auto source = decodedFrame();
   OwnedAudioFrame shared(av_frame_clone(source.get()));
   auto trimmed = QueuedAudioPacket::decoded(*AudioFormat::fromSsrc(ALAC_44100_S16_2),
                                             20, 6000, 0, std::move(source));
   assert(trimmed.trimBefore(6005));
   assert(trimmed.metadata().timestamp == 6005 && trimmed.metadata().frames == 11);
-  Resampler resampler;
   assert(resampler.configure(trimmed.format(), *trimmed.decodedSampleFormat(), {44100, 2}));
   assert(trimmed.convertWith(resampler));
   assert(trimmed.metadata().frames == 11 && trimmed.audioBytes().size() == 44);
@@ -92,6 +101,10 @@ int main() {
   assert(samples[0] == 5 && samples[1] == 105);
   assert(shared->nb_samples == 16);
   assert(reinterpret_cast<int16_t *>(shared->data[0])[0] == 0);
+}
+
+static void checkMuteAfterTrimmedConversion(Resampler &resampler) {
+  checkTrimmedFrameConversion(resampler);
   auto muted = QueuedAudioPacket::decoded(*AudioFormat::fromSsrc(ALAC_44100_S16_2),
                                          21, 7000, 0, {});
   muted.mute();
@@ -100,6 +113,10 @@ int main() {
   assert(muted.metadata().frames == 352);
   for (auto byte : muted.audioBytes())
     assert(byte == 0);
+}
+
+static void checkFlushHistory(AudioPacketBuffer &buffer) {
+  checkModularAdmission(buffer);
   buffer.reset();
   buffer.accept(30, 1000, [] { return packet(30, 8000); });
   buffer.accept(31, 1001, [] { return packet(31, 8016); });
@@ -129,6 +146,38 @@ int main() {
   const auto boundary = buffer.applyFlush();
   assert(boundary.complete && boundary.resetTiming && buffer.occupancy() == 0);
   assert(!buffer.applyFlush().flushOutput);
+}
+
+TEST(AudioPacketBuffer, FactoryFailuresPreserveEmptyAndOverflowAdmissionWindows) {
+  checkFactoryFailures();
+}
+
+TEST(AudioPacketBuffer, ExtractedPacketOwnsDecodedFrameAfterUsedBufferReset) {
+  AudioPacketBuffer buffer;
+  checkOwnershipAfterReset(buffer);
+}
+
+TEST(AudioPacketBuffer, ModularLateDuplicateAndOverflowAdmissionPreserveRevisionsAndFactories) {
+  AudioPacketBuffer buffer;
+  checkModularAdmission(buffer);
+}
+
+TEST(AudioPacketBuffer, TrimmedConversionLeavesSharedDecodedFrameUnchanged) {
+  Resampler resampler;
+  checkTrimmedFrameConversion(resampler);
+}
+
+TEST(AudioPacketBuffer, MuteAfterTrimmedConversionPreservesPacketDurationAndSilence) {
+  Resampler resampler;
+  checkMuteAfterTrimmedConversion(resampler);
+}
+
+TEST(AudioPacketBuffer, FlushHistoryPreservesIdsBoundariesAndStaleRevisionRejection) {
+  AudioPacketBuffer buffer;
+  checkFlushHistory(buffer);
+}
+
+TEST(AudioPacketBuffer, EmptyDecodedPacketPreservesPreviouslyRetainedResamplerFrames) {
   Resampler delayed;
   const auto format = *AudioFormat::fromSsrc(ALAC_44100_S16_2);
   assert(delayed.configure(format, AV_SAMPLE_FMT_S16P, {48000, 2}));
