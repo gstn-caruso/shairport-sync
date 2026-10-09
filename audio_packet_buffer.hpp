@@ -34,11 +34,12 @@ public:
   template <typename Factory> Admission accept(uint16_t sequence, uint64_t now, Factory factory,
                                                RetryPolicy policy = {}) {
     Lock lock(mutex_);
-    const auto kind = prepareAdmission(sequence, now);
+    const auto kind = classifyArrival(sequence);
     if (kind == ArrivalKind::tooLate || kind == ArrivalKind::duplicate)
       return {kind, 0, revision_, planner_.due(now, policy, {read_, write_})};
     auto packet = factory();
     const auto samples = packet.samplesDecoded();
+    makeRoomFor(sequence, now, kind);
     entries_[sequence % capacity] = Entry{sequence, std::move(packet)};
     planner_.resolve(sequence);
     if (kind != ArrivalKind::late)
@@ -69,7 +70,8 @@ private:
   };
   struct FlushRequest { uint64_t id; uint32_t timestamp; bool delivered = false; };
   static constexpr size_t capacity = 1024;
-  ArrivalKind prepareAdmission(uint16_t sequence, uint64_t now);
+  ArrivalKind classifyArrival(uint16_t sequence) const;
+  void makeRoomFor(uint16_t sequence, uint64_t now, ArrivalKind kind);
   void resetUnderLock();
   void advanceRevision();
   static void unlockWaitingMutex(void *mutex);

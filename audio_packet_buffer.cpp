@@ -1,12 +1,9 @@
 #include "audio_packet_buffer.hpp"
 #include <bit>
 
-ArrivalKind AudioPacketBuffer::prepareAdmission(uint16_t sequence, uint64_t now) {
-  if (!synced_) {
-    read_ = write_ = sequence;
-    synced_ = true;
+ArrivalKind AudioPacketBuffer::classifyArrival(uint16_t sequence) const {
+  if (!synced_)
     return ArrivalKind::first;
-  }
   const auto ahead = std::bit_cast<int16_t>(static_cast<uint16_t>(sequence - write_));
   if (ahead < 0) {
     const uint16_t position = sequence - read_;
@@ -17,17 +14,24 @@ ArrivalKind AudioPacketBuffer::prepareAdmission(uint16_t sequence, uint64_t now)
       return ArrivalKind::tooLate;
     return entry->packet ? ArrivalKind::duplicate : ArrivalKind::late;
   }
-  if (size_t(static_cast<uint16_t>(write_ - read_)) + ahead + 1 > capacity) {
+  if (size_t(static_cast<uint16_t>(write_ - read_)) + ahead + 1 > capacity)
+    return ArrivalKind::overflow;
+  return ahead == 0 ? ArrivalKind::inOrder : ArrivalKind::ahead;
+}
+
+void AudioPacketBuffer::makeRoomFor(uint16_t sequence, uint64_t now, ArrivalKind kind) {
+  if (kind == ArrivalKind::overflow)
     resetUnderLock();
+  if (kind == ArrivalKind::first || kind == ArrivalKind::overflow) {
     read_ = write_ = sequence;
     synced_ = true;
-    return ArrivalKind::overflow;
   }
+  if (kind == ArrivalKind::late)
+    return;
   for (uint16_t missing = write_; missing != sequence; ++missing) {
     entries_[missing % capacity] = Entry{missing, std::nullopt};
     planner_.noteMissing(missing, now);
   }
-  return ahead == 0 ? ArrivalKind::inOrder : ArrivalKind::ahead;
 }
 
 std::optional<AudioPacketBuffer::Front> AudioPacketBuffer::front() const {

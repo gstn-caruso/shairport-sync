@@ -1,6 +1,7 @@
 #include "audio_packet_buffer.hpp"
 #include "resampler.hpp"
 #include <cassert>
+#include <stdexcept>
 
 static OwnedAudioFrame decodedFrame() {
   OwnedAudioFrame frame(av_frame_alloc());
@@ -20,6 +21,29 @@ static QueuedAudioPacket packet(uint16_t sequence, uint32_t timestamp) {
                                     timestamp, 0, decodedFrame());
 }
 int main() {
+  AudioPacketBuffer transactional;
+  const auto emptyRevision = transactional.revision();
+  try {
+    transactional.accept(70, 0, []() -> QueuedAudioPacket {
+      throw std::runtime_error("decode failed");
+    });
+    assert(false);
+  } catch (const std::runtime_error &) {}
+  assert(!transactional.front() && transactional.revision() == emptyRevision);
+  auto firstAfterFailure = transactional.accept(71, 1, [] { return packet(71, 100); });
+  const auto beforeOverflow = transactional.front();
+  try {
+    transactional.accept(2000, 2, []() -> QueuedAudioPacket {
+      throw std::runtime_error("decode failed");
+    });
+    assert(false);
+  } catch (const std::runtime_error &) {}
+  assert(transactional.revision() == beforeOverflow->revision);
+  const auto afterOverflow = transactional.front();
+  assert(afterOverflow && afterOverflow->packet.sequence == 71 && transactional.occupancy() == 1);
+  auto nextAfterFailure = transactional.accept(72, 3, [] { return packet(72, 116); });
+  assert(nextAfterFailure.kind == ArrivalKind::inOrder && transactional.occupancy() == 2);
+  assert(firstAfterFailure.kind == ArrivalKind::first);
   AudioPacketBuffer buffer;
   assert(!buffer.front() && buffer.occupancy() == 0);
   int factories = 0;
