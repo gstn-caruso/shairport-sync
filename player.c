@@ -46,43 +46,19 @@
 
 #include "config.h"
 
-#ifdef CONFIG_MBEDTLS
-#include <mbedtls/aes.h>
-#endif
 
-#ifdef CONFIG_POLARSSL
-#include <polarssl/aes.h>
-#include <polarssl/havege.h>
-#endif
 
-#ifdef CONFIG_OPENSSL
 #include <openssl/aes.h> // needed for older AES stuff
 #include <openssl/bio.h> // needed for BIO_new_mem_buf
 #include <openssl/err.h> // needed for ERR_error_string, ERR_get_error
 #include <openssl/evp.h> // needed for EVP_PKEY_CTX_new, EVP_PKEY_sign_init, EVP_PKEY_sign
 #include <openssl/pem.h> // needed for PEM_read_bio_RSAPrivateKey, EVP_PKEY_CTX_set_rsa_padding
 #include <openssl/rsa.h> // needed for EVP_PKEY_CTX_set_rsa_padding
-#endif
 
-#ifdef CONFIG_SOXR
-#include <soxr.h>
-#endif
 
-#ifdef CONFIG_CONVOLUTION
-#include <FFTConvolver/convolver.h>
-#endif
 
-#ifdef CONFIG_METADATA
-#include "metadata/core.h"
-#endif
 
-#ifdef CONFIG_METADATA_HUB
-#include "metadata/hub.h"
-#endif
 
-#ifdef CONFIG_DACP_CLIENT
-#include "dacp.h"
-#endif
 
 #include "common.h"
 #include "mdns.h"
@@ -90,21 +66,12 @@
 #include "rtp.h"
 #include "rtsp.h"
 
-#include "alac.h"
 
-#ifdef CONFIG_APPLE_ALAC
-#include "apple_alac.h"
-#endif
 
-#ifdef CONFIG_AIRPLAY_2
 #include "ptp-utilities.h"
-#endif
 
-#ifdef CONFIG_FFMPEG
 #include <libavutil/version.h>
-#endif
 
-#include "loudness.h"
 
 #include "activity_monitor.h"
 
@@ -123,9 +90,7 @@ const unsigned int front_mono_channel_index = 66;
 
 void do_flush(uint32_t timestamp, rtsp_conn_info *conn);
 
-#ifdef CONFIG_FFMPEG
 size_t avflush(rtsp_conn_info *conn);
-#endif
 
 int free_audio_buffer_payload(abuf_t *abuf) {
   int items_freed = 0;
@@ -135,14 +100,12 @@ int free_audio_buffer_payload(abuf_t *abuf) {
       items_freed++;
       abuf->data = NULL;
     }
-#ifdef CONFIG_FFMPEG
     if (abuf->avframe != NULL) {
       av_frame_free(&abuf->avframe);
       items_freed++;
       abuf->avframe = NULL;
       abuf->ssrc = SSRC_NONE;
     }
-#endif
   } else {
     debug(1, "null buffer pointer!");
   }
@@ -175,156 +138,14 @@ void reset_input_flow_metrics(rtsp_conn_info *conn) {
   conn->initial_reference_timestamp = 0;
 }
 
-void unencrypted_packet_decode(rtsp_conn_info *conn, unsigned char *packet, int length,
-                               short *dest) {
-  if (conn->stream.type == ast_apple_lossless) {
-#ifdef CONFIG_APPLE_ALAC
-    if (config.decoder_in_use == 1 << decoder_apple_alac) {
-      int frames_decoded;
-      apple_alac_decode_frame(packet, length, (unsigned char *)dest, &frames_decoded);
-    } else
-#endif
-#ifdef CONFIG_HAMMERTON
-        if (config.decoder_in_use == 1 << decoder_hammerton) {
-      int buffer_size = conn->frames_per_packet * conn->input_bytes_per_frame;
-      alac_decode_frame(conn->decoder_info, packet, (unsigned char *)dest, &buffer_size);
-    } else
-#endif
-    {
-      die("No ALAC decoder included!");
-    }
-  } else if (conn->stream.type == ast_uncompressed) {
-    int i;
-    short *source = (short *)packet;
-    // dest (abuf->data) is allocated for exactly one packet:
-    // conn->frames_per_packet * conn->input_bytes_per_frame bytes. Never copy more
-    // than that, regardless of the received packet length, to avoid a heap overflow.
-    int max_bytes = conn->frames_per_packet * conn->input_bytes_per_frame;
-    if (length > max_bytes)
-      length = max_bytes;
-    for (i = 0; i < length / 2; i++) {
-      // assuming each input sample is 16 bits.
-      *dest = ntohs(*source);
-      dest++;
-      source++;
-    }
-  }
-}
 
-#ifdef CONFIG_HAMMERTON
-static int init_alac_decoder(int32_t fmtp[12], rtsp_conn_info *conn) {
-
-  // clang-format off
-
-  // This is a guess, but the format of the fmtp looks identical to the format of an
-  // ALACSpecificCOnfig which is detailed in the file ALACMagicCookieDescription.txt
-  // in the Apple ALAC sample implementation
-  // Here it is:
-
-  /*
-
-    * ALAC Specific Info (24 bytes) (mandatory)
-    __________________________________________________________________________________________________________________________________
-
-    The Apple Lossless codec stores specific information about the encoded stream in the ALACSpecificConfig. This
-    info is vended by the encoder and is used to setup the decoder for a given encoded bitstream.
-
-    When read from and written to a file, the fields of this struct must be in big-endian order.
-    When vended by the encoder (and received by the decoder) the struct values will be in big-endian order.
-
-
-        struct      ALACSpecificConfig (defined in ALACAudioTypes.h)
-        abstract    This struct is used to describe codec provided information about the encoded Apple Lossless bitstream.
-                    It must accompany the encoded stream in the containing audio file and be provided to the decoder.
-
-        field       frameLength             uint32_t        indicating the frames per packet when no explicit frames per packet setting is
-                                                            present in the packet header. The encoder frames per packet can be explicitly set
-                                                            but for maximum compatibility, the default encoder setting of 4096 should be used.
-
-        field       compatibleVersion       uint8_t         indicating compatible version,
-                                                            value must be set to 0
-
-        field       bitDepth                uint8_t         describes the bit depth of the source PCM data (maximum value = 32)
-
-        field       pb                      uint8_t         currently unused tuning parameter.
-                                                            value should be set to 40
-
-        field       mb                      uint8_t         currently unused tuning parameter.
-                                                            value should be set to 10
-
-        field       kb                      uint8_t         currently unused tuning parameter.
-                                                            value should be set to 14
-
-        field       numChannels             uint8_t         describes the channel count (1 = mono, 2 = stereo, etc...)
-                                                            when channel layout info is not provided in the 'magic cookie', a channel count > 2
-                                                            describes a set of discreet channels with no specific ordering
-
-        field       maxRun                  uint16_t        currently unused.
-                                                            value should be set to 255
-
-        field       maxFrameBytes           uint32_t        the maximum size of an Apple Lossless packet within the encoded stream.
-                                                            value of 0 indicates unknown
-
-        field       avgBitRate              uint32_t        the average bit rate in bits per second of the Apple Lossless stream.
-                                                            value of 0 indicates unknown
-
-        field       sampleRate              uint32_t        sample rate of the encoded stream
-
-
-    typedef struct ALACSpecificConfig
-    {
-            uint32_t        frameLength;
-            uint8_t         compatibleVersion;
-            uint8_t         bitDepth;
-            uint8_t         pb;
-            uint8_t         mb;
-            uint8_t         kb;
-            uint8_t         numChannels;
-            uint16_t        maxRun;
-            uint32_t        maxFrameBytes;
-            uint32_t        avgBitRate;
-            uint32_t        sampleRate;
-
-    } ALACSpecificConfig;
-
-   */
-
-   // We are going to go on that basis
-
-  // clang-format on
-
-  alac_file *alac;
-
-  alac = alac_create(conn->input_bit_depth,
-                     conn->input_num_channels); // no pthread cancellation point in here
-  if (!alac)
-    return 1;
-  conn->decoder_info = alac;
-
-  alac->setinfo_max_samples_per_frame = conn->frames_per_packet;
-  alac->setinfo_7a = fmtp[2];
-  alac->setinfo_sample_size = conn->input_bit_depth;
-  alac->setinfo_rice_historymult = fmtp[4];
-  alac->setinfo_rice_initialhistory = fmtp[5];
-  alac->setinfo_rice_kmodifier = fmtp[6];
-  alac->setinfo_7f = fmtp[7];
-  alac->setinfo_80 = fmtp[8];
-  alac->setinfo_82 = fmtp[9];
-  alac->setinfo_86 = fmtp[10];
-  alac->setinfo_8a_rate = fmtp[11];
-  alac_allocate_buffers(alac); // no pthread cancellation point in here
-  return 0;
-}
-#endif
 
 static void init_buffer(rtsp_conn_info *conn) {
   int i;
   for (i = 0; i < BUFFER_FRAMES; i++) {
     conn->audio_buffer[i].data = NULL;
-#ifdef CONFIG_FFMPEG
     conn->audio_buffer[i].avframe = NULL;
     conn->audio_buffer[i].ssrc = SSRC_NONE;
-#endif
   }
 }
 
@@ -341,9 +162,7 @@ void reset_buffer(rtsp_conn_info *conn) {
   pthread_mutex_lock_and_cleanup_push(&conn->ab_mutex);
   ab_resync(conn);
   pthread_cleanup_pop(1);
-#if CONFIG_FFMPEG
   avflush(conn);
-#endif
   if (config.output->flush) {
     config.output->flush(); // no cancellation points
                             //            debug(1, "reset_buffer: flush output device.");
@@ -375,14 +194,8 @@ const char *get_category_string(airplay_stream_c cat) {
   case ptp_stream:
     category = "PTP stream";
     break;
-  case ntp_stream:
-    category = "NTP stream";
-    break;
   case remote_control_stream:
     category = "Remote Control stream";
-    break;
-  case classic_airplay_stream:
-    category = "Classic AirPlay stream";
     break;
   default:
     category = "Unexpected stream code";
@@ -391,7 +204,6 @@ const char *get_category_string(airplay_stream_c cat) {
   return category;
 }
 
-#ifdef CONFIG_FFMPEG
 
 static void swr_alloc_cleanup_handler(void *arg) {
   debug(3, "swr_alloc_cleanup_handler");
@@ -575,13 +387,8 @@ int setup_software_resampler(rtsp_conn_info *conn, ssrc_t ssrc) {
 // Now we ask the backend for its best format, giving it the channels, rate and format
 
 // default format is S32_LE/48000/2 for AP2, S16_LE/44100/2 otherwise
-#ifdef CONFIG_AIRPLAY_2
   uint32_t output_configuration = CHANNELS_TO_ENCODED_FORMAT(2) | RATE_TO_ENCODED_FORMAT(48000) |
                                   FORMAT_TO_ENCODED_FORMAT(SPS_FORMAT_S32_LE);
-#else
-  uint32_t output_configuration = CHANNELS_TO_ENCODED_FORMAT(2) | RATE_TO_ENCODED_FORMAT(44100) |
-                                  FORMAT_TO_ENCODED_FORMAT(SPS_FORMAT_S16_LE);
-#endif
 
   int output_configuration_changed = 0;
 
@@ -1048,9 +855,6 @@ void prepare_decoding_chain(rtsp_conn_info *conn, ssrc_t ssrc) {
       inform("Connection %d: Incoming Audio Encoding is switching to: \"%s\".",
              conn->connection_number, get_ssrc_name(ssrc));
     // conn->incoming_ssrc = payload_ssrc;
-#ifdef CONFIG_METADATA
-    send_ssnc_metadata('sdsc', get_ssrc_name(ssrc), strlen(get_ssrc_name(ssrc)), 1);
-#endif
   }
 
   if ((ssrc_is_recognised(ssrc)) && (ssrc != conn->incoming_ssrc)) {
@@ -1367,47 +1171,13 @@ size_t avflush(rtsp_conn_info *conn) {
   return response;
 }
 
-#endif
 
-#ifdef CONFIG_OPENSSL
 // Thanks to
 // https://stackoverflow.com/questions/27558625/how-do-i-use-aes-cbc-encrypt-128-openssl-properly-in-ubuntu
 // for inspiration. Changed to a 128-bit key and no padding.
 
-int openssl_aes_decrypt_cbc(unsigned char *ciphertext, int ciphertext_len, unsigned char *key,
-                            unsigned char *iv, unsigned char *plaintext) {
-  EVP_CIPHER_CTX *ctx;
-  int len;
-  int plaintext_len = 0;
-  ctx = EVP_CIPHER_CTX_new();
-  if (ctx != NULL) {
-    if (EVP_DecryptInit_ex(ctx, EVP_aes_128_cbc(), NULL, key, iv) == 1) {
-      EVP_CIPHER_CTX_set_padding(ctx, 0); // no padding -- always returns 1
-      // no need to allow space for padding in the output, as padding is disabled
-      if (EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len) == 1) {
-        plaintext_len = len;
-        if (EVP_DecryptFinal_ex(ctx, plaintext + len, &len) == 1) {
-          plaintext_len += len;
-        } else {
-          debug(1, "EVP_DecryptFinal_ex error \"%s\".", ERR_error_string(ERR_get_error(), NULL));
-        }
-      } else {
-        debug(1, "EVP_DecryptUpdate error \"%s\".", ERR_error_string(ERR_get_error(), NULL));
-      }
-    } else {
-      debug(1, "EVP_DecryptInit_ex error \"%s\".", ERR_error_string(ERR_get_error(), NULL));
-    }
-    EVP_CIPHER_CTX_free(ctx);
-  } else {
-    debug(1, "EVP_CIPHER_CTX_new error \"%s\".", ERR_error_string(ERR_get_error(), NULL));
-  }
-  return plaintext_len;
-}
-#endif
 
-#ifdef CONFIG_AIRPLAY_2
 
-#ifdef CONFIG_AIRPLAY_2
 // This is a big dirty hack to try to accommodate packets that come in in sequence but are timed to
 // be earlier that what went before them. This happens when the feed is switching from AAC to ALAC.
 // So basically we will look back through the buffers in the queue until we find the last buffer
@@ -1446,21 +1216,13 @@ void clear_buffers_from(rtsp_conn_info *conn, seq_t from_here) {
   }
 }
 
-#endif
 
-#endif
 
-#ifdef CONFIG_FFMPEG
 uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp, uint8_t *data,
                            size_t len, int mute, int32_t timestamp_gap, rtsp_conn_info *conn) {
-#else
-uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp, uint8_t *data,
-                           size_t len, __attribute__((unused)) int mute, int32_t timestamp_gap,
-                           rtsp_conn_info *conn) {
-#endif
 
   // clang-format off
-  
+
   // The timestamp_gap is the difference between the timestamp and the expected timestamp.
   // It should normally be zero.
 
@@ -1562,47 +1324,9 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
       abuf->length = 0; // may not be needed
 
       if (ssrc == ALAC_44100_S16_2) {
-        // This could be a Classic AirPlay or an AirPlay 2 Realtime packet.
-        // It always has a length of 352 frames per packet.
-        // And it's always 16-bit interleaved stereo.
-        uint8_t *data_to_use = data;
-        uint8_t *intermediate_buffer = malloc(len); // encryption is not compression...
-
-        // decrypt it if necessary
-        if (conn->stream.encrypted) {
-          unsigned char iv[16];
-          int aeslen = len & ~0xf;
-          memcpy(iv, conn->stream.aesiv, sizeof(iv));
-#ifdef CONFIG_MBEDTLS
-          mbedtls_aes_crypt_cbc(&conn->dctx, MBEDTLS_AES_DECRYPT, aeslen, iv, data,
-                                intermediate_buffer);
-#endif
-#ifdef CONFIG_POLARSSL
-          aes_crypt_cbc(&conn->dctx, AES_DECRYPT, aeslen, iv, data, intermediate_buffer);
-#endif
-#ifdef CONFIG_OPENSSL
-          openssl_aes_decrypt_cbc(data, aeslen, conn->stream.aeskey, iv, intermediate_buffer);
-          // AES_cbc_encrypt(data, intermediate_buffer, aeslen, &conn->aes, iv, AES_DECRYPT);
-#endif
-          memcpy(intermediate_buffer + aeslen, data + aeslen, len - aeslen);
-          data_to_use = intermediate_buffer;
-        }
-
-        // Use the selected decoder
-        if ((config.decoder_in_use == 1 << decoder_hammerton) ||
-            (config.decoder_in_use == 1 << decoder_apple_alac)) {
-          abuf->data = malloc(conn->frames_per_packet * conn->input_bytes_per_frame);
-          if (abuf->data != NULL) {
-            unencrypted_packet_decode(conn, data_to_use, len, abuf->data);
-            input_packets_used = conn->frames_per_packet; // return this to the caller
-            abuf->length = conn->frames_per_packet;       // these decoders don't transcode
-          } else {
-            debug(1, "audio block not allocated!");
-          }
-        } else if (config.decoder_in_use == 1 << decoder_ffmpeg_alac) {
-#ifdef CONFIG_FFMPEG
+        // AirPlay 2 realtime ALAC uses 352 frames of 16-bit stereo per packet.
           prepare_decoding_chain(conn, ALAC_44100_S16_2);
-          abuf->avframe = block_to_avframe(conn, data_to_use, len);
+          abuf->avframe = block_to_avframe(conn, data, len);
           abuf->ssrc = ALAC_44100_S16_2;
           if (abuf->avframe) {
             input_packets_used = abuf->avframe->nb_samples;
@@ -1610,7 +1334,7 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
           if (mute) {
             // it's important to have already run it through the decoder before dropping it
             // especially if it an AAC decoder
-            debug(2, "ap1 muting frame %u.", actual_timestamp);
+            debug(2, "Realtime ALAC muting frame %u.", actual_timestamp);
             abuf->length = abuf->avframe->nb_samples;
             av_frame_free(&abuf->avframe);
             abuf->avframe = NULL;
@@ -1623,18 +1347,6 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
                   conn->connection_number, seqno, actual_timestamp, len);
             debug_print_buffer(2, data, len);
           }
-#else
-          debug(1, "FFMPEG support has not been built into this version Shairport Sync!");
-#endif
-        } else {
-          debug(1, "Unknown decoder!");
-        }
-
-        // may be used during decryption
-        if (intermediate_buffer != NULL) {
-          free(intermediate_buffer);
-          intermediate_buffer = NULL;
-        }
 
         abuf->ready = 1;
         abuf->status = 0; // signifying that it was received
@@ -1643,7 +1355,6 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
         abuf->sequence_number = seqno;
       } else {
         // This is AirPlay 2 -- always use FFmpeg
-#ifdef CONFIG_FFMPEG
 
         // Use the appropriate FFMPEG decoder
 
@@ -1678,15 +1389,6 @@ uint32_t player_put_packet(uint32_t ssrc, seq_t seqno, uint32_t actual_timestamp
         abuf->timestamp = actual_timestamp;
         abuf->timestamp_gap = timestamp_gap;
         abuf->sequence_number = seqno;
-#else
-        debug(1, "FFMPEG support has not been included, so the packet is discarded.");
-        abuf->ready = 0;
-        abuf->status = 1 << 1; // bad packet, discarded
-        abuf->resend_request_number = 0;
-        abuf->timestamp = 0;
-        abuf->timestamp_gap = 0;
-        abuf->sequence_number = 0;
-#endif
       }
     }
     /*
@@ -1818,18 +1520,15 @@ int32_t rand_in_range(int32_t exclusive_range_limit) {
 }
 
 static inline void process_sample(int32_t sample, char **outp, sps_format_t format, int volume,
-                                  int dither, rtsp_conn_info *conn) {
+                                  int dither, __attribute__((unused)) rtsp_conn_info *conn) {
   int64_t hyper_sample = sample;
   int result = 0;
 
-  if (conn->do_loudness != 0) {
-    hyper_sample <<=
-        32; // Do not apply volume as it has already been done with the Loudness DSP filter
-  } else {
+
     int64_t hyper_volume = (int64_t)volume << 16;
     hyper_sample = hyper_sample * hyper_volume; // this is 64 bit bit multiplication -- we may need
                                                 // to dither it down to its target resolution
-  }
+
 
   // next, do dither, if necessary
   if (dither) {
@@ -2092,9 +1791,7 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
       pthread_mutex_lock_and_cleanup_push(&conn->flush_mutex);
       if (conn->flush_requested == 1) {
         if (conn->flush_output_flushed == 0) {
-#if CONFIG_FFMPEG
           avflush(conn);
-#endif
           if (config.output->flush) {
             config.output->flush(); // no cancellation points
             debug(2, "flush request: flush output device.");
@@ -2124,13 +1821,13 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
 
                 // clang-format off
                 // Now we have to work out if the flush frame is in the buffer.
-                
+
                 // If it is later than the end of the buffer, flush everything and keep the
                 // request active.
-                
+
                 // If it is in the buffer, we need to flush part of the buffer.
                 // (Actually we flush the entire buffer and drop the request.)
-                
+
                 // If it is before the buffer, no flush is needed. Drop the request.
                 // clang-format on
 
@@ -2370,46 +2067,11 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
                 // we need to set up the output device to correspond to
                 // the input format w.r.t. rate, depth and channels
                 // because we'll be sending silence before the first real frame.
-                debug(3, "reset loudness filters.");
-                loudness_reset();
-#ifdef CONFIG_FFMPEG
                 // Set up the output chain, including the software resampler.
                 debug(2, "set up the output chain to %s for FFmpeg.",
                       get_ssrc_name(curframe->ssrc));
                 setup_software_resampler(conn, curframe->ssrc);
                 conn->output_sample_ratio = 1; // it's always 1 if we're using FFmpeg
-#else
-                // here, in the non-FFmpeg decoder case, we have the first frame, so
-                // we should set up the output device now.
-                debug(3,
-                      "set up the output chain for the non-FFmpeg case with incoming audio at %u "
-                      "FPS.",
-                      conn->input_rate);
-
-                // ask the backend if it can give us its best choice for a non-ffmpeg configuration:
-                if (config.output->get_configuration) {
-                  config.current_output_configuration = config.output->get_configuration(
-                      2, conn->input_rate, (unsigned int)(SPS_FORMAT_S16));
-                } else {
-                  // otherwise, use the standard 44100/S16_LE/2 for non-ffmpeg operation
-                  config.current_output_configuration = CHANNELS_TO_ENCODED_FORMAT(2) |
-                                                        RATE_TO_ENCODED_FORMAT(44100) |
-                                                        FORMAT_TO_ENCODED_FORMAT(SPS_FORMAT_S16_LE);
-                }
-
-                // tell the output device, if possible
-                if (config.output->configure) {
-                  config.output->configure(config.current_output_configuration, NULL);
-                }
-
-                if (conn->input_rate == 0)
-                  debug(1, "input rate not set!");
-                else
-                  conn->output_sample_ratio =
-                      RATE_FROM_ENCODED_FORMAT(config.current_output_configuration) /
-                      conn->input_rate;
-
-#endif
                 // calculate the output bit depth
                 conn->output_bit_depth = 16; // default;
                 switch (FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration)) {
@@ -2620,17 +2282,6 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
                   conn->ab_buffering = 0;
                 }
               }
-#ifdef CONFIG_METADATA
-              if (conn->ab_buffering == 0) {
-                if ((curframe) && (curframe->ready) && (curframe->timestamp))
-                  debug(3, "Current frame timestamp at \"resume\" is %u.", curframe->timestamp);
-                else
-                  debug(1, "Current frame at \"resume\" is not known.");
-
-                send_ssnc_metadata('prsm', NULL, 0,
-                                   0); // "resume", but don't wait if the queue is locked
-              }
-#endif
             }
           }
         }
@@ -2743,7 +2394,6 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
             4 * conn->frames_per_packet; // about 4 * 7 mS for 352 frames per second
       }
 
-#ifdef COMPILE_FOR_LINUX_AND_FREEBSD_AND_CYGWIN_AND_OPENBSD
       uint64_t time_of_wakeup_ns = get_realtime_in_ns() + time_to_wait_for_wakeup_ns;
       uint64_t sec = time_of_wakeup_ns / 1000000000;
       uint64_t nsec = time_of_wakeup_ns % 1000000000;
@@ -2759,15 +2409,6 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
         // if (rc)
         debug(3, "pthread_cond_timedwait returned error code %d.", rc);
       // debug(1, "waited");
-#endif
-#ifdef COMPILE_FOR_OSX
-      uint64_t sec = time_to_wait_for_wakeup_ns / 1000000000;
-      uint64_t nsec = time_to_wait_for_wakeup_ns % 1000000000;
-      struct timespec time_to_wait;
-      time_to_wait.tv_sec = sec;
-      time_to_wait.tv_nsec = nsec;
-      pthread_cond_timedwait_relative_np(&conn->flowcontrol, &conn->ab_mutex, &time_to_wait);
-#endif
     }
   } while (wait);
 
@@ -2785,13 +2426,9 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
   pthread_cleanup_pop(1); // unlock the ab_mutex
   pthread_cleanup_pop(1); // buffer_get_frame_cleanup_handler
   // debug(1, "Release frame %u.", curframe->timestamp);
-#ifdef CONFIG_FFMPEG
 
-#ifndef CONFIG_AIRPLAY_2
-  if (config.decoder_in_use == 1 << decoder_ffmpeg_alac) {
-#endif
     // clang-format off
-    // If we're using the Hammerton or ALAC decoder, then curframe->data will 
+    // If we're using the Hammerton or ALAC decoder, then curframe->data will
     // point to a malloced buffer of the stereo interleaved LPCM/44100/S16/2 audio
     // But here, we must be using the FFMPEG decoder.
     // With the FFmpeg decoder we have an AVFrame in curframe->avframe.
@@ -2849,36 +2486,8 @@ static abuf_t *buffer_get_frame(rtsp_conn_info *conn, int resync_requested) {
         curframe->length = number_of_output_frames;
       }
     }
-#ifndef CONFIG_AIRPLAY_2
-  }
-#endif
 
-#endif
 
-#ifdef CONFIG_METADATA
-  if ((curframe != NULL) && (conn->first_packet_timestamp) &&
-      (conn->first_packet_timestamp == curframe->timestamp)) {
-    char buffer[32];
-    memset(buffer, 0, sizeof(buffer));
-    // if this is not a resumption after a discontinuity,
-    // say we have started receiving frames here
-    if (curframe->timestamp_gap == 0) {
-      snprintf(buffer, sizeof(buffer), "%" PRIu32 "/%" PRIu64 "", curframe->timestamp,
-               conn->first_packet_time_to_play);
-      send_ssnc_metadata('pffr', buffer, strlen(buffer),
-                         0); // "first frame received", but don't wait if the queue is locked
-      debug(3, "pffr: \"%s\"", buffer);
-    } else {
-      // otherwise, say a discontinuity occurred
-      snprintf(buffer, sizeof(buffer), "%" PRIu32 "/%" PRId32 "", curframe->timestamp,
-               curframe->timestamp_gap);
-      send_ssnc_metadata(
-          'pdis', buffer, strlen(buffer),
-          0); // "a discontinuity of this many frames", but don't wait if the queue is locked
-      debug(3, "pdis: \"%s\"", buffer);
-    }
-  }
-#endif
 
   if (curframe) {
     // check sequencing
@@ -3121,148 +2730,6 @@ static int stuff_buffer_vernier(int32_t *inptr, int length, sps_format_t l_outpu
   return length + tstuff;
 }
 
-#ifdef CONFIG_SOXR
-// this takes an array of signed 32-bit integers and
-// (a) uses libsoxr to
-// resample the array to have one more or one less frame, as specified in
-// stuff,
-// (b) multiplies each sample by the fixedvolume (a 16-bit quantity)
-// (c) dithers the result to the output size 32/24/16/8 bits
-// (d) outputs the result in the approprate format
-// formats accepted include U8, S8, S16, S24, S24_3LE, S24_3BE and S32
-
-int32_t stat_n = 0;
-double stat_mean = 0.0;
-double stat_M2 = 0.0;
-double longest_soxr_execution_time = 0.0;
-int64_t packets_processed = 0;
-
-int stuff_buffer_soxr_32(int32_t *inptr, int length, sps_format_t l_output_format, char *outptr,
-                         int stuff, int dither, rtsp_conn_info *conn) {
-  // if (scratchBuffer == NULL) {
-  //  die("soxr scratchBuffer not initialised.");
-  //}
-  packets_processed++;
-  int tstuff = stuff;
-  if ((stuff > INTERPOLATION_LIMIT) || (stuff < -INTERPOLATION_LIMIT) || (length < 100)) {
-    debug(2,
-          "Stuff argument %d to stuff_buffer_soxr_32 of length %d must be from -%d to +%d and "
-          "length > 100.",
-          stuff, length, INTERPOLATION_LIMIT, INTERPOLATION_LIMIT);
-    tstuff = 0; // if any of these conditions hold, don't stuff anything/
-  }
-
-  if (tstuff) {
-    // debug(1, "stuff_buffer_soxr_32 %+d.",stuff);
-    int32_t *scratchBuffer =
-        malloc(sizeof(int32_t) * CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration) *
-               (length + tstuff));
-    if (scratchBuffer != NULL) {
-      soxr_io_spec_t io_spec;
-      io_spec.itype = SOXR_INT32_I;
-      io_spec.otype = SOXR_INT32_I;
-      io_spec.scale = 1.0; // this seems to crash if not = 1.0
-      io_spec.e = NULL;
-      io_spec.flags = 0;
-
-      size_t odone;
-
-      uint64_t soxr_start_time = get_absolute_time_in_ns();
-
-      soxr_error_t error =
-          soxr_oneshot(length, length + tstuff, conn->input_num_channels, // Rates and # of chans.
-                       inptr, length, NULL,                               // Input.
-                       scratchBuffer, length + tstuff, &odone,            // Output.
-                       &io_spec,    // Input, output and transfer spec.
-                       NULL, NULL); // Default configuration.
-
-      if (error)
-        die("soxr error: %s\n", soxr_strerror(error));
-
-      if (odone > (size_t)(length + INTERPOLATION_LIMIT))
-        die("odone = %zu!\n", odone);
-
-      // mean and variance calculations from "online_variance" algorithm at
-      // https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Online_algorithm
-
-      double soxr_execution_time = (get_absolute_time_in_ns() - soxr_start_time) * 0.000000001;
-      // debug(1,"soxr_execution_time_us: %10.1f",soxr_execution_time_us);
-      if (soxr_execution_time > longest_soxr_execution_time)
-        longest_soxr_execution_time = soxr_execution_time;
-      stat_n += 1;
-      double stat_delta = soxr_execution_time - stat_mean;
-      if (stat_n != 0)
-        stat_mean += stat_delta / stat_n;
-      else
-        warn("calculation error for stat_n");
-      stat_M2 += stat_delta * (soxr_execution_time - stat_mean);
-
-      int i;
-      int32_t *ip, *op;
-      ip = inptr;
-      op = scratchBuffer;
-
-      const int gpm = 5;
-      // keep the first (dpm) samples, to mitigate the Gibbs phenomenon
-      for (i = 0; i < gpm; i++) {
-        unsigned int channel;
-        for (channel = 0; channel < conn->input_num_channels; channel++)
-          *op++ = *ip++;
-      }
-
-      // keep the last (dpm) samples, to mitigate the Gibbs phenomenon
-
-      // pointer arithmetic, baby -- it's da bomb.
-      op = scratchBuffer + (length + tstuff - gpm) * conn->input_num_channels;
-      ip = inptr + (length - gpm) * conn->input_num_channels;
-      for (i = 0; i < gpm; i++) {
-        unsigned int channel;
-        for (channel = 0; channel < conn->input_num_channels; channel++)
-          *op++ = *ip++;
-      }
-
-      // now, do the volume, dither and formatting processing
-      ip = scratchBuffer;
-      char *l_outptr = outptr;
-      for (i = 0; i < length + tstuff; i++) {
-        unsigned int channel;
-        for (channel = 0; channel < conn->input_num_channels; channel++)
-          process_sample(*ip++, &l_outptr, l_output_format, conn->fix_volume, dither, conn);
-      };
-      free(scratchBuffer);
-    } else {
-      debug(1, "Cannot allocate scratchbuffer");
-    }
-  } else { // the whole frame, if no stuffing
-
-    // now, do the volume, dither and formatting processing
-    int32_t *ip = inptr;
-    char *l_outptr = outptr;
-    int i;
-
-    for (i = 0; i < length; i++) {
-      unsigned int channel;
-      for (channel = 0; channel < conn->input_num_channels; channel++)
-        process_sample(*ip++, &l_outptr, l_output_format, conn->fix_volume, dither, conn);
-    };
-  }
-
-  if ((packets_processed % 1250 == 0) && (stat_n > 0)) {
-    debug(4,
-          "soxr_oneshot execution time in nanoseconds: mean, standard deviation and max "
-          "for %" PRId32 " interpolations in the last "
-          "1250 packets. %10.6f, %10.6f, %10.6f.",
-          stat_n, stat_mean, stat_n <= 1 ? 0.0 : sqrtf(stat_M2 / (stat_n - 1)),
-          longest_soxr_execution_time);
-    stat_n = 0;
-    stat_mean = 0.0;
-    stat_M2 = 0.0;
-    longest_soxr_execution_time = 0.0;
-  }
-
-  return length + tstuff;
-}
-#endif
 
 char line_of_stats[1024];
 int statistics_row; // statistics_line 0 means print the headings; anything else 1 means print the
@@ -3322,22 +2789,14 @@ double suggested_volume(rtsp_conn_info *conn) {
   return response;
 }
 
-#ifdef CONFIG_METADATA
-void send_ssnc_stream_description(const char *type, const char *description) {
-  send_ssnc_metadata('styp', type, strlen(type), 1);
-  send_ssnc_metadata('sdsc', description, strlen(description), 1);
-}
-#endif
 
 void player_thread_cleanup_handler(void *arg) {
   rtsp_conn_info *conn = (rtsp_conn_info *)arg;
   // debug(1, "Connection %d: player_thread_cleanup_handler start.", conn->connection_number);
 
   if (config.output->stop) {
-#ifdef CONFIG_FFMPEG
     if ((config.decoder_in_use == 1 << decoder_ffmpeg_alac) && (avflush(conn) > 1))
       debug(1, "ffmpeg flush at stop!");
-#endif
     debug(2, "Connection %d: player: stop the output backend.", conn->connection_number);
     config.output->stop();
   }
@@ -3366,12 +2825,6 @@ void player_thread_cleanup_handler(void *arg) {
              conn->connection_number, elapsedHours, elapsedMin, elapsedSec);
   }
 
-#ifdef CONFIG_DACP_CLIENT
-  relinquish_dacp_server_information(
-      conn); // say it doesn't belong to this conversation thread any more...
-#else
-  mdns_dacp_monitor_set_id(NULL); // say we're not interested in following that DACP id any more
-#endif
 
   // four possibilities
   // 1 -- Classic Airplay -- "AirPlay 1"
@@ -3379,8 +2832,7 @@ void player_thread_cleanup_handler(void *arg) {
   // 3 -- AirPlay 2 in Buffered Audio Mode
   // 4 -- AirPlay 3 in Realtime Audio Mode.
 
-#ifdef CONFIG_AIRPLAY_2
-  if (conn->airplay_type == ap_2) {
+
     debug(2, "Cancelling AP2 timing, control and audio threads...");
     if (conn->airplay_stream_type == realtime_stream) {
       debug(2, "Connection %d: Delete Realtime Audio Stream thread", conn->connection_number);
@@ -3404,40 +2856,15 @@ void player_thread_cleanup_handler(void *arg) {
     debug(2, "Connection %d: Delete AirPlay 2 Control thread", conn->connection_number);
     pthread_cancel(conn->rtp_ap2_control_thread);
     pthread_join(conn->rtp_ap2_control_thread, NULL);
-  } else {
-    debug(2, "Cancelling AP1-compatible timing, control and audio threads...");
-#else
-  debug(2, "Cancelling AP1 timing, control and audio threads...");
-#endif
-    debug(3, "Cancel timing thread.");
-    pthread_cancel(conn->rtp_timing_thread);
-    debug(3, "Join timing thread.");
-    pthread_join(conn->rtp_timing_thread, NULL);
-    debug(3, "Timing thread terminated.");
-    debug(3, "Cancel control thread.");
-    pthread_cancel(conn->rtp_control_thread);
-    debug(3, "Join control thread.");
-    pthread_join(conn->rtp_control_thread, NULL);
-    debug(3, "Control thread terminated.");
-    debug(3, "Cancel audio thread.");
-    pthread_cancel(conn->rtp_audio_thread);
-    debug(3, "Join audio thread.");
-    pthread_join(conn->rtp_audio_thread, NULL);
-    debug(3, "Audio thread terminated.");
 
-#ifdef CONFIG_AIRPLAY_2
-  }
   ptp_send_control_message_string("E");
-#endif
 
-#ifdef CONFIG_FFMPEG
   if (config.decoder_in_use == 1 << decoder_ffmpeg_alac) {
     // debug(1, "FFmpeg clearup");
     clear_software_resampler(conn);
     clear_decoding_chain(conn);
     // debug(1, "FFmpeg clearup done");
   }
-#endif
 
   if (conn->outbuf) {
     free(conn->outbuf);
@@ -3449,19 +2876,6 @@ void player_thread_cleanup_handler(void *arg) {
   }
 
   free_audio_buffers(conn);
-  if (conn->stream.type == ast_apple_lossless) {
-#ifdef CONFIG_APPLE_ALAC
-    if (config.decoder_in_use == 1 << decoder_apple_alac) {
-      apple_alac_terminate();
-    }
-#endif
-
-#ifdef CONFIG_HAMMERTON
-    if (config.decoder_in_use == 1 << decoder_hammerton) {
-      alac_free(conn->decoder_info);
-    }
-#endif
-  }
 
   conn->rtp_running = 0;
 
@@ -3475,14 +2889,7 @@ void *player_thread_func(void *arg) {
   // config.output->prepare(); // give the backend its first chance to prepare itself, knowing it
   // has access to the output device (i.e. knowing that it should not be in use by another program
   // at this time).
-#ifdef CONFIG_METADATA
-  uint64_t time_of_last_metadata_progress_update =
-      0; // the assignment is to stop a compiler warning...
-#endif
 
-#ifdef CONFIG_CONVOLUTION
-  double highest_convolver_output_db = 0.0;
-#endif
 
   uint64_t previous_frames_played = 0; // initialised to avoid a "possibly uninitialised" warning
   uint64_t previous_raw_measurement_time =
@@ -3507,7 +2914,6 @@ void *player_thread_func(void *arg) {
   conn->fix_volume = 0x10000;
   conn->frames_per_packet = 352; // for ALAC -- will be changed if necessary
 
-#ifdef CONFIG_AIRPLAY_2
   conn->ap2_rate = 0;
   conn->ap2_play_enabled = 0;
 
@@ -3516,7 +2922,6 @@ void *player_thread_func(void *arg) {
     conn->ap2_deferred_flush_requests[f].inUse = 0;
     conn->ap2_deferred_flush_requests[f].active = 0;
   }
-#endif
 
   const unsigned int sync_history_length = 40;
   int64_t sync_samples[sync_history_length];
@@ -3527,41 +2932,10 @@ void *player_thread_func(void *arg) {
   conn->sync_samples_index = 0;
   conn->sync_samples_count = 0;
 
-  if (conn->stream.type == ast_apple_lossless) {
-#ifdef CONFIG_HAMMERTON
-    if (config.decoder_in_use == 1 << decoder_hammerton) {
-      init_alac_decoder((int32_t *)&conn->stream.fmtp,
-                        conn); // this sets up incoming rate, bit depth, channels.
-                               // No pthread cancellation point in here
-#ifdef CONFIG_METADATA
-      send_ssnc_metadata('sdsc', "ALAC/44100/S16_LE/2", strlen("ALAC/44100/S16_LE/2"), 1);
-#endif
-    }
-#endif
-#ifdef CONFIG_APPLE_ALAC
-    if (config.decoder_in_use == 1 << decoder_apple_alac) {
-      apple_alac_init(conn->stream.fmtp); // no pthread cancellation point in here
-#ifdef CONFIG_METADATA
-      send_ssnc_metadata('sdsc', "ALAC/44100/S16_LE/2", strlen("ALAC/44100/S16_LE/2"), 1);
-#endif
-    }
-#endif
-  }
   // This must be after init_alac_decoder
   init_buffer(conn); // will need a corresponding deallocation. No cancellation points in here
   ab_resync(conn);
 
-  if (conn->stream.encrypted) {
-#ifdef CONFIG_MBEDTLS
-    memset(&conn->dctx, 0, sizeof(mbedtls_aes_context));
-    mbedtls_aes_setkey_dec(&conn->dctx, conn->stream.aeskey, 128);
-#endif
-
-#ifdef CONFIG_POLARSSL
-    memset(&conn->dctx, 0, sizeof(aes_context));
-    aes_setkey_dec(&conn->dctx, conn->stream.aeskey, 128);
-#endif
-  }
 
   conn->session_corrections = 0;
   // conn->connection_state_to_output = get_requested_connection_state_to_output();
@@ -3576,9 +2950,7 @@ void *player_thread_func(void *arg) {
   int32_t minimum_buffer_occupancy = INT32_MAX;
   int32_t maximum_buffer_occupancy = INT32_MIN;
 
-#ifdef CONFIG_AIRPLAY_2
   conn->ap2_audio_buffer_minimum_size = -1;
-#endif
 
   conn->at_least_one_frame_seen_this_session = 0;
   conn->raw_frame_rate = 0.0;
@@ -3611,10 +2983,8 @@ void *player_thread_func(void *arg) {
   int inbuflength;
 
   // remember, the output device may never have been initialised prior to this call
-#ifdef CONFIG_FFMPEG
   if (avflush(conn) > 1)
     debug(1, "ffmpeg flush at start!");
-#endif
 
   // leave this relic -- jack and soundio still use it
   if (config.output->start != NULL)
@@ -3636,8 +3006,7 @@ void *player_thread_func(void *arg) {
                       // values. Set to 0 the first time out.
 
   // decide on what statistics profile to use, if requested
-#ifdef CONFIG_AIRPLAY_2
-  if (conn->airplay_type == ap_2) {
+
     if (conn->airplay_stream_type == realtime_stream) {
       if (config.output->delay) {
         // if (config.no_sync == 0)
@@ -3657,36 +3026,9 @@ void *player_thread_func(void *arg) {
         statistics_print_profile = ap2_buffered_nodelay_stream_statistics_print_profile;
       }
     }
-  } else {
-#endif
-    if (config.output->delay) {
-      // if (config.no_sync == 0)
-      statistics_print_profile = ap1_synced_statistics_print_profile;
-      // else
-      //   statistics_print_profile = ap1_nosync_statistics_print_profile;
-    } else {
-      statistics_print_profile = ap1_nodelay_statistics_print_profile;
-    }
-// airplay 1 stuff here
-#ifdef CONFIG_AIRPLAY_2
-  }
-#endif
 
-#ifdef CONFIG_AIRPLAY_2
-  if (conn->timing_type == ts_ntp) {
-#endif
 
-    // create and start the timing, control and audio receiver threads
-    named_pthread_create(&conn->rtp_audio_thread, NULL, &rtp_audio_receiver, (void *)conn,
-                         "ap1_audio_%d", conn->connection_number);
-    named_pthread_create(&conn->rtp_control_thread, NULL, &rtp_control_receiver, (void *)conn,
-                         "ap1_control_%d", conn->connection_number);
-    named_pthread_create(&conn->rtp_timing_thread, NULL, &rtp_timing_receiver, (void *)conn,
-                         "ap1_tim_rcv_%d", conn->connection_number);
 
-#ifdef CONFIG_AIRPLAY_2
-  }
-#endif
 
   pthread_cleanup_push(player_thread_cleanup_handler, arg); // undo what's been done so far
 
@@ -3694,11 +3036,6 @@ void *player_thread_func(void *arg) {
   int oldState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
 
-#ifdef CONFIG_DACP_CLIENT
-  set_dacp_server_information(conn);
-#else
-  mdns_dacp_monitor_set_id(conn->dacp_id);
-#endif
 
   pthread_setcancelstate(oldState, NULL);
 
@@ -3711,9 +3048,7 @@ void *player_thread_func(void *arg) {
 
   debug(2, "Play begin");
 
-#ifdef CONFIG_FFMPEG
   int64_t frames_previously_retained_in_the_resampler = 0;
-#endif
 
   // uint32_t flush_to_frame;
   // int enable_flush_to_frame = 0;
@@ -3723,9 +3058,6 @@ void *player_thread_func(void *arg) {
   // debug(1, "player begin processing packets");
   while (1) {
 
-#ifdef CONFIG_METADATA
-    int this_is_the_first_frame = 0; // will be set if it is
-#endif
 
     pthread_testcancel(); // allow a pthread_cancel request to take effect.
 
@@ -4101,22 +3433,18 @@ void *player_thread_func(void *arg) {
                     statistics_item("Too Late", "%*" PRIu64 "", 8, conn->too_late_packets);
                     statistics_item("Resend Reqs", "%*" PRIu64 "", 11, conn->resend_requests);
                     if (minimum_dac_queue_size == UINT64_MAX) {
-                      statistics_item("Min DAC Queue", "          n/a"); // same size as below, right justified                 
+                      statistics_item("Min DAC Queue", "          n/a"); // same size as below, right justified
                     } else {
                       statistics_item("Min DAC Queue", "%*" PRIu64 "", 13, minimum_dac_queue_size);
                     }
                     statistics_item("Min Buffers", "%*" PRIu32 "", 11, minimum_buffer_occupancy);
                     statistics_item("Max Buffers", "%*" PRIu32 "", 11, maximum_buffer_occupancy);
-#ifdef CONFIG_AIRPLAY_2
                     if (conn->ap2_audio_buffer_minimum_size > 10 * 1024)
                       statistics_item("Min Buffer Size", "%*" PRIu32 "k", 14,
                                       conn->ap2_audio_buffer_minimum_size / 1024);
                     else
                       statistics_item("Min Buffer Size", "%*" PRIu32 "", 15,
                                       conn->ap2_audio_buffer_minimum_size);
-#else
-                    statistics_item("N/A", "   "); // dummy -- should never be visible
-#endif
                     statistics_item("Nominal FPS", "%*.2f", 11, conn->remote_frame_rate);
                     statistics_item("Received FPS", "%*.2f", 12, conn->input_frame_rate);
                     // only make the next two columns appear if we are getting stats information
@@ -4148,9 +3476,7 @@ void *player_thread_func(void *arg) {
               minimum_dac_queue_size = UINT64_MAX;  // hack reset
               maximum_buffer_occupancy = INT32_MIN; // can't be less than this
               minimum_buffer_occupancy = INT32_MAX; // can't be more than this
-#ifdef CONFIG_AIRPLAY_2
               conn->ap2_audio_buffer_minimum_size = -1;
-#endif
               at_least_one_frame_seen = 0;
               frames_since_last_stats_logged = 0;
             }
@@ -4158,9 +3484,6 @@ void *player_thread_func(void *arg) {
             if (conn->at_least_one_frame_seen_this_session == 0) {
               conn->at_least_one_frame_seen_this_session = 1;
 
-#ifdef CONFIG_METADATA
-              this_is_the_first_frame = 1;
-#endif
 
               char short_description[256];
               snprintf(short_description, sizeof(short_description), "%u/%s/%u",
@@ -4169,21 +3492,8 @@ void *player_thread_func(void *arg) {
                            FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration)),
                        CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration));
               // since this is the first frame of audio, inform the user if requested...
-#ifdef CONFIG_AIRPLAY_2
               if (conn->airplay_stream_type == realtime_stream) {
-                if (conn->airplay_type == ap_1) {
-#ifdef CONFIG_METADATA
-                  send_ssnc_stream_description("Classic", get_ssrc_name(conn->incoming_ssrc));
-#endif
-                  if (config.statistics_requested)
-                    inform("Connection %d: Classic AirPlay (\"AirPlay 1\") playback. "
-                           "Input format: %s. Output format: %s.",
-                           conn->connection_number, get_ssrc_name(conn->incoming_ssrc),
-                           short_description);
-                } else {
-#ifdef CONFIG_METADATA
-                  send_ssnc_stream_description("Realtime", get_ssrc_name(conn->incoming_ssrc));
-#endif
+
                   if (config.statistics_requested) {
                     if (conn->ap2_client_name == NULL)
                       inform("Connection %d: AirPlay 2 Realtime playback. "
@@ -4195,11 +3505,8 @@ void *player_thread_func(void *arg) {
                              conn->connection_number, conn->ap2_client_name,
                              get_ssrc_name(conn->incoming_ssrc), short_description);
                   }
-                }
+
               } else {
-#ifdef CONFIG_METADATA
-                send_ssnc_stream_description("Buffered", get_ssrc_name(conn->incoming_ssrc));
-#endif
 
                 if (config.statistics_requested) {
 
@@ -4215,19 +3522,7 @@ void *player_thread_func(void *arg) {
                            get_ssrc_name(conn->incoming_ssrc), short_description);
                 }
               }
-#else
-#ifdef CONFIG_METADATA
-              send_ssnc_stream_description("AirPlay", "ALAC/44100/S16/2");
-#endif
-              if (config.statistics_requested)
-                inform("Connection %d: Classic AirPlay (\"AirPlay 1\") playback. "
-                       "Input format: ALAC/44100/S16/2. Output format: %s.",
-                       conn->connection_number, short_description);
-#endif
 
-#ifdef CONFIG_METADATA
-              send_ssnc_metadata('odsc', short_description, strlen(short_description), 1);
-#endif
             }
 
             // here, we want to check (a) if we are meant to do synchronisation,
@@ -4299,7 +3594,6 @@ void *player_thread_func(void *arg) {
 
               uint64_t output_buffer_delay_time = current_delay;
 
-#ifdef CONFIG_FFMPEG
               // the current delay should also include the frames that were kept in swr
               // before the current block was requested
               output_buffer_delay_time =
@@ -4309,7 +3603,6 @@ void *player_thread_func(void *arg) {
               // now we'll update frames_previously_retained_in_the_resampler
               // to the figure after the current block
               frames_previously_retained_in_the_resampler = conn->frames_retained_in_the_resampler;
-#endif
 
               output_buffer_delay_time =
                   output_buffer_delay_time *
@@ -4607,174 +3900,9 @@ void *player_thread_func(void *arg) {
 
                 // Apply DSP here
 
-                loudness_update(conn);
 
-                if (conn->do_loudness
-#ifdef CONFIG_CONVOLUTION
-                    || config.convolution_enabled
-#endif
-                ) {
 
-                  float (*fbufs)[inframe->length] = malloc(conn->input_num_channels * sizeof(*fbufs));
-                  // debug(1, "size of array allocated is %d bytes.", conn->input_num_channels *
-                  // sizeof(*fbufs));
-                  int32_t *tbuf32 = conn->tbuf;
-
-                  // Deinterleave, and convert to float
-                  unsigned int i, j;
-                  for (i = 0; i < inframe->length; i++) {
-                    for (j = 0; j < conn->input_num_channels; j++) {
-                      fbufs[j][i] = tbuf32[conn->input_num_channels * i + j];
-                    }
-                  }
-
-#ifdef CONFIG_CONVOLUTION
-                  // Apply convolution
-                  // First, have we got the right convolution setup?
-
-                  static int convolver_error_notified = 0;
-                  static int convolver_is_valid = 0;
-                  // static size_t current_convolver_block_size = 0;
-                  static unsigned int current_convolver_rate = 0;
-                  static unsigned int current_convolver_channels = 0;
-                  static double current_convolver_maximum_length_in_seconds = 0;
-
-                  if (config.convolution_enabled) {
-                    if (
-                        // if any of these are true, we need to create a new convolver                        
-                        (current_convolver_rate != RATE_FROM_ENCODED_FORMAT(config.current_output_configuration)) ||
-                        (current_convolver_channels != CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration)) ||
-                        (current_convolver_maximum_length_in_seconds !=
-                         config.convolution_max_length_in_seconds) ||
-                        (config.convolution_ir_files_updated == 1)) {
-
-                      // look for a convolution ir file with a matching rate and channel count
-
-                      convolver_is_valid = 0; // declare any current convolver as invalid
-                      current_convolver_rate = RATE_FROM_ENCODED_FORMAT(config.current_output_configuration);
-                      current_convolver_channels = CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration);
-                      current_convolver_maximum_length_in_seconds =
-                          config.convolution_max_length_in_seconds;
-                      config.convolution_ir_files_updated = 0;
-                      debug(3, "looking for a %u/%u finite impulse response file.", current_convolver_rate,
-                            current_convolver_channels);
-                      char *convolver_file_found = NULL;
-                      unsigned int ir = 0;
-                      while ((ir < config.convolution_ir_file_count) &&
-                             (convolver_file_found == NULL)) {
-                        if ((config.convolution_ir_files[ir].samplerate ==
-                             current_convolver_rate) &&
-                            (config.convolution_ir_files[ir].channels ==
-                             current_convolver_channels)) {
-                          convolver_file_found = config.convolution_ir_files[ir].filename;
-                        } else {
-                          ir++;
-                        }
-                      }
-                      // if no luck, try for a single-channel IR file
-                      if (convolver_file_found == NULL) {
-                        ir = 0;
-                        debug(3, "looking for a %u/1 finite impulse response file.", current_convolver_rate);
-                        while ((ir < config.convolution_ir_file_count) &&
-                               (convolver_file_found == NULL)) {
-                          if ((config.convolution_ir_files[ir].samplerate ==
-                               current_convolver_rate) &&
-                              (config.convolution_ir_files[ir].channels == 1)) {
-                            convolver_file_found = config.convolution_ir_files[ir].filename;
-                          } else {
-                            ir++;
-                          }
-                        }
-                        if (convolver_file_found != NULL) {
-                          debug(1, "The %u/1 finite impulse response file \"%s\" will be used for convolution.", current_convolver_rate,
-                            convolver_file_found);
-                        }
-                      } else {
-                        debug(1, "The %u/%u finite impulse response file \"%s\" will be used for convolution.", current_convolver_rate,
-                            current_convolver_channels, convolver_file_found);
-                      }
-                      if (convolver_file_found != NULL) {
-                        // we have an apparently suitable convolution ir file, so lets initialise
-                        // a convolver
-                        convolver_is_valid = convolver_init(
-                            convolver_file_found, current_convolver_channels,
-                            config.convolution_max_length_in_seconds, 1024); // power of 2 suggested for the block length
-                        convolver_wait_for_all();
-                        if ((convolver_is_valid == 0) && (convolver_error_notified == 0)) {
-                          debug(1, "can not initialise a %u/%u convolver from the \"%s\" finite impulse response file.", current_convolver_rate,
-                                current_convolver_channels, convolver_file_found);
-                          convolver_error_notified = 1;
-                        }
-                      } else if (convolver_error_notified == 0) {
-                        debug(1, "Convolution is disabled because a suitable %u/%u or %u/1 finite impulse response file can not be found.", current_convolver_rate, current_convolver_channels, current_convolver_rate);             
-                        convolver_error_notified = 1;
-                      }
-
-                    }
-                    if (convolver_is_valid != 0) {
-                      for (j = 0; j < current_convolver_channels; j++) {
-                        convolver_process(j, fbufs[j], inframe->length);
-                      }
-                      convolver_wait_for_all();
-                      convolver_error_notified = 0;
-                    }
-
-                    // apply convolution gain even if no convolution is done...
-                    float gain = pow(10.0, config.convolution_gain / 20.0);
-                    for (i = 0; i < inframe->length; ++i) {
-                      for (j = 0; j < current_convolver_channels; j++) {
-                        float output_level_db = 0.0;
-                        if (fbufs[j][i] < 0.0)
-                          output_level_db = 20 * log10(fbufs[j][i] / (float)INT32_MIN * 1.0);
-                        else
-                          output_level_db = 20 * log10(fbufs[j][i] / (float)INT32_MAX);
-                        if (output_level_db > highest_convolver_output_db) {
-                          highest_convolver_output_db = output_level_db;
-                          if ((highest_convolver_output_db + config.convolution_gain) > 0.0)
-                            warn("clipping %.1f dB with convolution gain set to %.1f dB!",
-                                 highest_convolver_output_db + config.convolution_gain,
-                                 config.convolution_gain);
-                        }
-                        fbufs[j][i] *= gain;
-                      }
-                    }
-                  }
-#endif
-                  if (conn->do_loudness) {
-                    loudness_process_blocks((float *)fbufs, inframe->length,
-                                            CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration),
-                                            (float)conn->fix_volume / 65536);
-                  }
-
-                  // Interleave and convert back to int32_t
-                  for (i = 0; i < inframe->length; i++) {
-                    for (j = 0; j < CHANNELS_FROM_ENCODED_FORMAT(config.current_output_configuration); j++) {
-                      tbuf32[conn->input_num_channels * i + j] = fbufs[j][i];
-                    }
-                  }
-
-                  if (fbufs != NULL) {
-                    free(fbufs);
-                    fbufs = NULL;
-                  }
-                }
                 // }
-#ifdef CONFIG_SOXR
-                double t = config.audio_backend_buffer_interpolation_threshold_in_seconds *
-                           RATE_FROM_ENCODED_FORMAT(config.current_output_configuration);
-
-                // figure out if we're going for soxr or something else
-
-                if ((current_delay < t) || // delay is too small we definitely won't do soxr
-                    (config.packet_stuffing == ST_basic) ||
-                    (config.packet_stuffing == ST_vernier) ||
-                    ((config.packet_stuffing == ST_auto) &&
-                     ((config.soxr_delay_index == 0) || // soxr processing time unknown
-                      (config.soxr_delay_index > config.soxr_delay_threshold) // too slow
-                      ))) {
-                  debug(3, "current_delay: %" PRIu64 ", dac buffer queue minimum length: %f.",
-                        current_delay, t);
-#endif
                   if (config.packet_stuffing == ST_basic)
                     play_samples = stuff_buffer_basic_32(
                         (int32_t *)conn->tbuf, inbuflength,
@@ -4786,15 +3914,6 @@ void *player_thread_func(void *arg) {
                         FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration),
                         conn->outbuf, amount_to_stuff, conn->enable_dither, conn);
 
-#ifdef CONFIG_SOXR
-                } else { // soxr requested or auto requested with the index less or equal to the
-                         // threshold
-                  play_samples = stuff_buffer_soxr_32(
-                      (int32_t *)conn->tbuf, inbuflength,
-                      FORMAT_FROM_ENCODED_FORMAT(config.current_output_configuration), conn->outbuf,
-                      amount_to_stuff, conn->enable_dither, conn);
-                }
-#endif
 
                 if (conn->outbuf == NULL)
                   debug(1, "NULL outbuf to play -- skipping it.");
@@ -4851,33 +3970,6 @@ void *player_thread_func(void *arg) {
                       }
                     }
 
-#ifdef CONFIG_METADATA
-                    // debug(1,"config.metadata_progress_interval is %f.",
-                    // config.metadata_progress_interval);
-                    if (config.metadata_progress_interval != 0.0) {
-                      char hb[128];
-                      if (this_is_the_first_frame != 0) {
-                        memset(hb, 0, 128);
-                        snprintf(hb, 127, "%" PRIu32 "/%" PRId64 "", inframe->timestamp,
-                                 should_be_time);
-                        send_ssnc_metadata('phb0', hb, strlen(hb), 1);
-                        send_ssnc_metadata('phbt', hb, strlen(hb), 1);
-                        time_of_last_metadata_progress_update = get_absolute_time_in_ns();
-                      } else {
-                        uint64_t mx = 1000000000;
-                        uint64_t iv = config.metadata_progress_interval * mx;
-                        iv = iv + time_of_last_metadata_progress_update;
-                        int64_t delta = iv - get_absolute_time_in_ns();
-                        if (delta <= 0) {
-                          memset(hb, 0, 128);
-                          snprintf(hb, 127, "%" PRIu32 "/%" PRId64 "", inframe->timestamp,
-                                   should_be_time);
-                          send_ssnc_metadata('phbt', hb, strlen(hb), 1);
-                          time_of_last_metadata_progress_update = get_absolute_time_in_ns();
-                        }
-                      }
-                    }
-#endif
                   }
                 }
               }
@@ -4910,33 +4002,6 @@ void *player_thread_func(void *arg) {
                 config.output->play(conn->outbuf, play_samples, play_samples_are_timed,
                                     inframe->timestamp, should_be_time);
                 frames_played += play_samples;
-#ifdef CONFIG_METADATA
-                // debug(1,"config.metadata_progress_interval is %f.",
-                // config.metadata_progress_interval);
-                if (config.metadata_progress_interval != 0.0) {
-                  char hb[128];
-                  if (this_is_the_first_frame != 0) {
-                    memset(hb, 0, 128);
-                    snprintf(hb, 127, "%" PRIu32 "/%" PRId64 "", inframe->timestamp,
-                             should_be_time);
-                    send_ssnc_metadata('phb0', hb, strlen(hb), 1);
-                    send_ssnc_metadata('phbt', hb, strlen(hb), 1);
-                    time_of_last_metadata_progress_update = get_absolute_time_in_ns();
-                  } else {
-                    uint64_t mx = 1000000000;
-                    uint64_t iv = config.metadata_progress_interval * mx;
-                    iv = iv + time_of_last_metadata_progress_update;
-                    int64_t delta = iv - get_absolute_time_in_ns();
-                    if (delta <= 0) {
-                      memset(hb, 0, 128);
-                      snprintf(hb, 127, "%" PRIu32 "/%" PRId64 "", inframe->timestamp,
-                               should_be_time);
-                      send_ssnc_metadata('phbt', hb, strlen(hb), 1);
-                      time_of_last_metadata_progress_update = get_absolute_time_in_ns();
-                    }
-                  }
-                }
-#endif
               }
             }
 
@@ -4963,12 +4028,10 @@ void *player_thread_func(void *arg) {
           }
         }
         // free buffers and mark the frame as finished
-#ifdef CONFIG_FFMPEG
         if (inframe->avframe != NULL) {
           av_frame_free(&inframe->avframe);
           inframe->avframe = NULL;
         }
-#endif
         inframe->timestamp = 0;
         inframe->sequence_number = 0;
         inframe->resend_time = 0;
@@ -4993,33 +4056,12 @@ void *player_thread_func(void *arg) {
 static void player_send_volume_metadata(uint8_t vol_mode_both, double airplay_volume,
                                         double scaled_attenuation, int32_t max_db, int32_t min_db,
                                         int32_t hw_max_db) {
-#ifdef CONFIG_METADATA
-  // here, send the 'pvol' metadata message when the airplay volume information
-  // is being used by shairport sync to control the output volume
-  char dv[128];
-  memset(dv, 0, 128);
-  if (config.ignore_volume_control == 0) {
-    if (vol_mode_both == 1) {
-      // normalise the maximum output to the hardware device's max output
-      snprintf(dv, 127, "%.2f,%.2f,%.2f,%.2f", airplay_volume,
-               (scaled_attenuation - max_db + hw_max_db) / 100.0,
-               (min_db - max_db + hw_max_db) / 100.0, (max_db - max_db + hw_max_db) / 100.0);
-    } else {
-      snprintf(dv, 127, "%.2f,%.2f,%.2f,%.2f", airplay_volume, scaled_attenuation / 100.0,
-               min_db / 100.0, max_db / 100.0);
-    }
-  } else {
-    snprintf(dv, 127, "%.2f,%.2f,%.2f,%.2f", airplay_volume, 0.0, 0.0, 0.0);
-  }
-  send_ssnc_metadata('pvol', dv, strlen(dv), 1);
-#else
   (void)vol_mode_both;
   (void)airplay_volume;
   (void)scaled_attenuation;
   (void)max_db;
   (void)min_db;
   (void)hw_max_db;
-#endif
 }
 
 void player_volume_without_notification(double airplay_volume, rtsp_conn_info *conn) {
@@ -5262,18 +4304,6 @@ void do_flush(uint32_t timestamp, rtsp_conn_info *conn) {
 void player_flush(uint32_t timestamp, rtsp_conn_info *conn) {
   debug(3, "player_flush");
   do_flush(timestamp, conn);
-#ifdef CONFIG_CONVOLUTION
-  convolver_clear_state();
-#endif
-#ifdef CONFIG_METADATA
-  // only send a flush metadata message if the first packet has been seen -- it's a bogus message
-  // otherwise
-  if (conn->first_packet_timestamp) {
-    char numbuf[32];
-    snprintf(numbuf, sizeof(numbuf), "%u", timestamp);
-    send_ssnc_metadata('pfls', numbuf, strlen(numbuf), 1); // contains cancellation points
-  }
-#endif
 }
 
 int player_play(rtsp_conn_info *conn) {
@@ -5302,9 +4332,6 @@ int player_play(rtsp_conn_info *conn) {
     debug(1, "Connection %d: player thread already exists.", conn->connection_number);
   }
   pthread_cleanup_pop(1); // release the player_create_delete_mutex
-#ifdef CONFIG_METADATA
-  send_ssnc_metadata('pbeg', NULL, 0, 1); // contains cancellation points
-#endif
   conn->is_playing = 1;
   return 0;
 }
@@ -5330,9 +4357,6 @@ int player_stop(rtsp_conn_info *conn) {
     }
     free(pt);
     // reset_anchor_info(conn); // say the clock is no longer valid
-#ifdef CONFIG_CONVOLUTION
-    convolver_clear_state();
-#endif
     response = 0; // deleted
   } else {
     debug(2, "Connection %d: no player thread.", conn->connection_number);
@@ -5347,9 +4371,6 @@ int player_stop(rtsp_conn_info *conn) {
     ptp_send_control_message_string("E"); // signify play is "E"nding
 #endif
 */
-#ifdef CONFIG_METADATA
-    send_ssnc_metadata('pend', NULL, 0, 1); // contains cancellation points
-#endif
     command_stop();
   }
   return response;

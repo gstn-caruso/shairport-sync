@@ -34,9 +34,6 @@
 #include <sodium.h>
 #include <stdint.h>
 
-#ifdef CONFIG_CONVOLUTION
-#include "FFTConvolver/convolver.h"
-#endif
 
 void addADTStoPacket(uint8_t *packet, int packetLen, int rate, int channel_configuration) {
   // https://stackoverflow.com/questions/18862715/how-to-generate-the-aac-adts-elementary-stream-with-android-mediacodec
@@ -228,9 +225,6 @@ void *rtp_buffered_audio_processor(void *arg) {
     if ((play_enabled != 0) && (conn->ap2_play_enabled == 0)) {
       debug(2, "Play stopped.");
       packets_played_in_this_sequence = 0; // not all blocks read are played...
-#ifdef CONFIG_CONVOLUTION
-      convolver_clear_state();
-#endif
       reset_buffer(conn); // stop play ASAP
     }
 

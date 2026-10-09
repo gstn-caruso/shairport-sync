@@ -234,7 +234,6 @@ is_initialized(void);
 /* -------------------- GCRYPT AND OPENSSL COMPABILITY --------------------- */
 /*                   partly borrowed from ffmpeg (rtmpdh.c)                  */
 
-#if CONFIG_GCRYPT
 #include <gcrypt.h>
 #define SHA512_DIGEST_LENGTH 64
 #define bnum_new(bn)                                            \
@@ -267,66 +266,10 @@ __attribute__((unused)) static void bnum_modadd(bnum bn, bnum a, bnum b, bnum m)
 {
   gcry_mpi_addm(bn, a, b, m);
 }
-#elif CONFIG_OPENSSL
-#include <openssl/crypto.h>
-#include <openssl/bn.h>
-#include <openssl/rand.h>
-#include <openssl/sha.h>
-#include <openssl/evp.h>
-#define bnum_new(bn)                  bn = BN_new()
-#define bnum_free(bn)                 BN_free(bn)
-#define bnum_num_bytes(bn)            BN_num_bytes(bn)
-#define bnum_is_zero(bn)              BN_is_zero(bn)
-#define bnum_bn2bin(bn, buf, len)     BN_bn2bin(bn, buf)
-#define bnum_bin2bn(bn, buf, len)     bn = BN_bin2bn(buf, len, 0)
-#define bnum_hex2bn(bn, buf)          BN_hex2bn(&bn, buf)
-#define bnum_random(bn, num_bits)     BN_rand(bn, num_bits, 0, 0)
-#define bnum_add(bn, a, b)            BN_add(bn, a, b)
-#define bnum_sub(bn, a, b)            BN_sub(bn, a, b)
-typedef BIGNUM* bnum;
-__attribute__((unused)) static void bnum_mul(bnum bn, bnum a, bnum b)
-{
-  // No error handling
-  BN_CTX *ctx = BN_CTX_new();
-  BN_mul(bn, a, b, ctx);
-  BN_CTX_free(ctx);
-}
-__attribute__((unused)) static void bnum_mod(bnum bn, bnum a, bnum b)
-{
-  // No error handling
-  BN_CTX *ctx = BN_CTX_new();
-  BN_mod(bn, a, b, ctx);
-  BN_CTX_free(ctx);
-}
-__attribute__((unused)) static void bnum_modexp(bnum bn, bnum y, bnum q, bnum p)
-{
-  // No error handling
-  BN_CTX *ctx = BN_CTX_new();
-  BN_mod_exp(bn, y, q, p, ctx);
-  BN_CTX_free(ctx);
-}
-__attribute__((unused)) static void bnum_modadd(bnum bn, bnum a, bnum b, bnum m)
-{
-  // No error handling
-  BN_CTX *ctx = BN_CTX_new();
-  BN_mod_add(bn, a, b, m, ctx);
-  BN_CTX_free(ctx);
-}
-#endif
 
 
 /* -------------------------- SHARED HASHING HELPERS ------------------------ */
 
-#ifdef CONFIG_OPENSSL
-enum hash_alg
-{
-  HASH_SHA1,
-  HASH_SHA224,
-  HASH_SHA256,
-  HASH_SHA384,
-  HASH_SHA512,
-};
-#elif CONFIG_GCRYPT
 enum hash_alg
 {
   HASH_SHA1 = GCRY_MD_SHA1,
@@ -335,18 +278,8 @@ enum hash_alg
   HASH_SHA384 = GCRY_MD_SHA384,
   HASH_SHA512 = GCRY_MD_SHA512,
 };
-#endif
 
-#if CONFIG_OPENSSL
-typedef union
-{
-  SHA_CTX    sha;
-  SHA256_CTX sha256;
-  SHA512_CTX sha512;
-} HashCTX;
-#elif CONFIG_GCRYPT
 typedef gcry_md_hd_t HashCTX;
-#endif
 
 int
 hash_init(enum hash_alg alg, HashCTX *c);

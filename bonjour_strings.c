@@ -43,7 +43,6 @@ char ap1ModelString[128];
 char ap1SrcversString[128];
 char pkString[128];
 
-#ifdef CONFIG_AIRPLAY_2
 char deviceIdString[128];
 char featuresString[128];
 char statusflagsString[128];
@@ -55,13 +54,8 @@ char modelString[128];
 char srcversString[128];
 char osversString[128];
 char ap1OsversString[128];
-#endif
 
-#ifdef CONFIG_AIRPLAY_2
 void build_bonjour_strings(rtsp_conn_info *conn) {
-#else
-void build_bonjour_strings(__attribute((unused)) rtsp_conn_info *conn) {
-#endif
 
   // Watch out here, the strings that form each entry
   // need to be permanent, because we don't know
@@ -75,13 +69,12 @@ void build_bonjour_strings(__attribute((unused)) rtsp_conn_info *conn) {
   // the txt_records entries are for the _raop._tcp characteristics
   // the secondary_txt_records are for the _airplay._tcp items.
 
-#ifdef CONFIG_AIRPLAY_2
   uint64_t features_hi = config.airplay_features;
   features_hi = (features_hi >> 32) & 0xffffffff;
   uint64_t features_lo = config.airplay_features;
   features_lo = features_lo & 0xffffffff;
 
-  if (config.service_type == APST_airplay2) {
+
     txt_records[entry_number++] = "cn=0,1";
     txt_records[entry_number++] = "da=true";
     txt_records[entry_number++] = "et=0,1";
@@ -96,12 +89,6 @@ void build_bonjour_strings(__attribute((unused)) rtsp_conn_info *conn) {
         bnprintf(fwString, sizeof(fwString), "fv=%s", config.firmware_version);
     txt_records[entry_number++] = bnprintf(ap1StatusFlagsString, sizeof(ap1StatusFlagsString),
                                            "sf=0x%" PRIX32, config.airplay_statusflags);
-#ifdef CONFIG_METADATA
-    if (config.get_coverart == 0)
-      txt_records[entry_number++] = "md=0,2";
-    else
-      txt_records[entry_number++] = "md=0,1,2";
-#endif
     txt_records[entry_number++] =
         bnprintf(ap1ModelString, sizeof(ap1ModelString), "am=%s", config.model);
     txt_records[entry_number++] = bnprintf(pkString, sizeof(pkString), "pk=%s", config.pk_string);
@@ -112,43 +99,8 @@ void build_bonjour_strings(__attribute((unused)) rtsp_conn_info *conn) {
     txt_records[entry_number++] =
         bnprintf(ap1OsversString, sizeof(ap1OsversString), "ov=%s", config.osvers);
     txt_records[entry_number++] = NULL;
-  } else {
-#endif
-    // here, just replicate what happens in mdns.h when using those #defines
-    txt_records[entry_number++] =
-        bnprintf(ap1StatusFlagsString, sizeof(ap1StatusFlagsString), "sf=0x4");
-    txt_records[entry_number++] =
-        bnprintf(fwString, sizeof(fwString), "fv=%s", config.firmware_version);
-    txt_records[entry_number++] =
-        bnprintf(ap1ModelString, sizeof(ap1ModelString), "am=%s", config.model);
-    txt_records[entry_number++] = bnprintf(ap1SrcversString, sizeof(ap1SrcversString), "vs=105.1");
-    txt_records[entry_number++] = "tp=TCP,UDP";
-    txt_records[entry_number++] = "vn=65537";
-#ifdef CONFIG_METADATA
-    if (config.get_coverart == 0)
-      txt_records[entry_number++] = "md=0,2";
-    else
-      txt_records[entry_number++] = "md=0,1,2";
-#endif
-    txt_records[entry_number++] = "ss=16";
-    txt_records[entry_number++] = "sr=44100";
-    txt_records[entry_number++] = "da=true";
-    txt_records[entry_number++] = "sv=false";
-    txt_records[entry_number++] = "et=0,1";
-    txt_records[entry_number++] = "ek=1";
-    txt_records[entry_number++] = "cn=0,1";
-    txt_records[entry_number++] = "ch=2";
-    txt_records[entry_number++] = "txtvers=1";
-    if (config.password == NULL)
-      txt_records[entry_number++] = "pw=false";
-    else
-      txt_records[entry_number++] = "pw=true";
-    txt_records[entry_number++] = NULL;
-#ifdef CONFIG_AIRPLAY_2
-  }
-#endif
 
-#ifdef CONFIG_AIRPLAY_2
+
   // make up a secondary set of text records
   entry_number = 0;
 
@@ -194,5 +146,4 @@ void build_bonjour_strings(__attribute((unused)) rtsp_conn_info *conn) {
   secondary_txt_records[entry_number++] = "vv=2";
   secondary_txt_records[entry_number++] = fwString; // already calculated
   secondary_txt_records[entry_number++] = NULL;
-#endif
 }

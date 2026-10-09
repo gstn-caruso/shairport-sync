@@ -33,9 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
-#ifdef COMPILE_FOR_FREEBSD
-#include <netinet/in.h>
-#endif
+#include <sys/stat.h>
 #include <netdb.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -176,6 +174,13 @@ int ptp_shm_interface_open() {
       int shared_memory_file_descriptor =
           shm_open(config.nqptp_shared_memory_interface_name, O_RDONLY, 0);
       if (shared_memory_file_descriptor >= 0) {
+        struct stat shared_memory_info;
+        if (fstat(shared_memory_file_descriptor, &shared_memory_info) != 0 ||
+            shared_memory_info.st_size < (off_t)sizeof(struct shm_structure)) {
+          close(shared_memory_file_descriptor);
+          errno = EINVAL;
+          return -1;
+        }
         mapped_addr =
             // needs to be PROT_READ | PROT_WRITE to allow the mapped memory to be writable for the
             // mutex to lock and unlock
@@ -192,6 +197,8 @@ int ptp_shm_interface_open() {
       }
     } else {
       debug(1, "No config.nqptp_shared_memory_interface_name");
+      errno = EINVAL;
+      response = -1;
     }
     if (response == 0)
       debug(3, "ptp_shm_interface_open -- success!");

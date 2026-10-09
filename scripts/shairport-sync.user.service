@@ -1,9 +1,11 @@
 [Unit]
-Description=Shairport Sync - AirPlay Audio Receiver
-After=sound.target
+Description=Shairport Sync AirPlay 2 receiver (PulseAudio)
+After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/shairport-sync --log-to-syslog
+ExecStart=/usr/local/bin/shairport-sync
+Restart=on-failure
+RestartSec=3
 
 [Install]
 WantedBy=default.target

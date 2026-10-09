@@ -55,80 +55,24 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 
-#ifdef COMPILE_FOR_LINUX
 #include <netpacket/packet.h>
-#endif
 
-#ifdef COMPILE_FOR_BSD
-#include <net/if_dl.h>
-#include <net/if_types.h>
-#include <netinet/in.h>
-#endif
 
-#ifdef COMPILE_FOR_OSX
-#include <CoreServices/CoreServices.h>
-#include <mach/mach.h>
-#include <mach/mach_time.h>
-#include <net/if_dl.h>
-#include <net/if_types.h>
-#include <netinet/in.h>
-#endif
 
-#ifdef CONFIG_CONVOLUTION
-#include <ctype.h>
-#include <sndfile.h>
-#endif
 
-#ifdef CONFIG_OPENSSL
 #include <openssl/aes.h> // needed for older AES stuff
 #include <openssl/bio.h> // needed for BIO_new_mem_buf
 #include <openssl/err.h> // needed for ERR_error_string, ERR_get_error
 #include <openssl/evp.h> // needed for EVP_PKEY_CTX_new, EVP_PKEY_sign_init, EVP_PKEY_sign
 #include <openssl/pem.h> // needed for PEM_read_bio_RSAPrivateKey, EVP_PKEY_CTX_set_rsa_padding
 #include <openssl/rsa.h> // needed for EVP_PKEY_CTX_set_rsa_padding
-#endif
 
-#ifdef CONFIG_POLARSSL
-#include "polarssl/ctr_drbg.h"
-#include "polarssl/entropy.h"
-#include <polarssl/base64.h>
-#include <polarssl/md.h>
-#include <polarssl/version.h>
-#include <polarssl/x509.h>
 
-#if POLARSSL_VERSION_NUMBER >= 0x01030000
-#include "polarssl/compat-1.2.h"
-#endif
-#endif
 
-#ifdef CONFIG_MBEDTLS
-#include "mbedtls/ctr_drbg.h"
-#include "mbedtls/entropy.h"
-#include <mbedtls/base64.h>
-#include <mbedtls/md.h>
-#include <mbedtls/version.h>
-#include <mbedtls/x509.h>
-
-#if MBEDTLS_VERSION_MAJOR == 3
-#define MBEDTLS_PRIVATE_V3_ONLY(_q) MBEDTLS_PRIVATE(_q)
-#else
-#define MBEDTLS_PRIVATE_V3_ONLY(_q) _q
-#endif
-#endif
-
-#ifdef CONFIG_LIBDAEMON
-#include <libdaemon/dlog.h>
-#else
 #include <syslog.h>
-#endif
 
-#ifdef CONFIG_ALSA
-void set_alsa_out_dev(char *);
-#endif
 
-#ifdef CONFIG_AIRPLAY_2
 #include "nqptp-shm-structures.h"
-#endif
 
 config_t config_file_stuff;
 uint64_t minimum_dac_queue_size;
@@ -616,113 +560,8 @@ char *base64_encode_so(const unsigned char *data, size_t input_length, char *enc
 // with thanks!
 //
 
-#ifdef CONFIG_MBEDTLS
-char *base64_enc(uint8_t *input, int length) {
-  char *buf = NULL;
-  size_t dlen = 0;
-  int rc = mbedtls_base64_encode(NULL, 0, &dlen, input, length);
-  if (rc && (rc != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL))
-    debug(1, "Error %d getting length of base64 encode.", rc);
-  else {
-    buf = (char *)malloc(dlen);
-    rc = mbedtls_base64_encode((unsigned char *)buf, dlen, &dlen, input, length);
-    if (rc != 0)
-      debug(1, "Error %d encoding base64.", rc);
-  }
-  return buf;
-}
 
-uint8_t *base64_dec(char *input, int *outlen) {
-  // slight problem here is that Apple cut the padding off their challenges. We must restore it
-  // before passing it in to the decoder, it seems
-  uint8_t *buf = NULL;
-  size_t dlen = 0;
-  int inbufsize = ((strlen(input) + 3) / 4) * 4; // this is the size of the input buffer we will
-                                                 // send to the decoder, but we need space for 3
-                                                 // extra "="s and a NULL
-  char *inbuf = malloc(inbufsize + 4);
-  if (inbuf == 0)
-    debug(1, "Can't malloc memory  for inbuf in base64_decode.");
-  else {
-    strcpy(inbuf, input);
-    strcat(inbuf, "===");
-    // debug(1,"base64_dec called with string \"%s\", length %d, filled string: \"%s\", length %d.",
-    //		input,strlen(input),inbuf,inbufsize);
-    int rc = mbedtls_base64_decode(NULL, 0, &dlen, (unsigned char *)inbuf, inbufsize);
-    if (rc && (rc != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL))
-      debug(1, "Error %d getting decode length, result is %ld.", rc, dlen);
-    else {
-      // debug(1,"Decode size is %d.",dlen);
-      buf = malloc(dlen);
-      if (buf == 0)
-        debug(1, "Can't allocate memory in base64_dec.");
-      else {
-        rc = mbedtls_base64_decode(buf, dlen, &dlen, (unsigned char *)inbuf, inbufsize);
-        if (rc != 0)
-          debug(1, "Error %d in base64_dec.", rc);
-      }
-    }
-    free(inbuf);
-  }
-  *outlen = dlen;
-  return buf;
-}
-#endif
 
-#ifdef CONFIG_POLARSSL
-char *base64_enc(uint8_t *input, int length) {
-  char *buf = NULL;
-  size_t dlen = 0;
-  int rc = base64_encode(NULL, &dlen, input, length);
-  if (rc && (rc != POLARSSL_ERR_BASE64_BUFFER_TOO_SMALL))
-    debug(1, "Error %d getting length of base64 encode.", rc);
-  else {
-    buf = (char *)malloc(dlen);
-    rc = base64_encode((unsigned char *)buf, &dlen, input, length);
-    if (rc != 0)
-      debug(1, "Error %d encoding base64.", rc);
-  }
-  return buf;
-}
-
-uint8_t *base64_dec(char *input, int *outlen) {
-  // slight problem here is that Apple cut the padding off their challenges. We must restore it
-  // before passing it in to the decoder, it seems
-  uint8_t *buf = NULL;
-  size_t dlen = 0;
-  int inbufsize = ((strlen(input) + 3) / 4) * 4; // this is the size of the input buffer we will
-                                                 // send to the decoder, but we need space for 3
-                                                 // extra "="s and a NULL
-  char *inbuf = malloc(inbufsize + 4);
-  if (inbuf == 0)
-    debug(1, "Can't malloc memory  for inbuf in base64_decode.");
-  else {
-    strcpy(inbuf, input);
-    strcat(inbuf, "===");
-    // debug(1,"base64_dec called with string \"%s\", length %d, filled string: \"%s\", length
-    // %d.",input,strlen(input),inbuf,inbufsize);
-    int rc = base64_decode(buf, &dlen, (unsigned char *)inbuf, inbufsize);
-    if (rc && (rc != POLARSSL_ERR_BASE64_BUFFER_TOO_SMALL))
-      debug(1, "Error %d getting decode length, result is %d.", rc, dlen);
-    else {
-      // debug(1,"Decode size is %d.",dlen);
-      buf = malloc(dlen);
-      if (buf == 0)
-        debug(1, "Can't allocate memory in base64_dec.");
-      else {
-        rc = base64_decode(buf, &dlen, (unsigned char *)inbuf, inbufsize);
-        if (rc != 0)
-          debug(1, "Error %d in base64_dec.", rc);
-      }
-    }
-    free(inbuf);
-  }
-  *outlen = dlen;
-  return buf;
-}
-#endif
-
-#ifdef CONFIG_OPENSSL
 char *base64_enc(uint8_t *input, int length) {
   int oldState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
@@ -779,246 +618,10 @@ uint8_t *base64_dec(char *input, int *outlen) {
   pthread_setcancelstate(oldState, NULL);
   return buf;
 }
-#endif
 
-static char super_secret_key[] =
-    "-----BEGIN RSA PRIVATE KEY-----\n"
-    "MIIEpQIBAAKCAQEA59dE8qLieItsH1WgjrcFRKj6eUWqi+bGLOX1HL3U3GhC/j0Qg90u3sG/1CUt\n"
-    "wC5vOYvfDmFI6oSFXi5ELabWJmT2dKHzBJKa3k9ok+8t9ucRqMd6DZHJ2YCCLlDRKSKv6kDqnw4U\n"
-    "wPdpOMXziC/AMj3Z/lUVX1G7WSHCAWKf1zNS1eLvqr+boEjXuBOitnZ/bDzPHrTOZz0Dew0uowxf\n"
-    "/+sG+NCK3eQJVxqcaJ/vEHKIVd2M+5qL71yJQ+87X6oV3eaYvt3zWZYD6z5vYTcrtij2VZ9Zmni/\n"
-    "UAaHqn9JdsBWLUEpVviYnhimNVvYFZeCXg/IdTQ+x4IRdiXNv5hEewIDAQABAoIBAQDl8Axy9XfW\n"
-    "BLmkzkEiqoSwF0PsmVrPzH9KsnwLGH+QZlvjWd8SWYGN7u1507HvhF5N3drJoVU3O14nDY4TFQAa\n"
-    "LlJ9VM35AApXaLyY1ERrN7u9ALKd2LUwYhM7Km539O4yUFYikE2nIPscEsA5ltpxOgUGCY7b7ez5\n"
-    "NtD6nL1ZKauw7aNXmVAvmJTcuPxWmoktF3gDJKK2wxZuNGcJE0uFQEG4Z3BrWP7yoNuSK3dii2jm\n"
-    "lpPHr0O/KnPQtzI3eguhe0TwUem/eYSdyzMyVx/YpwkzwtYL3sR5k0o9rKQLtvLzfAqdBxBurciz\n"
-    "aaA/L0HIgAmOit1GJA2saMxTVPNhAoGBAPfgv1oeZxgxmotiCcMXFEQEWflzhWYTsXrhUIuz5jFu\n"
-    "a39GLS99ZEErhLdrwj8rDDViRVJ5skOp9zFvlYAHs0xh92ji1E7V/ysnKBfsMrPkk5KSKPrnjndM\n"
-    "oPdevWnVkgJ5jxFuNgxkOLMuG9i53B4yMvDTCRiIPMQ++N2iLDaRAoGBAO9v//mU8eVkQaoANf0Z\n"
-    "oMjW8CN4xwWA2cSEIHkd9AfFkftuv8oyLDCG3ZAf0vrhrrtkrfa7ef+AUb69DNggq4mHQAYBp7L+\n"
-    "k5DKzJrKuO0r+R0YbY9pZD1+/g9dVt91d6LQNepUE/yY2PP5CNoFmjedpLHMOPFdVgqDzDFxU8hL\n"
-    "AoGBANDrr7xAJbqBjHVwIzQ4To9pb4BNeqDndk5Qe7fT3+/H1njGaC0/rXE0Qb7q5ySgnsCb3DvA\n"
-    "cJyRM9SJ7OKlGt0FMSdJD5KG0XPIpAVNwgpXXH5MDJg09KHeh0kXo+QA6viFBi21y340NonnEfdf\n"
-    "54PX4ZGS/Xac1UK+pLkBB+zRAoGAf0AY3H3qKS2lMEI4bzEFoHeK3G895pDaK3TFBVmD7fV0Zhov\n"
-    "17fegFPMwOII8MisYm9ZfT2Z0s5Ro3s5rkt+nvLAdfC/PYPKzTLalpGSwomSNYJcB9HNMlmhkGzc\n"
-    "1JnLYT4iyUyx6pcZBmCd8bD0iwY/FzcgNDaUmbX9+XDvRA0CgYEAkE7pIPlE71qvfJQgoA9em0gI\n"
-    "LAuE4Pu13aKiJnfft7hIjbK+5kyb3TysZvoyDnb3HOKvInK7vXbKuU4ISgxB2bB3HcYzQMGsz1qJ\n"
-    "2gG0N5hvJpzwwhbhXqFKA4zaaSrw622wDniAK5MlIE0tIAKKP4yxNGjoD2QYjhBGuhvkWKY=\n"
-    "-----END RSA PRIVATE KEY-----\0";
 
-#ifdef CONFIG_OPENSSL
-uint8_t *rsa_apply(uint8_t *input, int inlen, int *outlen, int mode) {
-  int oldState;
-  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
-  uint8_t *out = NULL;
-  BIO *bmem = BIO_new_mem_buf(super_secret_key, -1);                  // 1.0.2
-  EVP_PKEY *rsaKey = PEM_read_bio_PrivateKey(bmem, NULL, NULL, NULL); // 1.0.2
-  BIO_free(bmem);
-  size_t ol = 0;
-  if (rsaKey != NULL) {
-    EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(rsaKey, NULL); // 1.0.2
-    if (ctx != NULL) {
 
-      switch (mode) {
-      case RSA_MODE_AUTH: {
-        if (EVP_PKEY_sign_init(ctx) > 0) {                                                // 1.0.2
-          if (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING) > 0) {                 // 1.0.2
-            if (EVP_PKEY_sign(ctx, NULL, &ol, (const unsigned char *)input, inlen) > 0) { // 1.0.2
-              out = (unsigned char *)malloc(ol);
-              if (EVP_PKEY_sign(ctx, out, &ol, (const unsigned char *)input, inlen) > 0) { // 1.0.2
-                debug(3, "success with output length of %zu.", ol);
-              } else {
-                debug(1, "error 2 \"%s\" with EVP_PKEY_sign:",
-                      ERR_error_string(ERR_get_error(), NULL));
-              }
-            } else {
-              debug(1,
-                    "error 1 \"%s\" with EVP_PKEY_sign:", ERR_error_string(ERR_get_error(), NULL));
-            }
-          } else {
-            debug(1, "error \"%s\" with EVP_PKEY_CTX_set_rsa_padding:",
-                  ERR_error_string(ERR_get_error(), NULL));
-          }
-        } else {
-          debug(1,
-                "error \"%s\" with EVP_PKEY_sign_init:", ERR_error_string(ERR_get_error(), NULL));
-        }
-      } break;
-      case RSA_MODE_KEY: {
-        if (EVP_PKEY_decrypt_init(ctx) > 0) {
-          if (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_OAEP_PADDING) > 0) {
-            /* Determine buffer length */
-            if (EVP_PKEY_decrypt(ctx, NULL, &ol, (const unsigned char *)input, inlen) > 0) {
-              out = OPENSSL_malloc(ol);
-              if (out != NULL) {
-                if (EVP_PKEY_decrypt(ctx, out, &ol, (const unsigned char *)input, inlen) > 0) {
-                  debug(3, "decrypt success");
-                } else {
-                  debug(1, "error \"%s\" with EVP_PKEY_decrypt:",
-                        ERR_error_string(ERR_get_error(), NULL));
-                }
-              } else {
-                debug(1, "OPENSSL_malloc failed");
-              }
-            } else {
-              debug(1,
-                    "error \"%s\" with EVP_PKEY_decrypt:", ERR_error_string(ERR_get_error(), NULL));
-            }
-          } else {
-            debug(1, "error \"%s\" with EVP_PKEY_CTX_set_rsa_padding:",
-                  ERR_error_string(ERR_get_error(), NULL));
-          }
-        } else {
-          debug(1, "error \"%s\" with EVP_PKEY_decrypt_init:",
-                ERR_error_string(ERR_get_error(), NULL));
-        }
-      } break;
-      default:
-        debug(1, "Unknown mode");
-        break;
-      }
-      EVP_PKEY_CTX_free(ctx); // 1.0.2
-    } else {
-      printf("error \"%s\" with EVP_PKEY_CTX_new:\n", ERR_error_string(ERR_get_error(), NULL));
-    }
-    EVP_PKEY_free(rsaKey); // 1.0.2
-  } else {
-    printf("error \"%s\" with EVP_PKEY_new:\n", ERR_error_string(ERR_get_error(), NULL));
-  }
-  *outlen = ol;
-  pthread_setcancelstate(oldState, NULL);
-  return out;
-}
-#endif
 
-#ifdef CONFIG_MBEDTLS
-uint8_t *rsa_apply(uint8_t *input, int inlen, int *outlen, int mode) {
-  mbedtls_pk_context pkctx;
-  mbedtls_rsa_context *trsa;
-  const char *pers = "rsa_encrypt";
-  size_t olen = *outlen;
-  int rc;
-
-  mbedtls_entropy_context entropy;
-  mbedtls_ctr_drbg_context ctr_drbg;
-
-  mbedtls_entropy_init(&entropy);
-
-  mbedtls_ctr_drbg_init(&ctr_drbg);
-  mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *)pers,
-                        strlen(pers));
-
-  mbedtls_pk_init(&pkctx);
-
-#if MBEDTLS_VERSION_MAJOR == 3
-  rc = mbedtls_pk_parse_key(&pkctx, (unsigned char *)super_secret_key, sizeof(super_secret_key),
-                            NULL, 0, mbedtls_ctr_drbg_random, &ctr_drbg);
-#else
-  rc = mbedtls_pk_parse_key(&pkctx, (unsigned char *)super_secret_key, sizeof(super_secret_key),
-                            NULL, 0);
-
-#endif
-  if (rc != 0)
-    debug(1, "Error %d reading the private key.", rc);
-
-  uint8_t *outbuf = NULL;
-  trsa = mbedtls_pk_rsa(pkctx);
-
-  switch (mode) {
-  case RSA_MODE_AUTH:
-    mbedtls_rsa_set_padding(trsa, MBEDTLS_RSA_PKCS_V15, MBEDTLS_MD_NONE);
-    outbuf = malloc(trsa->MBEDTLS_PRIVATE_V3_ONLY(len));
-#if MBEDTLS_VERSION_MAJOR == 3
-    rc = mbedtls_pk_sign(&pkctx, MBEDTLS_MD_NONE, input, inlen, outbuf, mbedtls_pk_get_len(&pkctx),
-                         &olen, mbedtls_ctr_drbg_random, &ctr_drbg);
-    *outlen = olen;
-#else
-    rc = mbedtls_rsa_pkcs1_encrypt(trsa, mbedtls_ctr_drbg_random, &ctr_drbg, MBEDTLS_RSA_PRIVATE,
-                                   inlen, input, outbuf);
-    *outlen = trsa->len;
-#endif
-    if (rc != 0)
-      debug(1, "mbedtls_pk_encrypt error %d.", rc);
-    break;
-  case RSA_MODE_KEY:
-    mbedtls_rsa_set_padding(trsa, MBEDTLS_RSA_PKCS_V21, MBEDTLS_MD_SHA1);
-    outbuf = malloc(trsa->MBEDTLS_PRIVATE_V3_ONLY(len));
-#if MBEDTLS_VERSION_MAJOR == 3
-    rc = mbedtls_rsa_pkcs1_decrypt(trsa, mbedtls_ctr_drbg_random, &ctr_drbg, &olen, input, outbuf,
-                                   trsa->MBEDTLS_PRIVATE_V3_ONLY(len));
-#else
-    rc = mbedtls_rsa_pkcs1_decrypt(trsa, mbedtls_ctr_drbg_random, &ctr_drbg, MBEDTLS_RSA_PRIVATE,
-                                   &olen, input, outbuf, trsa->len);
-#endif
-    if (rc != 0)
-      debug(1, "mbedtls_pk_decrypt error %d.", rc);
-    *outlen = olen;
-    break;
-  default:
-    die("bad rsa mode");
-  }
-
-  mbedtls_ctr_drbg_free(&ctr_drbg);
-  mbedtls_entropy_free(&entropy);
-  mbedtls_pk_free(&pkctx);
-  return outbuf;
-}
-#endif
-
-#ifdef CONFIG_POLARSSL
-uint8_t *rsa_apply(uint8_t *input, int inlen, int *outlen, int mode) {
-  rsa_context trsa;
-  const char *pers = "rsa_encrypt";
-  int rc;
-
-  entropy_context entropy;
-  ctr_drbg_context ctr_drbg;
-  entropy_init(&entropy);
-  if ((rc = ctr_drbg_init(&ctr_drbg, entropy_func, &entropy, (const unsigned char *)pers,
-                          strlen(pers))) != 0)
-    debug(1, "ctr_drbg_init returned %d\n", rc);
-
-  rsa_init(&trsa, RSA_PKCS_V21, POLARSSL_MD_SHA1); // padding and hash id get overwritten
-  // BTW, this seems to reset a lot of parameters in the rsa_context
-  rc = x509parse_key(&trsa, (unsigned char *)super_secret_key, strlen(super_secret_key), NULL, 0);
-  if (rc != 0)
-    debug(1, "Error %d reading the private key.");
-
-  uint8_t *out = NULL;
-
-  switch (mode) {
-  case RSA_MODE_AUTH:
-    trsa.padding = RSA_PKCS_V15;
-    trsa.hash_id = POLARSSL_MD_NONE;
-    debug(2, "rsa_apply encrypt");
-    out = malloc(trsa.len);
-    rc = rsa_pkcs1_encrypt(&trsa, ctr_drbg_random, &ctr_drbg, RSA_PRIVATE, inlen, input, out);
-    if (rc != 0)
-      debug(1, "rsa_pkcs1_encrypt error %d.", rc);
-    *outlen = trsa.len;
-    break;
-  case RSA_MODE_KEY:
-    debug(2, "rsa_apply decrypt");
-    trsa.padding = RSA_PKCS_V21;
-    trsa.hash_id = POLARSSL_MD_SHA1;
-    out = malloc(trsa.len);
-#if POLARSSL_VERSION_NUMBER >= 0x01020900
-    rc = rsa_pkcs1_decrypt(&trsa, ctr_drbg_random, &ctr_drbg, RSA_PRIVATE, (size_t *)outlen, input,
-                           out, trsa.len);
-#else
-    rc = rsa_pkcs1_decrypt(&trsa, RSA_PRIVATE, outlen, input, out, trsa.len);
-#endif
-    if (rc != 0)
-      debug(1, "decrypt error %d.", rc);
-    break;
-  default:
-    die("bad rsa mode");
-  }
-  rsa_free(&trsa);
-  debug(2, "rsa_apply exit");
-  return out;
-}
-#endif
 
 int config_lookup_non_empty_string(const config_t *cfg, const char *path, const char **value) {
   int response = CONFIG_FALSE;
@@ -1228,58 +831,7 @@ int check_int_or_list_setting(config_setting_t *setting, const int item) {
   return result;
 }
 
-void service_type_to_string(APST_t service_type, char *string_space) {
-  if (string_space != NULL) {
-    string_space[0] = '\0';
-    switch (service_type) {
-    case APST_auto:
-      strcpy(string_space, "auto");
-      break;
-    case APST_classic:
-      strcpy(string_space, "classic");
-      break;
-    case APST_forced_classic:
-      strcpy(string_space, "forced_classic");
-      break;
-    case APST_airplay2:
-      strcpy(string_space, "airplay2");
-      break;
-    }
-  }
-}
 
-APST_t string_to_service_type(const char *parameter, const char *setting_name) {
-  APST_t response = APST_auto;
-  if (parameter != NULL) {
-    if (strcasecmp(parameter, "auto") == 0) {
-      response = APST_auto;
-    } else if (strcasecmp(parameter, "classic") == 0) {
-      response = APST_classic;
-    } else if (strcasecmp(parameter, "airplay1") == 0) {
-      response = APST_classic;
-    } else if (strcasecmp(parameter, "airplay2") == 0) {
-      response = APST_airplay2;
-    } else {
-      warn("The %s \"%s\" was ignored. It must be \"auto\", \"classic\" or \"airplay2\". (You can "
-           "use \"airplay1\" instead of \"classic\".)",
-           setting_name, parameter);
-    }
-#ifndef CONFIG_AIRPLAY_2
-    if (response == APST_airplay2) {
-      warn("This version of Shairport Sync supports does not support AirPlay 2. The %s \"%s\" "
-           "setting has been ignored.",
-           setting_name, parameter);
-      response = APST_auto; // reset to default
-    }
-#endif
-  }
-  /*
-  char service_type_string[32];
-  service_type_to_string(response, service_type_string);
-  debug(1, "config.service_type read from %s is: \"%s\".", setting_name, service_type_string);
-  */
-  return response;
-}
 
 void command_set_volume(double volume) {
   // this has a cancellation point if waiting is enabled
@@ -1387,9 +939,6 @@ void command_start(void) {
           if (buffer[len - 1] == '\n')
             buffer[len - 1] = '\0'; // strip trailing newlines
           debug(1, "received '%s' as the device to use from the on-start command", buffer);
-#ifdef CONFIG_ALSA
-          set_alsa_out_dev(buffer);
-#endif
         }
       }
       // debug(1,"Continue after on-start command");
@@ -1607,47 +1156,17 @@ double vol2attn(double vol, long max_db, long min_db) {
 uint64_t get_monotonic_time_in_ns() {
   uint64_t time_now_ns;
 
-#ifdef COMPILE_FOR_LINUX_AND_FREEBSD_AND_CYGWIN_AND_OPENBSD
   struct timespec tn;
   clock_gettime(CLOCK_MONOTONIC, &tn);
   uint64_t tnnsec = tn.tv_sec;
   tnnsec = tnnsec * 1000000000;
   uint64_t tnjnsec = tn.tv_nsec;
   time_now_ns = tnnsec + tnjnsec;
-#endif
 
-#ifdef COMPILE_FOR_OSX
-  uint64_t time_now_mach;
-  static mach_timebase_info_data_t sTimebaseInfo = {0, 0};
-
-  // this actually give you a monotonic clock
-  // see https://news.ycombinator.com/item?id=6303755
-  time_now_mach = mach_absolute_time();
-
-  // If this is the first time we've run, get the timebase.
-  // We can use denom == 0 to indicate that sTimebaseInfo is
-  // uninitialised because it makes no sense to have a zero
-  // denominator in a fraction.
-
-  if (sTimebaseInfo.denom == 0) {
-    debug(1, "Mac initialise timebase info.");
-    (void)mach_timebase_info(&sTimebaseInfo);
-  }
-
-  if (sTimebaseInfo.denom == 0)
-    die("could not initialise Mac timebase info in get_monotonic_time_in_ns().");
-
-  // Do the maths. We hope that the multiplication doesn't
-  // overflow; the price you pay for working in fixed point.
-
-  // this gives us nanoseconds
-  time_now_ns = time_now_mach * sTimebaseInfo.numer / sTimebaseInfo.denom;
-#endif
 
   return time_now_ns;
 }
 
-#ifdef COMPILE_FOR_LINUX_AND_FREEBSD_AND_CYGWIN_AND_OPENBSD
 // Not defined for macOS
 uint64_t get_realtime_in_ns() {
   uint64_t time_now_ns;
@@ -1659,13 +1178,11 @@ uint64_t get_realtime_in_ns() {
   time_now_ns = tnnsec + tnjnsec;
   return time_now_ns;
 }
-#endif
 
 uint64_t get_absolute_time_in_ns() {
   // CLOCK_MONOTONIC_RAW/CLOCK_MONOTONIC in Linux/FreeBSD etc, monotonic in MacOSX
   uint64_t time_now_ns;
 
-#ifdef COMPILE_FOR_LINUX_AND_FREEBSD_AND_CYGWIN_AND_OPENBSD
   struct timespec tn;
 #ifdef CLOCK_MONOTONIC_RAW
   clock_gettime(CLOCK_MONOTONIC_RAW, &tn);
@@ -1676,34 +1193,7 @@ uint64_t get_absolute_time_in_ns() {
   tnnsec = tnnsec * 1000000000;
   uint64_t tnjnsec = tn.tv_nsec;
   time_now_ns = tnnsec + tnjnsec;
-#endif
 
-#ifdef COMPILE_FOR_OSX
-  uint64_t time_now_mach;
-  static mach_timebase_info_data_t sTimebaseInfo = {0, 0};
-
-  // this actually give you a monotonic clock
-  time_now_mach = mach_absolute_time();
-
-  // If this is the first time we've run, get the timebase.
-  // We can use denom == 0 to indicate that sTimebaseInfo is
-  // uninitialised because it makes no sense to have a zero
-  // denominator in a fraction.
-
-  if (sTimebaseInfo.denom == 0) {
-    debug(1, "Mac initialise timebase info.");
-    (void)mach_timebase_info(&sTimebaseInfo);
-  }
-
-  // Do the maths. We hope that the multiplication doesn't
-  // overflow; the price you pay for working in fixed point.
-
-  if (sTimebaseInfo.denom == 0)
-    die("could not initialise Mac timebase info in get_absolute_time_in_ns().");
-
-  // this gives us nanoseconds
-  time_now_ns = time_now_mach * sTimebaseInfo.numer / sTimebaseInfo.denom;
-#endif
 
   return time_now_ns;
 }
@@ -1829,12 +1319,10 @@ void malloc_cleanup(void *arg) {
     free(ref);
 }
 
-#ifdef CONFIG_AIRPLAY_2
 void plist_cleanup(void *arg) {
   // debug(1, "plist cleanup called.");
   plist_free((plist_t)arg);
 }
-#endif
 
 void socket_cleanup(void *arg) {
   int *p = (int *)arg;
@@ -1880,92 +1368,13 @@ char *get_version_string() {
     else
 #endif
       strcpy(version_string, PACKAGE_VERSION);
-#ifdef CONFIG_AIRPLAY_2
     strcat(version_string, "-AirPlay2");
     char smiv[1024];
     snprintf(smiv, 1024, "-smi%u", NQPTP_SHM_STRUCTURES_VERSION);
     strcat(version_string, smiv);
-#endif
-#ifdef CONFIG_APPLE_ALAC
-    strcat(version_string, "-alac");
-#endif
-#ifndef CONFIG_AIRPLAY_2
-#ifdef CONFIG_FFMPEG
-    strcat(version_string, "-FFmpeg");
-#endif
-#endif
-#ifdef CONFIG_LIBDAEMON
-    strcat(version_string, "-libdaemon");
-#endif
-#ifdef CONFIG_MBEDTLS
-    strcat(version_string, "-mbedTLS");
-#endif
-#ifdef CONFIG_POLARSSL
-    strcat(version_string, "-PolarSSL");
-#endif
-#ifdef CONFIG_OPENSSL
     strcat(version_string, "-OpenSSL");
-#endif
-#ifdef CONFIG_TINYSVCMDNS
-    strcat(version_string, "-tinysvcmdns");
-#endif
-#ifdef CONFIG_AVAHI
     strcat(version_string, "-Avahi");
-#endif
-#ifdef CONFIG_DNS_SD
-    strcat(version_string, "-dns_sd");
-#endif
-#ifdef CONFIG_EXTERNAL_MDNS
-    strcat(version_string, "-external_mdns");
-#endif
-#ifdef CONFIG_ALSA
-    strcat(version_string, "-ALSA");
-#endif
-#ifdef CONFIG_SNDIO
-    strcat(version_string, "-sndio");
-#endif
-#ifdef CONFIG_JACK
-    strcat(version_string, "-jack");
-#endif
-#ifdef CONFIG_AO
-    strcat(version_string, "-ao");
-#endif
-#ifdef CONFIG_PULSEAUDIO
     strcat(version_string, "-PulseAudio");
-#endif
-#ifdef CONFIG_PIPEWIRE
-    strcat(version_string, "-PipeWire");
-#endif
-#ifdef CONFIG_SOUNDIO
-    strcat(version_string, "-soundio");
-#endif
-#ifdef CONFIG_DUMMY
-    strcat(version_string, "-dummy");
-#endif
-#ifdef CONFIG_STDOUT
-    strcat(version_string, "-stdout");
-#endif
-#ifdef CONFIG_PIPE
-    strcat(version_string, "-pipe");
-#endif
-#ifdef CONFIG_SOXR
-    strcat(version_string, "-soxr");
-#endif
-#ifdef CONFIG_CONVOLUTION
-    strcat(version_string, "-convolution");
-#endif
-#ifdef CONFIG_METADATA
-    strcat(version_string, "-metadata");
-#endif
-#ifdef CONFIG_MQTT
-    strcat(version_string, "-mqtt");
-#endif
-#ifdef CONFIG_DBUS_INTERFACE
-    strcat(version_string, "-dbus");
-#endif
-#ifdef CONFIG_MPRIS_INTERFACE
-    strcat(version_string, "-mpris");
-#endif
     strcat(version_string, "-sysconfdir:");
     strcat(version_string, SYSCONFDIR);
   }
@@ -2299,9 +1708,6 @@ char *bnprintf(char *buffer, ssize_t max_bytes, const char *format, ...) {
 }
 
 int do_pthread_setname(pthread_t *restrict thread, const char *format, ...) {
-#ifdef COMPILE_FOR_OSX
-  return 0;
-#else
   // pthread_setname_np/2 not defined in macOS
   char actual_name[16];
   va_list args;
@@ -2309,7 +1715,6 @@ int do_pthread_setname(pthread_t *restrict thread, const char *format, ...) {
   vsnprintf(actual_name, sizeof(actual_name), format, args);
   va_end(args);
   return pthread_setname_np(*thread, actual_name);
-#endif
 }
 
 int named_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
@@ -2323,11 +1728,9 @@ int named_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
   if (response != 0) {
     debug(1, "error creating thread \"%s\"", actual_name);
   }
-#ifndef COMPILE_FOR_OSX
   if (response == 0) {
     pthread_setname_np(*thread, actual_name);
   }
-#endif
   return response;
 }
 
@@ -2388,226 +1791,10 @@ int named_pthread_create_with_priority(pthread_t *thread, int priority,
       failed_to_set_rt = 1;
     }
   }
-#ifndef COMPILE_FOR_OSX
   if (ret == 0) {
     pthread_setname_np(*thread, actual_name);
   } else {
     die("named_pthread_create_with_priority failed with error %d", ret);
   }
-#endif
   return ret;
 }
-
-#ifdef CONFIG_CONVOLUTION
-/* Parse comma-separated filenames with optional quotes
- * Returns array of ir_file_info_t structs (caller must free both array and filenames)
- * count is set to number of filenames found
- * Returns NULL on error
- */
-ir_file_info_t *parse_ir_filenames(const char *input, unsigned int *file_count) {
-  if (!input || !file_count)
-    return NULL;
-
-  *file_count = 0;
-  unsigned int capacity = 10;
-  ir_file_info_t *files = malloc(capacity * sizeof(ir_file_info_t));
-  if (!files)
-    return NULL;
-
-  const char *p = input;
-
-  while (*p) {
-    /* Skip whitespace before filename */
-    while (isspace((unsigned char)*p))
-      p++;
-    if (!*p)
-      break;
-
-    /* Check if we need to resize array */
-    if (*file_count >= capacity) {
-      capacity *= 2;
-      ir_file_info_t *temp = realloc(files, capacity * sizeof(ir_file_info_t));
-      if (!temp) {
-        for (unsigned int i = 0; i < *file_count; i++)
-          free(files[i].filename);
-        free(files);
-        return NULL;
-      }
-      files = temp;
-    }
-
-    /* Parse one filename */
-    char quote_char = 0;
-    char *buffer = NULL;
-    size_t buf_len = 0;
-    size_t buf_cap = 64;
-
-    if (*p == '"' || *p == '\'') {
-      /* Quoted filename */
-      quote_char = *p;
-      p++;
-
-      buffer = malloc(buf_cap);
-      if (!buffer) {
-        for (unsigned int i = 0; i < *file_count; i++)
-          free(files[i].filename);
-        free(files);
-        return NULL;
-      }
-
-      /* Parse quoted string with escape handling */
-      while (*p && *p != quote_char) {
-        if (*p == '\\' && *(p + 1)) {
-          /* Escape sequence */
-          p++;
-          if (buf_len >= buf_cap - 1) {
-            buf_cap *= 2;
-            char *temp = realloc(buffer, buf_cap);
-            if (!temp) {
-              free(buffer);
-              for (unsigned int i = 0; i < *file_count; i++)
-                free(files[i].filename);
-              free(files);
-              return NULL;
-            }
-            buffer = temp;
-          }
-          buffer[buf_len++] = *p++;
-        } else {
-          if (buf_len >= buf_cap - 1) {
-            buf_cap *= 2;
-            char *temp = realloc(buffer, buf_cap);
-            if (!temp) {
-              free(buffer);
-              for (unsigned int i = 0; i < *file_count; i++)
-                free(files[i].filename);
-              free(files);
-              return NULL;
-            }
-            buffer = temp;
-          }
-          buffer[buf_len++] = *p++;
-        }
-      }
-      buffer[buf_len] = '\0';
-      if (*p == quote_char)
-        p++; /* Skip closing quote */
-
-      files[*file_count].samplerate = 0;
-      // files[*file_count].evaluation = ev_unchecked;
-      files[*file_count].filename = buffer;
-      (*file_count)++;
-    } else {
-      /* Unquoted filename - read until comma or end, handle escapes */
-      buffer = malloc(buf_cap);
-      if (!buffer) {
-        for (unsigned int i = 0; i < *file_count; i++)
-          free(files[i].filename);
-        free(files);
-        return NULL;
-      }
-
-      while (*p && *p != ',') {
-        if (*p == '\\' && *(p + 1)) {
-          /* Escape sequence */
-          p++;
-          if (buf_len >= buf_cap - 1) {
-            buf_cap *= 2;
-            char *temp = realloc(buffer, buf_cap);
-            if (!temp) {
-              free(buffer);
-              for (unsigned int i = 0; i < *file_count; i++)
-                free(files[i].filename);
-              free(files);
-              return NULL;
-            }
-            buffer = temp;
-          }
-          buffer[buf_len++] = *p++;
-        } else {
-          if (buf_len >= buf_cap - 1) {
-            buf_cap *= 2;
-            char *temp = realloc(buffer, buf_cap);
-            if (!temp) {
-              free(buffer);
-              for (unsigned int i = 0; i < *file_count; i++)
-                free(files[i].filename);
-              free(files);
-              return NULL;
-            }
-            buffer = temp;
-          }
-          buffer[buf_len++] = *p++;
-        }
-      }
-
-      /* Trim trailing whitespace */
-      while (buf_len > 0 && isspace((unsigned char)buffer[buf_len - 1])) {
-        buf_len--;
-      }
-      buffer[buf_len] = '\0';
-
-      files[*file_count].samplerate = 0;
-      files[*file_count].channels = 0;
-      // files[*file_count].evaluation = ev_unchecked;
-      files[*file_count].filename = buffer;
-      (*file_count)++;
-    }
-
-    /* Skip comma and whitespace */
-    while (isspace((unsigned char)*p))
-      p++;
-    if (*p == ',') {
-      p++;
-      while (isspace((unsigned char)*p))
-        p++;
-    }
-  }
-
-  return files;
-}
-
-/* Do a quick sanity check on the files -- see if they can be opened as sound files */
-void sanity_check_ir_files(const int option_print_level, ir_file_info_t *files,
-                           unsigned int count) {
-  if (files != NULL) {
-    debug(option_print_level, "convolution impulse response files: %d found.", count);
-    for (unsigned int i = 0; i < count; i++) {
-
-      SF_INFO sfinfo = {};
-      // sfinfo.format = 0;
-
-      SNDFILE *file = sf_open(files[i].filename, SFM_READ, &sfinfo);
-      if (file) {
-        // files[i].evaluation = ev_okay;
-        files[i].samplerate = sfinfo.samplerate;
-        files[i].channels = sfinfo.channels;
-        debug(option_print_level,
-              "convolution impulse response file \"%s\": %" PRId64
-              " frames (%.1f seconds), %d channel%s at %d frames per second.",
-              files[i].filename, sfinfo.frames, (float)sfinfo.frames / sfinfo.samplerate,
-              sfinfo.channels, sfinfo.channels == 1 ? "" : "s", sfinfo.samplerate);
-        sf_close(file);
-      } else {
-        // files[i].evaluation = ev_invalid;
-        debug(option_print_level, "convolution impulse response file \"%s\" %s", files[i].filename,
-              sf_strerror(NULL));
-        warn("Error accessing the convolution impulse response file \"%s\". %s", files[i].filename,
-             sf_strerror(NULL));
-      }
-    }
-  } else {
-    debug(option_print_level, "no convolution impulse response files found.");
-  }
-}
-
-/* Free the array returned by parse_filenames */
-void free_ir_filenames(ir_file_info_t *files, unsigned int file_count) {
-  if (!files)
-    return;
-  for (unsigned int i = 0; i < file_count; i++) {
-    free(files[i].filename);
-  }
-  free(files);
-}
-#endif

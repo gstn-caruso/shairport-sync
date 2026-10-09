@@ -7,30 +7,18 @@
 #include "config.h"
 #include "definitions.h"
 
-#ifdef CONFIG_MBEDTLS
-#include <mbedtls/aes.h>
-#endif
 
-#ifdef CONFIG_POLARSSL
-#include <polarssl/aes.h>
-#include <polarssl/havege.h>
-#endif
 
-#ifdef CONFIG_AIRPLAY_2
 #define MAX_DEFERRED_FLUSH_REQUESTS 10
 #include "pair_ap/pair.h"
 #include <plist/plist.h>
-#endif
 
-#ifdef CONFIG_FFMPEG
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/opt.h>
 #include <libswresample/swresample.h>
-#endif
 
-#include "alac.h"
 #include "audio.h"
 
 // clang-format off
@@ -41,44 +29,44 @@ ________________________________________________________________________________
 __________________________________________________________________________________________________________________________________
 
 The Apple Lossless codec stores specific information about the encoded stream in the ALACSpecificConfig. This
-info is vended by the encoder and is used to setup the decoder for a given encoded bitstream. 
+info is vended by the encoder and is used to setup the decoder for a given encoded bitstream.
 
-When read from and written to a file, the fields of this struct must be in big-endian order. 
+When read from and written to a file, the fields of this struct must be in big-endian order.
 When vended by the encoder (and received by the decoder) the struct values will be in big-endian order.
 
     struct	ALACSpecificConfig (defined in ALACAudioTypes.h)
-    abstract   	This struct is used to describe codec provided information about the encoded Apple Lossless bitstream. 
+    abstract   	This struct is used to describe codec provided information about the encoded Apple Lossless bitstream.
 		It must accompany the encoded stream in the containing audio file and be provided to the decoder.
 
-    field      	frameLength 		uint32_t	indicating the frames per packet when no explicit frames per packet setting is 
-							present in the packet header. The encoder frames per packet can be explicitly set 
+    field      	frameLength 		uint32_t	indicating the frames per packet when no explicit frames per packet setting is
+							present in the packet header. The encoder frames per packet can be explicitly set
 							but for maximum compatibility, the default encoder setting of 4096 should be used.
 
-    field      	compatibleVersion 	uint8_t 	indicating compatible version, 
+    field      	compatibleVersion 	uint8_t 	indicating compatible version,
 							value must be set to 0
 
     field      	bitDepth 		uint8_t 	describes the bit depth of the source PCM data (maximum value = 32)
 
-    field      	pb 			uint8_t 	currently unused tuning parameter. 
+    field      	pb 			uint8_t 	currently unused tuning parameter.
 						 	value should be set to 40
 
-    field      	mb 			uint8_t 	currently unused tuning parameter. 
+    field      	mb 			uint8_t 	currently unused tuning parameter.
 						 	value should be set to 10
 
-    field      	kb			uint8_t 	currently unused tuning parameter. 
+    field      	kb			uint8_t 	currently unused tuning parameter.
 						 	value should be set to 14
 
     field      	numChannels 		uint8_t 	describes the channel count (1 = mono, 2 = stereo, etc...)
 							when channel layout info is not provided in the 'magic cookie', a channel count > 2
 							describes a set of discreet channels with no specific ordering
 
-    field      	maxRun			uint16_t 	currently unused. 
+    field      	maxRun			uint16_t 	currently unused.
    						  	value should be set to 255
 
-    field      	maxFrameBytes 		uint32_t 	the maximum size of an Apple Lossless packet within the encoded stream. 
+    field      	maxFrameBytes 		uint32_t 	the maximum size of an Apple Lossless packet within the encoded stream.
 						  	value of 0 indicates unknown
 
-    field      	avgBitRate 		uint32_t 	the average bit rate in bits per second of the Apple Lossless stream. 
+    field      	avgBitRate 		uint32_t 	the average bit rate in bits per second of the Apple Lossless stream.
 						  	value of 0 indicates unknown
 
     field      	sampleRate 		uint32_t 	sample rate of the encoded stream
@@ -109,18 +97,6 @@ typedef struct __attribute__((__packed__)) alac_ffmpeg_magic_cookie {
   ALACSpecificConfig alac_config;
 } alac_ffmpeg_magic_cookie;
 
-#define time_ping_history_power_of_two 7
-// this must now be zero, otherwise bad things will happen
-#define time_ping_history                                                                          \
-  (1 << time_ping_history_power_of_two) // 2^7 is 128. At 1 per three seconds, approximately six
-                                        // minutes of records
-typedef struct time_ping_record {
-  uint64_t dispersion;
-  uint64_t local_time;
-  uint64_t remote_time;
-  int sequence_number;
-  int chosen;
-} time_ping_record;
 
 // these are for reporting the status of the clock
 typedef enum {
@@ -163,11 +139,9 @@ typedef struct audio_buffer_entry { // decoded audio packets
   uint32_t timestamp;           // for timing
   int32_t timestamp_gap;        // the difference between the timestamp and the expected timestamp.
   size_t length; // the length of the decoded data (or silence requested) in input frames
-#ifdef CONFIG_FFMPEG
   ssrc_t ssrc;      // this is the type of this specific frame.
   AVFrame *avframe; // In AP2 and optionally in AP1, an AVFrame will be
   // used to carry audio rather than just a malloced memory space.
-#endif
 } abuf_t;
 
 typedef struct stats { // statistics for running averages
@@ -193,31 +167,14 @@ typedef struct stats { // statistics for running averages
 // maximum number of frames that can be added or removed from a packet_count
 #define INTERPOLATION_LIMIT 20
 
-typedef enum {
-  ast_unknown,
-  ast_uncompressed, // L16/44100/2
-  ast_apple_lossless,
-} audio_stream_type;
-
-typedef struct {
-  int encrypted;
-  uint8_t aesiv[16], aeskey[16];
-  int32_t fmtp[12];
-  audio_stream_type type;
-} stream_cfg;
 
 // the following is used even when not built for AirPlay 2
 typedef enum {
   unspecified_stream_category = 0,
   ptp_stream,
-  ntp_stream,
   remote_control_stream,
-  classic_airplay_stream
 } airplay_stream_c; // "c" for category
 
-#ifdef CONFIG_AIRPLAY_2
-typedef enum { ts_ntp, ts_ptp } timing_t;
-typedef enum { ap_1, ap_2 } airplay_t;
 typedef enum { realtime_stream, buffered_stream } airplay_stream_t;
 
 typedef struct {
@@ -252,7 +209,6 @@ typedef struct {
   uint32_t flushUntilSeq;
 } ap2_flush_request_t;
 
-#endif
 
 typedef struct {
   int connection_number;           // for debug ID purposes, nothing else...
@@ -273,10 +229,6 @@ typedef struct {
                              // otherwise
   int software_mute_enabled; // if we don't have a real mute that we can use
   int fd;
-  int authorized;   // set if a password is required and has been supplied or not required. Also
-                    // always set in AirPlay 2 mode.
-  char *auth_nonce; // the session nonce, if needed
-  stream_cfg stream;
   SOCKADDR remote, local;
   volatile int stop;
   volatile int running;
@@ -284,7 +236,7 @@ typedef struct {
   uint64_t playstart;
   uint64_t connection_start_time; // the time the device is selected, which could be a long time
                                   // before a play
-  pthread_t thread, timer_requester, rtp_audio_thread, rtp_control_thread, rtp_timing_thread;
+  pthread_t thread;
 
   // buffers to delete on exit
   int32_t *tbuf;
@@ -319,7 +271,6 @@ typedef struct {
   unsigned int output_sample_ratio;
   unsigned int output_bit_depth;
   int64_t previous_random_number;
-  alac_file *decoder_info;
   uint64_t packet_count;
   uint64_t packet_count_since_flush;
   // int connection_state_to_output;
@@ -347,15 +298,8 @@ typedef struct {
   uint64_t time_of_last_audio_packet;
   seq_t ab_read, ab_write;
 
-  int do_loudness; // if loudness is requested and there is no external mixer
 
-#ifdef CONFIG_MBEDTLS
-  mbedtls_aes_context dctx;
-#endif
 
-#ifdef CONFIG_POLARSSL
-  aes_context dctx;
-#endif
 
   int32_t framesProcessedInThisEpoch;
   int32_t framesGeneratedInThisEpoch;
@@ -375,17 +319,6 @@ typedef struct {
   uint32_t self_scope_id;     // if it's an ipv6 connection, this will be its scope
   short connection_ip_family; // AF_INET / AF_INET6
 
-  SOCKADDR rtp_client_control_socket; // a socket pointing to the control port of the client
-  SOCKADDR rtp_client_timing_socket;  // a socket pointing to the timing port of the client
-  int audio_socket;                   // our local [server] audio socket
-  int control_socket;                 // our local [server] control socket
-  int timing_socket;                  // local timing socket
-
-  uint16_t remote_control_port;
-  uint16_t remote_timing_port;
-  uint16_t local_audio_port;
-  uint16_t local_control_port;
-  uint16_t local_timing_port;
 
   int64_t latency_delayed_timestamp; // this is for debugging only...
 
@@ -413,13 +346,10 @@ typedef struct {
       airplay_stream_category; // is it a remote control stream or a normal "full service" stream?
                                // (will be unspecified if not build for AirPlay 2)
 
-#ifdef CONFIG_AIRPLAY_2
   plist_t sessionPlist;
   char *airplay_gid; // UUID in the Bonjour advertisement -- if NULL, the group UUID is the same as
                      // the pi UUID
-  airplay_t airplay_type; // are we using AirPlay 1 or AirPlay 2 protocol on this connection?
   airplay_stream_t airplay_stream_type; // is it realtime audio or buffered audio...
-  timing_t timing_type;                 // are we using NTP or PTP on this connection?
 
   pthread_t *rtp_event_thread;
   pthread_t *rtp_data_thread;
@@ -475,9 +405,7 @@ typedef struct {
   uint64_t networkTimeTimelineID; // the clock ID used by the player
   uint8_t groupContainsGroupLeader; // information coming from the SETUP
   uint64_t compressionType;
-#endif
 
-#ifdef CONFIG_FFMPEG
   ssrc_t incoming_ssrc;  // The SSRC of incoming packets. In AirPlay 2, the RTP SSRC seems to encode
                          // something about the contents of the packet -- Atmos/etc. We use it also
                          // even in AP1 as a code
@@ -533,7 +461,6 @@ typedef struct {
   // swrconvert so we need to compensate for their absence in sync timing
   unsigned int output_channel_to_resampler_channel_map[8];
   unsigned int output_channel_map_size;
-#endif
 
   // used as the initials values for calculating the rate at which the source thinks it's sending
   // frames
@@ -548,21 +475,7 @@ typedef struct {
   // debug variables
   int request_sent;
 
-  int time_ping_count;
-  struct time_ping_record time_pings[time_ping_history];
-
-  uint64_t departure_time; // dangerous -- this assumes that there will never be two timing
-                           // request in flight at the same time
-
   pthread_mutex_t reference_time_mutex;
-
-  double local_to_remote_time_gradient; // if no drift, this would be exactly 1.0; likely it's
-                                        // slightly above or  below.
-  int local_to_remote_time_gradient_sample_count; // the number of samples used to calculate the
-                                                  // gradient
-  // add the following to the local time to get the remote time modulo 2^64
-  uint64_t local_to_remote_time_difference; // used to switch between local and remote clocks
-  uint64_t local_to_remote_time_difference_measurement_time; // when the above was calculated
 
   int last_stuff_request;
 

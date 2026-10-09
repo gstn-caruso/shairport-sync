@@ -31,12 +31,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef CONFIG_AIRPLAY_2
 #include <plist/plist.h>
 #ifdef HAVE_LIBPLIST_GE_2_3_0
 #define plist_from_memory(plist_data, length, plist)                                               \
   plist_from_memory((plist_data), (length), (plist), NULL)
-#endif
 #endif
 
 // every time we want to retain or release a reference count, lock it with this
@@ -223,7 +221,6 @@ fail:
   return 0;
 }
 
-#ifdef CONFIG_AIRPLAY_2
 
 int rtsp_message_contains_plist(rtsp_message *message) {
   int reply = 0; // assume there is no plist in the message
@@ -268,7 +265,6 @@ char *rtsp_plist_content(rtsp_message *message) {
   return reply;
 }
 
-#endif
 
 void _debug_log_rtsp_message(rtsp_conn_info *conn, const char *filename, const int linenumber,
                              int level, char *prompt, rtsp_message *message) {
@@ -277,14 +273,12 @@ void _debug_log_rtsp_message(rtsp_conn_info *conn, const char *filename, const i
   if ((prompt) && (*prompt != '\0')) // okay to pass NULL or an empty list...
     _debug(filename, linenumber, level, "%s", prompt);
   _debug_print_msg_headers(conn, filename, linenumber, level, message);
-#ifdef CONFIG_AIRPLAY_2
   char *plist_content = rtsp_plist_content(message);
   if (plist_content) {
     _debug(filename, linenumber, level, "  Content length: %u. Content Plist (as XML):\n--\n%s--",
            message->contentlength, plist_content);
     free(plist_content);
   } else
-#endif
   {
     _debug(filename, linenumber, level, "  Content length: %u.", message->contentlength);
     if (message->contentlength > 0) {

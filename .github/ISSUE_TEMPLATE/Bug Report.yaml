@@ -47,9 +47,7 @@ body:
     attributes:
       label: How did you install Shairport Sync?
       options:
-        - Homebrew for Mac
-        - Docker
-        - A package manager (apt, apt install, yum, pkg, etc.)
+        - A Linux package manager
         - Built from source
     validations:
       required: true
