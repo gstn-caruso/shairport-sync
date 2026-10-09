@@ -17,6 +17,7 @@ public:
     bool playing = false;
     airplay_stream_c category = unspecified_stream_category;
     unsigned int inputRate = 0;
+    uint64_t type = 0;
     std::string groupId;
     bool groupContainsLeader = false;
   };
@@ -52,13 +53,22 @@ public:
     if (!current_)
       return {};
     return {current_->connection_number, current_->is_playing != 0,
-            current_->airplay_stream_category, current_->input_rate,
+            current_->airplay_stream_category, current_->input_rate, current_->type,
             current_->airplay_gid ? current_->airplay_gid : "",
             current_->groupContainsGroupLeader != 0};
   }
+  // Synchronous effect boundary: do not retain the borrowed session, join threads or reenter this
+  // object from the action. Session teardown releases selection before freeing its resources.
   template <typename Action> auto withCurrent(Action action) {
     std::lock_guard lock(mutex_);
     return action(current_);
+  }
+  template <typename Action> bool applyIfCurrent(int id, Action action) {
+    std::lock_guard lock(mutex_);
+    if (!current_ || current_->connection_number != id)
+      return false;
+    action(*current_);
+    return true;
   }
   template <typename Action> auto mutateSession(SessionState &session, Action action) {
     std::lock_guard lock(mutex_);

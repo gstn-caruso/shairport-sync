@@ -3,6 +3,7 @@
 #include "common.h"
 #include "player.h"
 #include "rtp_clock.hpp"
+#include <atomic>
 
 struct SessionState {
   SessionState() = default;
@@ -29,7 +30,6 @@ struct SessionState {
   int fd = -1;
   SOCKADDR remote, local;
   volatile int stop;
-  volatile int running;
 
   uint64_t playstart;
   uint64_t connection_start_time; // the time the device is selected, which could be a long time
@@ -126,8 +126,7 @@ struct SessionState {
 
   RtpClock clock;
 
-  airplay_stream_c
-      airplay_stream_category; // is it a remote control stream or a normal "full service" stream?
+  std::atomic<airplay_stream_c> airplay_stream_category{unspecified_stream_category};
 
   plist_t sessionPlist;
   char *airplay_gid; // UUID in the Bonjour advertisement -- if NULL, the group UUID is the same as

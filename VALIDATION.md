@@ -7,6 +7,7 @@ CTest covers:
 
 | Test | Contract |
 | --- | --- |
+| `session-registry` | Failed thread creation closes its socket, immediate completion is retained for one join, replacement preserves the new principal, retirement owns until join despite caller cancellation, and batch cancellation precedes joins |
 | `rtp-clock` | Anchor validity, mastership windows, fallback, wraparound, latency and frame/time conversions |
 | `rtsp-message` | Owned request parsing, header order/duplicates, binary framing, payload interpretation and socket output |
 | `rtsp-message-c` | Opaque C message allocation and cleanup linkage |
@@ -27,6 +28,15 @@ fixture; they do not modify the running service. Receiver code remains
 instrumented in sanitizer builds. Tests reject sanitizer diagnostics even on
 expected startup failures, with leak detection enabled. A sanitizer runtime
 startup failure is a failed check.
+
+Session lifetime tests use real pthreads and socket pairs. Condition variables
+control completion and retirement; the five-second CTest timeout detects a
+deadlock and does not determine ordering. They cover registry and principal
+selection contracts. Failed accept and RTSP listener ownership handoff were
+checked in code; complete network replacement and Bonjour publication still
+require the device checks below. The new APIs had compile-time Red/Green tests;
+the cancellation regression was added after its implementation, so it does not
+provide evidence of a failing test against the previous implementation.
 
 ## Device checks
 
