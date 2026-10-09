@@ -4,6 +4,7 @@
 #include "packets/retransmission_planner.hpp"
 #include <array>
 #include <pthread.h>
+#include <type_traits>
 #include <variant>
 
 struct MissingAudioPacket { uint16_t sequence; };
@@ -33,12 +34,23 @@ public:
   AudioPacketBuffer &operator=(const AudioPacketBuffer &) = delete;
   template <typename Factory> Admission accept(uint16_t sequence, uint64_t now, Factory factory,
                                                shairport::packets::RetryPolicy policy = {}) {
+    return accept(sequence, now, std::move(factory), policy, [](ArrivalKind) noexcept {});
+  }
+  // The observer runs under the buffer lock before publication; it must be short,
+  // nonthrowing and must not reenter this buffer. Failed factories do not notify it.
+  template <typename Factory, typename Observer>
+  Admission accept(uint16_t sequence, uint64_t now, Factory factory,
+                   shairport::packets::RetryPolicy policy, Observer observe) {
+    static_assert(std::is_nothrow_invocable_v<Observer &, ArrivalKind>);
     Lock lock(mutex_);
     const auto kind = classifyArrival(sequence);
-    if (kind == ArrivalKind::tooLate || kind == ArrivalKind::duplicate)
+    if (kind == ArrivalKind::tooLate || kind == ArrivalKind::duplicate) {
+      observe(kind);
       return {kind, 0, revision_, planner_.due(now, policy, {read_, write_})};
+    }
     auto packet = factory();
     const auto samples = packet.samplesDecoded();
+    observe(kind);
     makeRoomFor(sequence, now, kind);
     entries_[sequence % capacity] = Entry{sequence, std::move(packet)};
     planner_.resolve(sequence);
