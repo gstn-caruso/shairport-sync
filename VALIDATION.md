@@ -155,6 +155,15 @@ timeout 5. Both producer threads join before assertions. C ABI, native cancellat
 and shell checks remain green; production is unchanged and sanitizers/devices
 were not rerun.
 
+Playback-sync discovery (`ctest --test-dir build/redesign-release -R '^PlaybackSync\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Eleven independently owned cases replay all original observation/reset history,
+preserving retention, skips, rate conversion, both 40-error signs, strict thresholds,
+window spread and modular time. Group (0.18s), exact signed-resync-window case and
+Release 148/148 (14.54s) passed; each entry has timeout 5. C ABI, native cancellation
+and shell checks remain green; production is unchanged and sanitizers/devices
+were not rerun.
+
 CTest covers:
 
 | Test | Contract |
