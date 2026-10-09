@@ -609,21 +609,6 @@ void *rtp_buffered_audio_processor(void *arg) {
                     int skip_this_block = 0;
                     if (timestamp_difference < 0) {
 
-                      // uncomment this to work back to replace buffers that have been already
-                      // decoded and placed in the player queue with the incoming new buffers this
-                      // is a bit trickier, but maybe the new buffers are better than the previous
-                      // ones they will replace (?)
-                      /*
-                      seq_t revised_seqno = get_revised_seqno(conn, timestamp);
-                      if (revised_seqno != sequence_number_for_player) {
-                        debug(1, "revised seqno calculated: conn->ab_read: %u, revised_seqno: %u,
-                      conn->ab_write: %u.", conn->ab_read, revised_seqno, conn->ab_write);
-                        clear_buffers_from(conn, revised_seqno);
-                        sequence_number_for_player = revised_seqno;
-                        timestamp_difference = 0;
-                      }
-                      */
-
                       // uncomment this to drop incoming new buffers that are too old and for whose
                       // timings buffers have already been decoded and placed in the player queue
                       // this is easier, but maybe the new late buffers are better than the previous

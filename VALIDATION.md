@@ -7,6 +7,10 @@ CTest covers:
 
 | Test | Contract |
 | --- | --- |
+| `player-packet` | Failed real decoding followed by mute preserves ALAC/AAC packet duration without dereferencing a missing frame |
+| `audio-packet-buffer` | Modular admission, bounded resynchronisation, ownership transfer, stale revisions, queued trim/mute/conversion and flush identifiers |
+| `retransmission-planner` | Explicit ages, retry intervals, final opportunity and contiguous ranges across sequence wrap |
+| `audio-packet-wait` | An earlier signal cannot be lost; deferred cancellation unlocks the queue and releases an extracted FFmpeg frame exactly once |
 | `converted-audio` | PCM transfer preserves bytes/frame counts and leaves its source empty; repeated reset is safe |
 | `channel-mapping` | Explicit/device ordering, unassigned channels, incomplete names, silence and FM mixing preserve signed integer division |
 | `resampler` | Native mono/stereo/5.1/7.1 conversion, rates/depths, unchanged configuration, silence, retention, pending count before reset and negotiation failure preserve owned state |
@@ -54,6 +58,11 @@ explicit cancellation point, after noexcept destruction has returned. Async
 pthread cancellation is outside that contract.
 
 ## Device checks
+
+Packet trimming was reproduced as a null PCM access before its correction;
+trimming now makes decoded planes writable before conversion. Outdated packet
+discarding preserves the previous comparison of packet start timestamps. The
+queue returns resend ranges to the RTP adapter after releasing its mutex.
 
 Automated tests do not establish playback quality or multiroom timing. Validate
 the resulting binary on AirPlay devices for:

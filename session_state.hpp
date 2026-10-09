@@ -5,6 +5,7 @@
 #include "rtp_clock.hpp"
 #include "audio_decoder.hpp"
 #include "resampler.hpp"
+#include "audio_packet_buffer.hpp"
 #include <atomic>
 
 struct SessionState {
@@ -66,7 +67,7 @@ struct SessionState {
 
   // other stuff...
   pthread_t *player_thread;
-  abuf_t audio_buffer[BUFFER_FRAMES];
+  AudioPacketBuffer packetBuffer;
   unsigned int frames_per_packet, input_num_channels, input_bit_depth, input_effective_bit_depth,
       input_rate;
   int input_bytes_per_frame;
@@ -84,20 +85,16 @@ struct SessionState {
   int last_seqno_valid;
   seq_t last_seqno_read;
   // mutexes and condition variables
-  pthread_cond_t flowcontrol;
-  pthread_mutex_t ab_mutex, flush_mutex, volume_control_mutex, player_create_delete_mutex;
+  pthread_mutex_t flush_mutex, volume_control_mutex, player_create_delete_mutex;
 
   int fix_volume;
   double own_airplay_volume;
   int own_airplay_volume_set;
 
-  int ab_buffering, ab_synced;
+  int ab_buffering;
   uint32_t first_packet_timestamp;
-  int flush_requested;
   int flush_output_flushed; // true if the output device has been flushed.
-  uint32_t flush_rtp_timestamp;
   uint64_t time_of_last_audio_packet;
-  seq_t ab_read, ab_write;
 
 
 

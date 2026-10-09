@@ -2,7 +2,7 @@
 #include "resampler.hpp"
 #include <cassert>
 
-static QueuedAudioPacket packet(uint16_t sequence, uint32_t timestamp) {
+static OwnedAudioFrame decodedFrame() {
   OwnedAudioFrame frame(av_frame_alloc());
   frame->nb_samples = 16;
   frame->format = AV_SAMPLE_FMT_S16P;
@@ -13,8 +13,11 @@ static QueuedAudioPacket packet(uint16_t sequence, uint32_t timestamp) {
     reinterpret_cast<int16_t *>(frame->data[0])[index] = index;
     reinterpret_cast<int16_t *>(frame->data[1])[index] = 100 + index;
   }
+  return frame;
+}
+static QueuedAudioPacket packet(uint16_t sequence, uint32_t timestamp) {
   return QueuedAudioPacket::decoded(*AudioFormat::fromSsrc(ALAC_44100_S16_2), sequence,
-                                    timestamp, 0, std::move(frame));
+                                    timestamp, 0, decodedFrame());
 }
 int main() {
   AudioPacketBuffer buffer;
@@ -51,7 +54,10 @@ int main() {
   auto overflow = buffer.accept(2000, 500, [&] { ++factories; return packet(2000, 5000); });
   assert(overflow.kind == ArrivalKind::overflow && buffer.occupancy() == 1);
   assert(buffer.front()->packet.sequence == 2000);
-  auto trimmed = packet(20, 6000);
+  auto source = decodedFrame();
+  OwnedAudioFrame shared(av_frame_clone(source.get()));
+  auto trimmed = QueuedAudioPacket::decoded(*AudioFormat::fromSsrc(ALAC_44100_S16_2),
+                                            20, 6000, 0, std::move(source));
   assert(trimmed.trimBefore(6005));
   assert(trimmed.metadata().timestamp == 6005 && trimmed.metadata().frames == 11);
   Resampler resampler;
@@ -60,6 +66,8 @@ int main() {
   assert(trimmed.metadata().frames == 11 && trimmed.audioBytes().size() == 44);
   auto samples = reinterpret_cast<const int16_t *>(trimmed.audioBytes().data());
   assert(samples[0] == 5 && samples[1] == 105);
+  assert(shared->nb_samples == 16);
+  assert(reinterpret_cast<int16_t *>(shared->data[0])[0] == 0);
   auto muted = QueuedAudioPacket::decoded(*AudioFormat::fromSsrc(ALAC_44100_S16_2),
                                          21, 7000, 0, {});
   muted.mute();
@@ -87,9 +95,14 @@ int main() {
   assert(expired.id == futureId && !expired.flushOutput && expired.complete);
   assert(buffer.occupancy() == 1);
   auto unchanged = buffer.front();
-  assert(buffer.dropOutdatedBefore(9005) == 0);
+  assert(buffer.discardPacketsStartingBefore(9005) == 0);
   assert(buffer.front()->packet.timestamp == unchanged->packet.timestamp);
   buffer.requestFlush(0);
   auto total = buffer.applyFlush();
   assert(total.flushOutput && total.complete && total.resetTiming && buffer.occupancy() == 0);
+  buffer.accept(50, 1200, [] { return packet(50, 10000); });
+  buffer.requestFlush(10016);
+  const auto boundary = buffer.applyFlush();
+  assert(boundary.complete && boundary.resetTiming && buffer.occupancy() == 0);
+  assert(!buffer.applyFlush().flushOutput);
 }

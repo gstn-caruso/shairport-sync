@@ -36,7 +36,9 @@ std::optional<AudioPacketBuffer::Front> AudioPacketBuffer::front() const {
     return std::nullopt;
   const auto &entry = entries_[read_ % capacity];
   return Front{entry->packet ? entry->packet->metadata() :
-      AudioPacketMetadata{read_, 0, 0, 0, SSRC_NONE, false}, revision_};
+      AudioPacketMetadata{read_, 0, 0, 0, SSRC_NONE, false}, revision_,
+      entry->packet ? entry->packet->sampleFormatForConversion() :
+          AV_SAMPLE_FMT_NONE};
 }
 std::optional<BufferedAudioPacket> AudioPacketBuffer::takeFrontIf(uint64_t revision) {
   Lock lock(mutex_);
@@ -128,8 +130,15 @@ AudioPacketBuffer::FlushEffect AudioPacketBuffer::applyFlush() {
       advanceRevision();
       return effect;
     }
+    const auto metadata = entry->packet->metadata();
+    const bool reachedBoundary = flush_->timestamp ==
+        static_cast<uint32_t>(metadata.timestamp + metadata.frames);
     discardFrontUnderLock();
     ++effect.discarded;
+    if (read_ == write_ && reachedBoundary) {
+      effect.complete = true;
+      flush_.reset();
+    }
   }
   if (effect.discarded) {
     resetUnderLock();
@@ -138,7 +147,7 @@ AudioPacketBuffer::FlushEffect AudioPacketBuffer::applyFlush() {
   }
   return effect;
 }
-size_t AudioPacketBuffer::dropOutdatedBefore(uint32_t timestamp) {
+size_t AudioPacketBuffer::discardPacketsStartingBefore(uint32_t timestamp) {
   Lock lock(mutex_);
   size_t discarded = 0;
   while (synced_ && read_ != write_) {

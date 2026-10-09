@@ -26,6 +26,10 @@ public:
   std::optional<AVSampleFormat> decodedSampleFormat() const {
     return sampleFormat_;
   }
+  AVSampleFormat sampleFormatForConversion() const {
+    return sampleFormat_.value_or(format_.isAac() ? AV_SAMPLE_FMT_FLTP :
+        format_.sampleBits() == 16 ? AV_SAMPLE_FMT_S16P : AV_SAMPLE_FMT_S32P);
+  }
   void mute() {
     if (metadata_.frames == 0)
       metadata_.frames = format_.framesPerPacket();

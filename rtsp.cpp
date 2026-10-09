@@ -2749,13 +2749,6 @@ void rtsp_conversation_thread_cleanup_function(void *arg) {
     if (rc)
       debug(1, "Connection %d: error %d destroying volume_control_mutex.", conn->connection_number,
             rc);
-    rc = pthread_cond_destroy(&conn->flowcontrol);
-    if (rc)
-      debug(1, "Connection %d: error %d destroying flow control condition variable.",
-            conn->connection_number, rc);
-    rc = pthread_mutex_destroy(&conn->ab_mutex);
-    if (rc)
-      debug(1, "Connection %d: error %d destroying ab_mutex.", conn->connection_number, rc);
     rc = pthread_mutex_destroy(&conn->flush_mutex);
     if (rc)
       debug(1, "Connection %d: error %d destroying flush_mutex.", conn->connection_number, rc);
@@ -2782,13 +2775,6 @@ static void *rtsp_conversation_thread_func(void *pconn) {
   int rc = pthread_mutex_init(&conn->flush_mutex, NULL);
   if (rc)
     die("Connection %d: error %d initialising flush_mutex.", conn->connection_number, rc);
-  rc = pthread_mutex_init(&conn->ab_mutex, NULL);
-  if (rc)
-    die("Connection %d: error %d initialising ab_mutex.", conn->connection_number, rc);
-  rc = pthread_cond_init(&conn->flowcontrol, NULL);
-  if (rc)
-    die("Connection %d: error %d initialising flow control condition variable.",
-        conn->connection_number, rc);
   rc = pthread_mutex_init(&conn->volume_control_mutex, NULL);
   if (rc)
     die("Connection %d: error %d initialising volume_control_mutex.", conn->connection_number, rc);

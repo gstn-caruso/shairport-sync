@@ -28,11 +28,6 @@ typedef uint16_t seq_t;
 // Dolby Atmos seems to be 7P1
 #include "audio_types.h"
 
-#ifdef __cplusplus
-#include "audio_packet_payload.hpp"
-#else
-typedef struct audio_buffer_entry abuf_t;
-#endif
 
 typedef struct stats { // statistics for running averages
   uint32_t timestamp;  // timestamp (denominated in input frames)
@@ -40,21 +35,8 @@ typedef struct stats { // statistics for running averages
   int64_t sync_error, correction, drift;
 } stats_t;
 
-// default buffer size
-// This needs to be a power of 2 because of the way BUFIDX(seqno) works.
-// 512 is the minimum for normal operation -- it gives 512*352/44100 or just over 4 seconds of
-// buffers.
-// For at least 10 seconds, you need to go to 2048.
-// Resend requests will be spaced out evenly in the latency period, subject to a minimum interval of
-// about 0.25 seconds.
-// Each buffer occupies 352*4 bytes plus about, say, 64 bytes of overhead in various places, say
-// roughly 1,500 bytes per buffer.
-// Thus, 2048 buffers will occupy about 3 megabytes -- no big deal in a normal machine but maybe a
-// problem in an embedded device.
-
-#define BUFFER_FRAMES 1024
-
 // maximum number of frames that can be added or removed from a packet_count
+#define BUFFER_FRAMES 1024
 #define INTERPOLATION_LIMIT 20
 
 

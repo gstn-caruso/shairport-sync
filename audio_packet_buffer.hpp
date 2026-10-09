@@ -17,7 +17,7 @@ public:
     uint64_t revision;
     std::vector<ResendRange> resendRanges{};
   };
-  struct Front { AudioPacketMetadata packet; uint64_t revision; };
+  struct Front { AudioPacketMetadata packet; uint64_t revision; AVSampleFormat sampleFormat; };
   struct FlushEffect {
     uint64_t id = 0;
     bool flushOutput = false, resetTiming = false, complete = false;
@@ -54,7 +54,7 @@ public:
   int waitForChange(uint64_t revision, timespec deadline);
   uint64_t requestFlush(uint32_t timestamp);
   FlushEffect applyFlush();
-  size_t dropOutdatedBefore(uint32_t timestamp);
+  size_t discardPacketsStartingBefore(uint32_t timestamp);
   std::vector<ResendRange> due(uint64_t now, RetryPolicy policy);
 
 private:
