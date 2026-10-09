@@ -1,8 +1,11 @@
 #pragma once
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <vector>
+
+namespace shairport::packets {
 
 struct RetryPolicy {
   uint64_t firstCheckAfter = UINT64_MAX, repeatAfter = 0, minimumRemaining = 0, playbackLatency = 0;
@@ -27,6 +30,8 @@ private:
     unsigned attempts = 0;
     bool requestIfDue(uint64_t now, RetryPolicy policy);
   };
-  static constexpr size_t capacity = 1024;
+  static constexpr std::size_t capacity = 1024;
   std::array<std::optional<Missing>, capacity> missing_;
 };
+
+}

@@ -1,4 +1,6 @@
-#include "retransmission_planner.hpp"
+#include "packets/retransmission_planner.hpp"
+
+namespace shairport::packets {
 
 bool RetransmissionPlanner::Missing::requestIfDue(uint64_t now, RetryPolicy policy) {
   if (now < noticed)
@@ -42,4 +44,6 @@ std::vector<ResendRange> RetransmissionPlanner::due(uint64_t now, RetryPolicy po
 void RetransmissionPlanner::reset() {
   for (auto &missing : missing_)
     missing.reset();
+}
+
 }
