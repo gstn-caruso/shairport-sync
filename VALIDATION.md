@@ -246,6 +246,15 @@ Group (0.04s), exact concurrent case, two shuffled repetitions and Release 199/1
 (15.36s) passed; each entry has timeout 5. Native assertions and C ABI/cancellation/
 shell checks remain; production is unchanged and sanitizers/devices were not rerun.
 
+Volume-transaction discovery (`ctest --test-dir build/redesign-release -R '^VolumeTransaction\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+One named case retains the original wrapped-mutex contention handshake, startup/
+setter ordering, both joins and final mute/level checks with fresh callback state.
+Group/exact selection (0.02s), two in-process repetitions and Release 199/199
+(15.36s) passed; timeout is 5. Output settings/shared level restore after joins;
+the mutex wrap flag and C ABI/cancellation/shell checks remain. Production is
+unchanged and sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
