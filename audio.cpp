@@ -199,7 +199,8 @@ uint32_t get_format_settings(const char *stanza_name, const char *setting_name) 
           } else {
             sps_format_t f;
             int valid = 0;
-            for (f = SPS_FORMAT_LOWEST; f <= SPS_FORMAT_HIGHEST_NATIVE; f++) {
+            for (f = SPS_FORMAT_LOWEST; f <= SPS_FORMAT_HIGHEST_NATIVE;
+                 f = static_cast<sps_format_t>(f + 1)) {
               if (strcmp(format_settings[i], sps_format_description_string(f)) == 0) {
                 format_set |= (1 << f);
                 valid = 1;
@@ -225,7 +226,7 @@ uint32_t get_format_settings(const char *stanza_name, const char *setting_name) 
   uint32_t t_format_set = format_set;
   char buf[256];
   char *p = buf;
-  for (f = SPS_FORMAT_UNKNOWN; f <= SPS_FORMAT_S32_BE; f++) {
+  for (f = SPS_FORMAT_UNKNOWN; f <= SPS_FORMAT_S32_BE; f = static_cast<sps_format_t>(f + 1)) {
     if ((t_format_set & (1 << f)) != 0) {
       snprintf(p, sizeof(buf) - (p - buf) - 1, "%s", sps_format_description_string(f));
       p = p + strlen(sps_format_description_string(f));
@@ -275,7 +276,7 @@ uint32_t get_rate_settings(const char *stanza_name, const char *setting_name) {
             debug(3, "rate setting %d: %d.", i, rates[i]);
             sps_rate_t r;
             int valid = 0;
-            for (r = SPS_RATE_5512; r <= SPS_RATE_384000; r++) {
+            for (r = SPS_RATE_5512; r <= SPS_RATE_384000; r = static_cast<sps_rate_t>(r + 1)) {
               if ((unsigned int)rates[i] == sps_rate_actual_rate(r)) {
                 valid = 1;
 
@@ -303,7 +304,7 @@ uint32_t get_rate_settings(const char *stanza_name, const char *setting_name) {
   char *p = buf;
   uint32_t t_rate_set = rate_set;
   char numbuf[32];
-  for (r = SPS_RATE_UNKNOWN; r <= SPS_RATE_384000; r++) {
+  for (r = SPS_RATE_UNKNOWN; r <= SPS_RATE_384000; r = static_cast<sps_rate_t>(r + 1)) {
     if ((t_rate_set & (1 << r)) != 0) {
       snprintf(numbuf, sizeof(numbuf) - 1, "%u", sps_rate_actual_rate(r));
       snprintf(p, sizeof(buf) - (p - buf) - 1, "%s", numbuf);
@@ -415,7 +416,7 @@ sps_format_t check_configuration_with_formats(
       if (((config.rate_set & (1 << r)) != 0) && (rate == sps_rate_actual_rate(r)))
         rate_is_permissible = 1;
       else
-        r++;
+        r = static_cast<sps_rate_t>(r + 1);
     }
     if (rate_is_permissible != 0) {
       // check the actual requested format first with the initial_search array
@@ -916,15 +917,15 @@ int32_t search_for_suitable_configuration(unsigned int channels, unsigned int ra
 
       debug(3,
             "output configuration search for request: %s/%u/%u, succeeded with response: %u/%s/%u.",
-            sps_format_description_string(format), rate, channels,
+            sps_format_description_string(static_cast<sps_format_t>(format)), rate, channels,
             RATE_FROM_ENCODED_FORMAT(reply),                                  // rate
-            sps_format_description_string(FORMAT_FROM_ENCODED_FORMAT(reply)), // format
+            sps_format_description_string(static_cast<sps_format_t>(FORMAT_FROM_ENCODED_FORMAT(reply))),
             CHANNELS_FROM_ENCODED_FORMAT(reply)                               // channels
       );
 
     } else {
       debug(1, "output configuration search for request: %s/%u/%u failed.",
-            sps_format_description_string(format), rate, channels);
+            sps_format_description_string(static_cast<sps_format_t>(format)), rate, channels);
     }
   }
   return reply;

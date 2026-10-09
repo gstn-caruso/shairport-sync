@@ -431,7 +431,7 @@ int get_ptp_anchor_local_time_info(rtsp_conn_info *conn, uint32_t *anchorRTP,
               conn->connection_number, response);
         break;
       }
-      conn->clock_status = response;
+      conn->clock_status = static_cast<clock_status_t>(response);
     }
 
     if (conn->last_anchor_info_is_valid != 0) {

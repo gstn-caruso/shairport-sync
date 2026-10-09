@@ -154,7 +154,7 @@ static int check_settings(sps_format_t sample_format, unsigned int sample_rate,
 }
 
 static int check_configuration(unsigned int channels, unsigned int rate, unsigned int format) {
-  return check_settings(format, rate, channels);
+  return check_settings(static_cast<sps_format_t>(format), rate, channels);
 }
 
 static int32_t get_configuration(unsigned int channels, unsigned int rate, unsigned int format) {
@@ -181,7 +181,7 @@ static int configure(int32_t requested_encoded_format, char **resulting_channel_
             short_format_description(requested_encoded_format));
     current_encoded_output_format = requested_encoded_format;
     pa_sps_t *format_info =
-        sps_format_lookup(FORMAT_FROM_ENCODED_FORMAT(current_encoded_output_format));
+        sps_format_lookup(static_cast<sps_format_t>(FORMAT_FROM_ENCODED_FORMAT(current_encoded_output_format)));
 
     if (format_info == NULL)
       die("pa: can't find format information!");
@@ -207,7 +207,7 @@ static int configure(int32_t requested_encoded_format, char **resulting_channel_
     audio_size = RATE_FROM_ENCODED_FORMAT(current_encoded_output_format) *
                  format_info->bytes_per_sample *
                  CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format) * 1; // one seconds
-    audio_lmb = malloc(audio_size);
+    audio_lmb = static_cast<char *>(malloc(audio_size));
     if (audio_lmb == NULL)
       die("Can't allocate %zd bytes for pulseaudio buffer.", audio_size);
     audio_toq = audio_eoq = audio_lmb;
@@ -430,8 +430,9 @@ static int configure(int32_t requested_encoded_format, char **resulting_channel_
     buffer_attr.minreq = (uint32_t)-1;
 
     pa_stream_flags_t stream_flags;
-    stream_flags = PA_STREAM_START_CORKED | PA_STREAM_INTERPOLATE_TIMING | PA_STREAM_NOT_MONOTONIC |
-                   PA_STREAM_AUTO_TIMING_UPDATE | PA_STREAM_ADJUST_LATENCY;
+    stream_flags = static_cast<pa_stream_flags_t>(
+        PA_STREAM_START_CORKED | PA_STREAM_INTERPOLATE_TIMING | PA_STREAM_NOT_MONOTONIC |
+        PA_STREAM_AUTO_TIMING_UPDATE | PA_STREAM_ADJUST_LATENCY);
 
     int connect_result;
 
@@ -551,7 +552,7 @@ static int init(__attribute__((unused)) int argc, __attribute__((unused)) char *
   if (pa_threaded_mainloop_start(mainloop) != 0)
     die("could not start the pulseaudio threaded mainloop");
 
-  if (pa_context_connect(context, config.pa_server, 0, NULL) != 0)
+  if (pa_context_connect(context, config.pa_server, PA_CONTEXT_NOFLAGS, NULL) != 0)
     die("failed to connect to the pulseaudio context -- the error message is \"%s\".",
         pa_strerror(pa_context_errno(context)));
 
@@ -595,7 +596,7 @@ static int play(void *buf, int samples, __attribute__((unused)) int sample_type,
   check_pa_stream_status(stream, "audio_pa play.");
 
   pa_sps_t *format_info =
-      sps_format_lookup(FORMAT_FROM_ENCODED_FORMAT(current_encoded_output_format));
+      sps_format_lookup(static_cast<sps_format_t>(FORMAT_FROM_ENCODED_FORMAT(current_encoded_output_format)));
   size_t bytes_to_transfer = samples * format_info->bytes_per_sample *
                              CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format);
 
@@ -610,7 +611,7 @@ static int play(void *buf, int samples, __attribute__((unused)) int sample_type,
       audio_eoq += bytes_to_transfer;
     } else {
       memcpy(audio_eoq, buf, space_to_end_of_buffer);
-      buf += space_to_end_of_buffer;
+      buf = static_cast<char *>(buf) + space_to_end_of_buffer;
       memcpy(audio_lmb, buf, bytes_to_transfer - space_to_end_of_buffer);
       audio_eoq = audio_lmb + bytes_to_transfer - space_to_end_of_buffer;
     }
@@ -650,7 +651,7 @@ int pa_delay(long *the_delay) {
     reply = -EIO;
   } else {
     pa_sps_t *format_info =
-        sps_format_lookup(FORMAT_FROM_ENCODED_FORMAT(current_encoded_output_format));
+        sps_format_lookup(static_cast<sps_format_t>(FORMAT_FROM_ENCODED_FORMAT(current_encoded_output_format)));
     // convert audio_occupancy bytes to frames and latency microseconds into frames
     result = (audio_occupancy / (format_info->bytes_per_sample *
                                  CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format))) +
@@ -702,12 +703,12 @@ static void stop(void) {
 
 void context_state_cb(__attribute__((unused)) pa_context *local_context, void *local_mainloop) {
   // debug(1,"context_state_cb called.");
-  pa_threaded_mainloop_signal(local_mainloop, 0);
+  pa_threaded_mainloop_signal(static_cast<pa_threaded_mainloop *>(local_mainloop), 0);
 }
 
 void stream_state_cb(__attribute__((unused)) pa_stream *s, void *local_mainloop) {
   // debug(1,"stream_state_cb called.");
-  pa_threaded_mainloop_signal(local_mainloop, 0);
+  pa_threaded_mainloop_signal(static_cast<pa_threaded_mainloop *>(local_mainloop), 0);
 }
 
 void stream_write_cb(pa_stream *local_stream, size_t requested_bytes,
@@ -774,15 +775,16 @@ void stream_success_cb(__attribute__((unused)) pa_stream *local_stream,
 audio_output audio_pa = {.name = "pulseaudio",
                          .init = &init,
                          .deinit = &deinit,
-                         .start = NULL,
-                         .configure = &configure,
+                         .prepare = NULL,
                          .get_configuration = &get_configuration,
+                         .configure = &configure,
+                         .start = NULL,
+                         .play = &play,
                          .stop = &stop,
                          .is_running = NULL,
                          .flush = &flush,
                          .delay = &pa_delay,
                          .stats = NULL,
-                         .play = &play,
                          .volume = NULL,
                          .parameters = NULL,
                          .mute = NULL};
