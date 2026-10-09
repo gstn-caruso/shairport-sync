@@ -220,8 +220,6 @@ void usage(char *progname) {
 }
 
 int parse_options(int argc, char **argv) {
-  // there are potential memory leaks here -- it's called a second time, previously allocated
-  // strings will dangle.
   char *cli_service_type_string = NULL;
   char *cli_backend_string = NULL;
   char *raw_service_name = NULL; /* Used to pick up the service name before possibly expanding it */
@@ -327,8 +325,18 @@ int parse_options(int argc, char **argv) {
   if (stuffing != NULL && strcasecmp(stuffing, "soxr") == 0)
     die("soxr is a removed option; use basic, vernier or auto interpolation.");
   poptFreeContext(optCon);
-
-
+  free(raw_service_name);
+  raw_service_name = NULL;
+  free(stuffing);
+  stuffing = NULL;
+  free(cli_service_type_string);
+  cli_service_type_string = NULL;
+  free(config.cmd_start);
+  config.cmd_start = NULL;
+  free(config.cmd_stop);
+  config.cmd_stop = NULL;
+  free(config.password);
+  config.password = NULL;
   if (config.timeout != 0) {
     if (config.timeout < 60) {
       inform("Note: the timeout value if invalid -- it must be 0 (i.e. no timeout) or at least 60. "
@@ -881,6 +889,10 @@ if (config_lookup(config.cfg, "general.alac_decoder") != NULL)
   // now, do the command line options again, but this time do them fully -- it's a unix convention
   // that command line
   // arguments have precedence over configuration file settings.
+  if (config.configfile != configuration_file_path) {
+    free(config.configfile);
+    config.configfile = configuration_file_path;
+  }
   optind = argc;
   for (j = 0; j < argc; j++)
     if (strcmp(argv[j], "--") == 0)

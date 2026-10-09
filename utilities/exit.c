@@ -33,7 +33,7 @@ SOFTWARE.
 // the thread will take care of terminating the program cleanly.
 // pass in EXIT_SUCCESS or EXIT_FAILURE in the request.
 
-#include <signal.h> // for sig_atomic_t
+#include <stdatomic.h>
 #include <stdlib.h> // for EXIT_SUCCESS
 #include <string.h> // for memset
 #include <unistd.h> // for usleep
@@ -42,16 +42,17 @@ SOFTWARE.
 #include "exit.h"
 #include "common.h"
 
-volatile sig_atomic_t exit_request_flag = 0;
-volatile sig_atomic_t exit_status = EXIT_SUCCESS;
+_Static_assert(ATOMIC_INT_LOCK_FREE == 2, "exit requests must be safe in signal handlers");
+static atomic_int exit_request_flag = 0;
+static atomic_int exit_status = EXIT_SUCCESS;
 
 pthread_t exit_manager_thread;
 
 void *exit_manager(__attribute__((unused)) void *arg) {
-  while(exit_request_flag == 0) {
+  while(atomic_load_explicit(&exit_request_flag, memory_order_acquire) == 0) {
     usleep(100000);
   }
-  exit(exit_status);
+  exit(atomic_load_explicit(&exit_status, memory_order_relaxed));
   return NULL;
 }
 
@@ -61,6 +62,6 @@ void exit_init() {
 }
 
 void exit_request(const int exit_status_requested) {
-  exit_status = exit_status_requested; // EXIT_SUCCESS or EXIT_FAILURE
-  exit_request_flag = 1; // ask for exit
+  atomic_store_explicit(&exit_status, exit_status_requested, memory_order_relaxed);
+  atomic_store_explicit(&exit_request_flag, 1, memory_order_release);
 }

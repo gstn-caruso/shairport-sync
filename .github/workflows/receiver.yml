@@ -8,17 +8,21 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  cmake:
+  reference:
     runs-on: ubuntu-latest
     container: ubuntu:26.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [Release, Debug, ASan-UBSan, TSan, Autotools]
     env:
       ASDF_DATA_DIR: /opt/asdf
     steps:
       - name: Install C++26 build dependencies
         run: |
           apt-get update
-          apt-get install -y ca-certificates curl git cmake ninja-build gcc-15 g++-15 g++ zstd pkg-config libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
+          apt-get install -y ca-certificates curl git cmake ninja-build autoconf automake gcc-15 g++-15 g++ zstd pkg-config libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
       - uses: actions/checkout@v4
       - name: Install asdf
         run: |
@@ -47,32 +51,51 @@ jobs:
           asdf exec clang++ --version
           echo /opt/asdf/shims >> "$GITHUB_PATH"
       - name: CMake build, contracts and staged install
+        if: matrix.build != 'Autotools'
+        env:
+          BUILD: ${{ matrix.build }}
         run: |
-          cmake -S . -B build/cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/clang-toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_SYSCONFDIR=/etc
+          build_type="$BUILD"
+          sanitizer_flags=
+          case "$BUILD" in
+            ASan-UBSan) build_type=Debug; sanitizer_flags='-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer' ;;
+            TSan) build_type=Debug; sanitizer_flags='-fsanitize=thread -fno-omit-frame-pointer' ;;
+          esac
+          cmake -S . -B build/cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/clang-toolchain.cmake -DCMAKE_BUILD_TYPE="$build_type" -DCMAKE_INSTALL_SYSCONFDIR=/etc -DCMAKE_C_FLAGS="$sanitizer_flags" -DCMAKE_CXX_FLAGS="$sanitizer_flags"
           cmake --build build/cmake --parallel 2
+          case "$BUILD" in
+            ASan-UBSan)
+              nm -u build/cmake/CMakeFiles/receiver.dir/utilities/structured_buffer.cpp.o | grep __asan_init
+              nm -u build/cmake/CMakeFiles/receiver.dir/rtsp.c.o | grep __ubsan_handle
+              ;;
+            TSan)
+              nm -u build/cmake/CMakeFiles/receiver.dir/utilities/structured_buffer.cpp.o | grep __tsan_init
+              nm -u build/cmake/CMakeFiles/receiver.dir/rtsp.c.o | grep __tsan_init
+              ;;
+          esac
           ctest --test-dir build/cmake --output-on-failure
           DESTDIR="$PWD/build/cmake/stage" cmake --install build/cmake
           test -f build/cmake/stage/usr/local/bin/shairport-sync
           test -f build/cmake/stage/usr/local/share/man/man1/shairport-sync.1
           test -f build/cmake/stage/etc/shairport-sync.conf.sample
-  receiver:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y autoconf automake pkg-config libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
+          cmp man/shairport-sync.1 build/cmake/stage/usr/local/share/man/man1/shairport-sync.1
+          cmp scripts/shairport-sync.conf build/cmake/stage/etc/shairport-sync.conf.sample
       - name: Out-of-tree build and contracts
+        if: matrix.build == 'Autotools'
         run: |
           autoreconf -fi
           mkdir build
           cd build
-          ../configure
+          ../configure --sysconfdir=/etc
           make -j2
           make check -j2
           make DESTDIR="$PWD/stage" install
           test -f stage/usr/local/bin/shairport-sync
-          test -f stage/usr/local/etc/shairport-sync.conf.sample
+          test -f stage/etc/shairport-sync.conf.sample
+          cmp ../man/shairport-sync.1 stage/usr/local/share/man/man1/shairport-sync.1
+          cmp ../scripts/shairport-sync.conf stage/etc/shairport-sync.conf.sample
       - name: In-tree build
+        if: matrix.build == 'Autotools'
         run: |
           ./configure
           make -j2

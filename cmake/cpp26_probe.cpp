@@ -3,6 +3,10 @@
 #include <span>
 #include <thread>
 
+#if __cplusplus <= 202302L || !defined(__STRICT_ANSI__)
+#error C++26 without extensions is required
+#endif
+
 #if !defined(__GLIBCXX__) || _GLIBCXX_RELEASE != 15
 #error libstdc++ 15 is required
 #endif

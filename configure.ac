@@ -26,15 +26,40 @@ AC_ARG_WITH([avahi], [AS_HELP_STRING([--with-avahi], [Avahi is required])], [], 
 AC_ARG_WITH([ffmpeg], [AS_HELP_STRING([--with-ffmpeg], [FFmpeg is required])], [], [with_ffmpeg=yes])
 AC_ARG_WITH([ssl], [AS_HELP_STRING([--with-ssl=openssl], [OpenSSL is required])], [], [with_ssl=openssl])
 AS_IF([test "x$with_airplay_2" != xyes -o "x$with_pulseaudio" != xyes -o "x$with_avahi" != xyes -o "x$with_ffmpeg" != xyes -o "x$with_ssl" != xopenssl], [AC_MSG_ERROR([this fork requires AirPlay 2, PulseAudio, Avahi, FFmpeg and OpenSSL])])
-AM_INIT_AUTOMAKE([subdir-objects])
+AS_IF([test -z "$CC" -o -z "$CXX"], [
+  pinned_cc=`cd "$srcdir" && asdf which clang` || AC_MSG_ERROR([install the pinned asdf toolchain])
+  pinned_cxx=`cd "$srcdir" && asdf which clang++` || AC_MSG_ERROR([install the pinned asdf toolchain])
+  : ${CC:="$pinned_cc"}
+  : ${CXX:="$pinned_cxx"}
+])
 AC_PROG_CC
 AC_PROG_CXX
+AC_LANG_PUSH([C])
+AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
+#if !defined(__clang__) || __clang_major__ != 23 || __clang_minor__ != 1 || __clang_patchlevel__ != 3
+#error Clang 23.1.3 is required
+#endif
+int main(void) { return 0; }
+]])], [], [AC_MSG_ERROR([Clang 23.1.3 is required for both compilers])])
+AC_LANG_POP([C])
 AC_LANG_PUSH([C++])
+AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
+#if !defined(__clang__) || __clang_major__ != 23 || __clang_minor__ != 1 || __clang_patchlevel__ != 3
+#error Clang 23.1.3 is required
+#endif
+int main() { return 0; }
+]])], [], [AC_MSG_ERROR([Clang 23.1.3 is required for both compilers])])
 saved_cxxflags="$CXXFLAGS"
-CXXFLAGS="$CXXFLAGS -std=c++11"
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <memory>]], [[std::unique_ptr<char[]> bytes(new char[1]);]])], [], [AC_MSG_ERROR([a C++11 compiler and standard library are required])])
-CXXFLAGS="$saved_cxxflags"
+saved_cppflags="$CPPFLAGS"
+CPPFLAGS="$CPPFLAGS -I$srcdir"
+CXXFLAGS="$CXXFLAGS -std=c++26 -pthread"
+AC_RUN_IFELSE([AC_LANG_SOURCE([[#include "cmake/cpp26_probe.cpp"]])], [],
+  [AC_MSG_ERROR([C++26 expected/span/format/jthread with libstdc++ 15 must compile, link and run])],
+  [AC_MSG_ERROR([cross-compilation cannot verify the C++26 runtime])])
+CXXFLAGS="$saved_cxxflags -std=c++26"
+CPPFLAGS="$saved_cppflags"
 AC_LANG_POP([C++])
+AM_INIT_AUTOMAKE([subdir-objects])
 AC_PROG_RANLIB
 AC_CHECK_TOOL([AR], [ar], [:])
 AC_PROG_INSTALL

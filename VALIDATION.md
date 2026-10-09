@@ -186,3 +186,73 @@ cannot independently establish the handover sequence. This is a user-reported
 baseline observation, not validation of the CMake binary, simultaneous multiroom,
 pairing/Home, or all realtime/buffered modes. The user can repeat hardware tests
 when the migrated receiver is ready.
+
+## Reproducible reference and toolchain parity
+
+Expectation: while CMake and Autotools coexist, both build the same receiver with
+Clang 23.1.3, C++26 without extensions and libstdc++ 15, reject incompatible
+compilers, and preserve staged binary/manual/sample destinations. Separate
+Release, Debug, ASan+UBSan and TSan checks must exercise receiver code and fail
+on sanitizer diagnostics even when the receiver intentionally rejects startup.
+
+The pre-change reference was commit `87f28786`. A clean CMake Release build in
+`build/migration-reference-release` passed 7/7 CTest contracts and staged matching
+manual/sample files. The user tested the installed reference and replied
+"todo ok" to the proposed playback/pause/reconnect and optional pairing/Home or
+two-device checks. This is general user confirmation: no timing, mode-by-mode
+result or simultaneous-playback claim was supplied. It validates that installed
+reference, not the binaries produced by subsequent changes.
+
+Red: `tests/configure_test.sh` with the new explicit `CC=gcc CXX=g++` rejection
+failed with `Accepted unpinned compiler`. Autotools previously requested C++11.
+Green: Autotools resolves real default compiler paths from the source repository,
+rejects GCC for either language independently, and compiles/links/runs the shared
+C++26 probe. The contract runs configure from a temporary directory outside the
+repository. No global asdf selection is needed.
+
+Sanitizer checks exposed three pre-existing defects, fixed in separate commits:
+
+- ASan reported 39 bytes leaked by stack-owned RTSP test request headers. The
+  fixture now uses the message allocation/free contract.
+- Expected-failure shell contracts had accepted sanitizer diagnostics alongside
+  their expected fatal messages. After hardening, NQPTP startup reported a
+  first-pass CLI configuration-path leak (34 bytes for the temporary path), and
+  removed `--service-type` reported 39 bytes in two allocations. `parse_options`
+  now releases its first-pass strings before reparsing. NQPTP additionally checks
+  name/password/start/stop/stuffing CLI strings without disabling leak detection.
+- The first apparent TSan 7/7 result was invalid: those shell contracts concealed
+  race reports. Hardened contracts produced 5/7, reporting the volatile exit
+  flag and cleanup reads without synchronization. The exit manager now acquires
+  a release-published atomic request; status is atomic too. A compile-time
+  always-lock-free check preserves signal-handler use. This orders startup writes
+  before cleanup without changing the polling interval or introducing a mutex.
+
+Clean pinned builds used `build/migration-pinned-debug`,
+`build/migration-pinned-release` and `build/migration-pinned-autotools`; rebuilt
+after the fixes, Debug and Release passed 7/7, and Autotools `make check -j2`
+passed 7/7. Staging with `sysconfdir=/etc` produced
+`usr/local/bin/shairport-sync`, `usr/local/share/man/man1/shairport-sync.1` and
+`etc/shairport-sync.conf.sample`. `cmp` matched both data files to repository
+sources for all three builds. Service and user configuration were untouched.
+The in-tree Autotools check initially failed because Automake's already-configured
+source guard preceded the compiler rejection test. Toolchain validation now
+precedes Automake initialization; the in-tree suite passed 7/7. `make distclean`
+removed its source configuration so CMake remains usable. Staged binaries reported
+the expected AirPlay2/SMI10/OpenSSL/Avahi/PulseAudio feature string and their
+configured sysconfdir; Git version strings reflect their build-time dirty tree.
+
+The local source-built asdf Clang lacked compiler-rt, so sanitizer builds used
+the previously verified official Clang 23.1.3 installation under
+`build/asdf-ci-check/installs/clang/23.1.3`. `nm -u` on receiver
+`rtsp.c.o` and `utilities/structured_buffer.cpp.o` confirmed ASan/UBSan and TSan
+symbols in actual C and C++ receiver objects. The fixture shared library remains
+test-only and uninstrumented; preloading it works with these static sanitizer
+runtimes. ASan+UBSan passed 7/7 with CI's non-recovering flags (13.26 seconds), and TSan passed
+7/7 with the hardened contracts (62.06 seconds). These tests cover
+startup contracts and current unit/integration cases, not real playback threads.
+
+The workflow now has exactly five builds: Release, Debug, ASan-UBSan, TSan and
+Autotools. Each uses the same pinned bootstrap and runs contracts and staged
+install checks; Autotools also checks an in-tree build. `build/tools/actionlint`
+accepted the workflow, including shellcheck. Remote execution and device tests
+of the resulting binaries remain pending independent review and publication.

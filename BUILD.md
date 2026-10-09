@@ -7,7 +7,9 @@ utilities use C++ behind C APIs; the other receiver sources remain C. Returned
 strings retain their malloc/free ownership contract. CMake enables C++26
 and verifies real standard
 library support by compiling, linking and running an expected/span/format/jthread probe.
-Both compilers must be Clang 23.1.3, pinned in `.tool-versions`, with libstdc++ 15.
+Both build systems require Clang 23.1.3 for C and C++, pinned in `.tool-versions`,
+with libstdc++ 15 and C++26 without GNU extensions. They compile, link and run
+the same `cmake/cpp26_probe.cpp` before building the receiver.
 Use CMake 4.2 or newer and Ninja. The compiler does not supply the C++ library:
 install GCC 15 development headers and libstdc++ 15 on the host first.
 
@@ -53,26 +55,63 @@ in-tree Autotools build left `config.h` in the source directory.
 
 ## Autotools build
 
-Autotools requires a C compiler and a C++11 compiler with its standard library.
-On Debian/Ubuntu, install the build dependencies (including `g++`):
+Install the pinned compiler and GCC 15 library described above, then the receiver
+dependencies. Autotools resolves default compiler paths through `asdf which`
+from the source directory, including when configuring outside the repository.
+Explicit `CC` or `CXX` overrides must also select Clang 23.1.3.
+On Debian/Ubuntu:
 
 ```sh
-sudo apt-get install autoconf automake g++ pkg-config libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
+sudo apt-get install autoconf automake g++-15 g++ pkg-config libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
 ```
 
 Build with the default, mandatory AirPlay 2 Linux PulseAudio stack:
 
 ```sh
 autoreconf -fi
-mkdir build
-cd build
-../configure --sysconfdir=/etc
+mkdir -p build/autotools
+cd build/autotools
+../../configure --sysconfdir=/etc
 make -j2
 make check
 sudo make install
 ```
 
 An in-tree build also works: run `./configure`, `make`, and `make check` at the repository root. Run `make distclean` before switching from an in-tree configuration to another build directory.
+
+## Migration checks
+
+CI runs separate CMake Release, Debug, ASan+UBSan and TSan builds, plus Autotools,
+all with the same pinned compiler and library. Every build runs its contracts
+and stages the binary, manual and sample configuration without starting a service.
+The sanitizer jobs check instrumentation in receiver C and C++ object files.
+
+The compiler installation must include compiler-rt runtimes for sanitizer builds;
+the official binary archive used by CI includes them. Some source-built asdf
+installations contain only Clang and headers and must install compiler-rt first.
+Reproduce ASan+UBSan separately from TSan:
+
+```sh
+cmake -S . -B build/asan -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/clang-toolchain.cmake -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer' \
+  -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer'
+cmake --build build/asan --parallel 2
+ctest --test-dir build/asan --output-on-failure
+cmake -S . -B build/tsan -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/clang-toolchain.cmake -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_FLAGS='-fsanitize=thread -fno-omit-frame-pointer' \
+  -DCMAKE_CXX_FLAGS='-fsanitize=thread -fno-omit-frame-pointer'
+cmake --build build/tsan --parallel 2
+ctest --test-dir build/tsan --output-on-failure
+```
+
+The NQPTP fixtures preload an uninstrumented test-only shared library built by
+the system `cc`; receiver code remains instrumented with Clang's static sanitizer
+runtime. Expected startup failures still reject sanitizer diagnostics, including
+leaks. Leak detection remains enabled. A TSan runtime startup failure caused by
+host address-space or sandbox restrictions is failed infrastructure validation;
+it does not establish the absence of data races.
 
 Install and run NQPTP compatible with this receiver's shared-memory interface (currently SMI version 10) and Avahi as system services. Start a PulseAudio-compatible user session. PipeWire users should run `pipewire-pulse`; the native PipeWire backend is not provided.
 
