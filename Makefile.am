@@ -1,4 +1,5 @@
 ARFLAGS = cr
+LIBS =
 AM_CFLAGS = --include=utilities/debug.h -Wshadow -fno-common -Wno-multichar -Wall -Wextra -Wformat=2 -Wno-clobbered -Wno-psabi -pthread -DSYSCONFDIR=\"$(sysconfdir)\"
 bin_PROGRAMS = shairport-sync
 AM_CXXFLAGS = -std=c++26 -Wall -Wextra -Wshadow -Wformat=2 -pthread
@@ -6,7 +7,7 @@ noinst_LIBRARIES = lib_pair_ap.a lib_receiver.a lib_receiver_text.a
 lib_receiver_text_a_SOURCES = utilities/service_name_formatter.cpp
 lib_pair_ap_a_CFLAGS = -Wall -g -DCONFIG_GCRYPT -pthread --include=utilities/debug.h
 lib_pair_ap_a_SOURCES = pair_ap/pair.c pair_ap/pair_fruit.c pair_ap/pair_homekit.c pair_ap/pair-tlv.c
-shairport_sync_LDADD = lib_receiver.a lib_receiver_text.a lib_pair_ap.a
+shairport_sync_LDADD = lib_receiver.a lib_receiver_text.a lib_pair_ap.a @LIBS@
 shairport_sync_SOURCES = main.c
 shairport_sync_LINK = $(CXXLINK)
 lib_receiver_a_SOURCES = shairport.c bonjour_strings.c mdns.c mdns_avahi.c common.c rtp.c \
