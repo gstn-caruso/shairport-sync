@@ -112,6 +112,14 @@ and full Release 121/121 (13.94s) passed; each entry has timeout 5. The variadic
 helper retains `va_end` before assertions; C adapter, native cancellation and shell
 checks remain green. Production is unchanged; sanitizers/devices were not rerun.
 
+Activity-state discovery (`ctest --test-dir build/redesign-release -R '^ActivityState\.'
+--no-tests=error`) failed before migration (exit 8); the legacy suite passed.
+Five independent cases preserve all original transition sequences and the initial
+C status check. Group (0.09s), exact delayed-reactivation case and full Release
+125/125 (14.15s) passed; each entry has timeout 5. Native monitor/cancellation,
+C ABI and shell checks remain green. No sleeps or production changes were added;
+sanitizers/devices were not rerun.
+
 CTest covers:
 
 | Test | Contract |
