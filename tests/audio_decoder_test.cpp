@@ -1,8 +1,6 @@
 #include "session/session_state.hpp"
 #include "audio/decoding/audio_decoder.hpp"
 #include <gtest/gtest.h>
-#include <cassert>
-#include <string.h>
 #include <malloc.h>
 #include <array>
 #include <memory>
@@ -27,168 +25,177 @@ extern "C" void __wrap_av_frame_free(AVFrame **frame) {
 extern "C" int __wrap_avcodec_open2(AVCodecContext *context, const AVCodec *codec,
                                    AVDictionary **options) {
   if (context->extradata_size > 0) {
-    assert(malloc_usable_size(context->extradata) >=
-           context->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
+    const auto required = context->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE;
+    EXPECT_GE(malloc_usable_size(context->extradata), required);
+    if (malloc_usable_size(context->extradata) < static_cast<size_t>(required))
+      return AVERROR(EINVAL);
     for (int index = 0; index < AV_INPUT_BUFFER_PADDING_SIZE; ++index)
-      assert(context->extradata[context->extradata_size + index] == 0);
+      EXPECT_EQ(context->extradata[context->extradata_size + index], 0) << "Padding byte " << index;
   }
   ++contextsOpened;
   return __real_avcodec_open2(context, codec, options);
 }
 extern "C" int __wrap_avcodec_send_packet(AVCodecContext *context, const AVPacket *packet) {
-  assert(packet->buf != nullptr);
-  assert(packet->buf->size >= packet->size + AV_INPUT_BUFFER_PADDING_SIZE);
+  EXPECT_NE(packet->buf, nullptr);
+  if (!packet->buf)
+    return AVERROR(EINVAL);
+  EXPECT_GE(packet->buf->size, packet->size + AV_INPUT_BUFFER_PADDING_SIZE);
+  if (packet->buf->size < packet->size + AV_INPUT_BUFFER_PADDING_SIZE)
+    return AVERROR(EINVAL);
   for (int index = 0; index < AV_INPUT_BUFFER_PADDING_SIZE; ++index)
-    assert(packet->data[packet->size + index] == 0);
+    EXPECT_EQ(packet->data[packet->size + index], 0) << "Padding byte " << index;
   return __real_avcodec_send_packet(context, packet);
 }
 
-static void checkPreparedFormatsThrough(AudioDecoder &decoder, ssrc_t lastEncoding) {
-  const ssrc_t formats[] = {ALAC_44100_S16_2, ALAC_48000_S24_2, AAC_44100_F24_2,
-                            AAC_48000_F24_2, AAC_48000_F24_5P1, AAC_48000_F24_7P1};
-  for (size_t index = 0; index < sizeof(formats) / sizeof(formats[0]); index++) {
-    auto format = *AudioFormat::fromSsrc(formats[index]);
-    assert(decoder.prepare(format) == Preparation::changed);
-    assert(decoder.currentFormat() == format);
-    const auto opened = contextsOpened, released = contextsReleased;
-    assert(decoder.prepare(format) == Preparation::unchanged);
-    assert(contextsOpened == opened && contextsReleased == released);
-    assert(decoder.currentFormat()->sampleRate() == (formats[index] == ALAC_44100_S16_2 ||
-                                formats[index] == AAC_44100_F24_2 ? 44100U : 48000U));
-    if (formats[index] == lastEncoding)
-      break;
-  }
-}
+struct DecoderFormatCase {
+  const char *name;
+  std::optional<ssrc_t> previous;
+  ssrc_t encoding;
+  unsigned sampleRate;
+};
 
-static void checkUsedDecoderReset(AudioDecoder &decoder) {
-  checkPreparedFormatsThrough(decoder, AAC_48000_F24_7P1);
-  const auto beforeReset = contextsReleased;
-  decoder.reset();
-  assert(contextsReleased == beforeReset + 1);
-  decoder.reset();
-  assert(contextsReleased == beforeReset + 1);
-  assert(!decoder.currentFormat());
-}
+void PrintTo(const DecoderFormatCase &format, std::ostream *output) { *output << format.name; }
 
-static void checkAlacRoundtripAndFrameLifetime() {
+class DecoderFormat : public testing::TestWithParam<DecoderFormatCase> {};
+
+TEST_P(DecoderFormat, PreparationReplacesPriorFormatAndReusesUnchangedContext) {
   AudioDecoder decoder;
-  checkUsedDecoderReset(decoder);
-  AVCodecContext *encoder = avcodec_alloc_context3(avcodec_find_encoder(AV_CODEC_ID_ALAC));
-  assert(encoder != NULL);
-  encoder->sample_fmt = AV_SAMPLE_FMT_S16P;
-  encoder->sample_rate = 44100;
-  av_channel_layout_default(&encoder->ch_layout, 2);
-  assert(avcodec_open2(encoder, encoder->codec, NULL) == 0);
-  AVFrame *silence = av_frame_alloc();
-  silence->format = encoder->sample_fmt;
-  silence->sample_rate = encoder->sample_rate;
-  silence->nb_samples = 352;
-  assert(av_channel_layout_copy(&silence->ch_layout, &encoder->ch_layout) == 0);
-  assert(av_frame_get_buffer(silence, 0) == 0);
-  for (int channel = 0; channel < 2; channel++)
-    memset(silence->data[channel], 0, silence->linesize[0]);
-  assert(avcodec_send_frame(encoder, silence) == 0);
-  AVPacket *packet = av_packet_alloc();
-  assert(avcodec_receive_packet(encoder, packet) == 0);
-  assert(decoder.prepare(*AudioFormat::fromSsrc(ALAC_44100_S16_2)) == Preparation::changed);
-  auto decoded = decoder.decode({packet->data, static_cast<size_t>(packet->size)});
-  assert(decoded);
-  assert((*decoded)->nb_samples == 352);
-  assert((*decoded)->sample_rate == 44100);
-  assert((*decoded)->ch_layout.nb_channels == 2);
-  assert((*decoded)->format == AV_SAMPLE_FMT_S16P);
-  assert(decoder.decodedSampleFormat() == AV_SAMPLE_FMT_S16P);
-  const auto beforeFrameRelease = framesReleased;
-  decoder.reset();
-  assert((*decoded)->nb_samples == 352);
-  assert(framesReleased == beforeFrameRelease);
-  decoded->reset();
-  assert(framesReleased == beforeFrameRelease + 1);
-  av_packet_free(&packet);
-  av_frame_free(&silence);
-  avcodec_free_context(&encoder);
-  decoder.reset();
+  if (GetParam().previous)
+    ASSERT_TRUE(decoder.prepare(*AudioFormat::fromSsrc(*GetParam().previous)));
+  auto format = *AudioFormat::fromSsrc(GetParam().encoding);
+  const auto beforeOpen = contextsOpened, beforeRelease = contextsReleased;
+
+  EXPECT_EQ(decoder.prepare(format), Preparation::changed);
+
+  ASSERT_EQ(decoder.currentFormat(), format);
+  EXPECT_EQ(contextsOpened, beforeOpen + 1);
+  EXPECT_EQ(contextsReleased, beforeRelease + (GetParam().previous ? 1 : 0));
+  EXPECT_EQ(decoder.currentFormat()->sampleRate(), GetParam().sampleRate);
+  const auto opened = contextsOpened, released = contextsReleased;
+  EXPECT_EQ(decoder.prepare(format), Preparation::unchanged);
+  EXPECT_EQ(contextsOpened, opened);
+  EXPECT_EQ(contextsReleased, released);
 }
 
-static void checkErrorsAndDestruction() {
-  const auto before = contextsReleased;
-  {
-    AudioDecoder decoder;
-    std::array<uint8_t, 8> shortPacket{};
-    assert(decoder.decode(shortPacket).error().kind == DecoderFailure::Kind::packetTooShort);
-    std::array<uint8_t, 16> invalidPacket{};
-    assert(decoder.decode(invalidPacket).error().kind == DecoderFailure::Kind::notPrepared);
-    assert(decoder.prepare(*AudioFormat::fromSsrc(ALAC_44100_S16_2)));
-    auto invalid = decoder.decode(invalidPacket);
-    assert(!invalid);
-    assert(invalid.error().kind == DecoderFailure::Kind::sendFailed ||
-           invalid.error().kind == DecoderFailure::Kind::receiveFailed);
-    assert(decoder.currentFormat()->ssrc() == ALAC_44100_S16_2);
-  }
-  assert(contextsReleased == before + 1);
-}
-
-static void checkPlayerBoundary() {
-  SessionState session{};
-  prepare_decoding_chain(&session, ALAC_44100_S16_2);
-  assert(session.inputAudio.sampleRate() == 44100 && session.inputAudio.framesPerPacket() == 352);
-  assert(session.inputAudio.isDecodedFormatValid());
-  prepare_decoding_chain(&session, static_cast<ssrc_t>(0xf00d));
-  assert(session.decoder.currentFormat()->ssrc() == ALAC_44100_S16_2);
-  assert(session.inputAudio.sampleRate() == 44100);
-  std::array<uint8_t, 8> shortPacket{};
-  assert(block_to_avframe(&session, shortPacket.data(), shortPacket.size()) == nullptr);
-  std::array<uint8_t, 16> invalidPacket{};
-  assert(block_to_avframe(&session, invalidPacket.data(), invalidPacket.size()) == nullptr);
-  clear_decoding_chain(&session);
-  clear_decoding_chain(&session);
-  assert(!session.decoder.currentFormat());
-}
-TEST(AudioDecoder, Alac44100StereoPreparationReusesUnchangedContext) {
-  AudioDecoder decoder;
-  checkPreparedFormatsThrough(decoder, ALAC_44100_S16_2);
-}
-
-TEST(AudioDecoder, Alac48000StereoPreparationReplacesPriorFormatAndReusesContext) {
-  AudioDecoder decoder;
-  checkPreparedFormatsThrough(decoder, ALAC_48000_S24_2);
-}
-
-TEST(AudioDecoder, Aac44100StereoPreparationReplacesPriorFormatAndReusesContext) {
-  AudioDecoder decoder;
-  checkPreparedFormatsThrough(decoder, AAC_44100_F24_2);
-}
-
-TEST(AudioDecoder, Aac48000StereoPreparationReplacesPriorFormatAndReusesContext) {
-  AudioDecoder decoder;
-  checkPreparedFormatsThrough(decoder, AAC_48000_F24_2);
-}
-
-TEST(AudioDecoder, Aac48000Surround51PreparationReplacesPriorFormatAndReusesContext) {
-  AudioDecoder decoder;
-  checkPreparedFormatsThrough(decoder, AAC_48000_F24_5P1);
-}
-
-TEST(AudioDecoder, Aac48000Surround71PreparationReplacesPriorFormatAndReusesContext) {
-  AudioDecoder decoder;
-  checkPreparedFormatsThrough(decoder, AAC_48000_F24_7P1);
-}
+INSTANTIATE_TEST_SUITE_P(Formats, DecoderFormat, testing::Values(
+  DecoderFormatCase{"Alac44100Stereo", std::nullopt, ALAC_44100_S16_2, 44100},
+  DecoderFormatCase{"Alac48000Stereo", ALAC_44100_S16_2, ALAC_48000_S24_2, 48000},
+  DecoderFormatCase{"Aac44100Stereo", ALAC_48000_S24_2, AAC_44100_F24_2, 44100},
+  DecoderFormatCase{"Aac48000Stereo", AAC_44100_F24_2, AAC_48000_F24_2, 48000},
+  DecoderFormatCase{"Aac48000Surround51", AAC_48000_F24_2, AAC_48000_F24_5P1, 48000},
+  DecoderFormatCase{"Aac48000Surround71", AAC_48000_F24_5P1, AAC_48000_F24_7P1, 48000}
+), [](const auto &info) { return info.param.name; });
 
 TEST(AudioDecoder, ResetAfterFormatChangesReleasesContextOnce) {
   AudioDecoder decoder;
-  checkUsedDecoderReset(decoder);
+  ASSERT_TRUE(decoder.prepare(*AudioFormat::fromSsrc(ALAC_44100_S16_2)));
+  ASSERT_TRUE(decoder.prepare(*AudioFormat::fromSsrc(AAC_48000_F24_7P1)));
+  const auto beforeReset = contextsReleased;
+  decoder.reset();
+  EXPECT_EQ(contextsReleased, beforeReset + 1);
+  decoder.reset();
+  EXPECT_EQ(contextsReleased, beforeReset + 1);
+  EXPECT_FALSE(decoder.currentFormat());
 }
 
 TEST(AudioDecoder, AlacRoundtripFrameOutlivesDecoderReset) {
-  checkAlacRoundtripAndFrameLifetime();
+  AudioDecoder decoder;
+  AVCodecContext *encoder = avcodec_alloc_context3(avcodec_find_encoder(AV_CODEC_ID_ALAC));
+  const auto releaseEncoder = [](AVCodecContext *context) { avcodec_free_context(&context); };
+  const std::unique_ptr<AVCodecContext, decltype(releaseEncoder)> encoderOwner(encoder, releaseEncoder);
+  ASSERT_NE(encoder, nullptr);
+  encoder->sample_fmt = AV_SAMPLE_FMT_S16P;
+  encoder->sample_rate = 44100;
+  av_channel_layout_default(&encoder->ch_layout, 2);
+  ASSERT_EQ(avcodec_open2(encoder, encoder->codec, nullptr), 0);
+  AVFrame *silence = av_frame_alloc();
+  const auto releaseInput = [](AVFrame *frame) { av_frame_free(&frame); };
+  const std::unique_ptr<AVFrame, decltype(releaseInput)> inputOwner(silence, releaseInput);
+  ASSERT_NE(silence, nullptr);
+  silence->format = encoder->sample_fmt;
+  silence->sample_rate = encoder->sample_rate;
+  silence->nb_samples = 352;
+  ASSERT_EQ(av_channel_layout_copy(&silence->ch_layout, &encoder->ch_layout), 0);
+  ASSERT_EQ(av_frame_get_buffer(silence, 0), 0);
+  for (int channel = 0; channel < 2; channel++)
+    memset(silence->data[channel], 0, silence->linesize[0]);
+  ASSERT_EQ(avcodec_send_frame(encoder, silence), 0);
+  AVPacket *packet = av_packet_alloc();
+  const auto releasePacket = [](AVPacket *value) { av_packet_free(&value); };
+  const std::unique_ptr<AVPacket, decltype(releasePacket)> packetOwner(packet, releasePacket);
+  ASSERT_NE(packet, nullptr);
+  ASSERT_EQ(avcodec_receive_packet(encoder, packet), 0);
+  ASSERT_EQ(decoder.prepare(*AudioFormat::fromSsrc(ALAC_44100_S16_2)), Preparation::changed);
+  auto decoded = decoder.decode({packet->data, static_cast<size_t>(packet->size)});
+  ASSERT_TRUE(decoded.has_value());
+  EXPECT_EQ((*decoded)->nb_samples, 352);
+  EXPECT_EQ((*decoded)->sample_rate, 44100);
+  EXPECT_EQ((*decoded)->ch_layout.nb_channels, 2);
+  EXPECT_EQ((*decoded)->format, AV_SAMPLE_FMT_S16P);
+  EXPECT_EQ(decoder.decodedSampleFormat(), AV_SAMPLE_FMT_S16P);
+  const auto beforeFrameRelease = framesReleased;
+  decoder.reset();
+  EXPECT_EQ((*decoded)->nb_samples, 352);
+  EXPECT_EQ(framesReleased, beforeFrameRelease);
+  decoded->reset();
+  EXPECT_EQ(framesReleased, beforeFrameRelease + 1);
+  decoder.reset();
 }
 
-TEST(AudioDecoder, ShortUnpreparedAndInvalidPacketsPreserveFormatUntilDestruction) {
-  checkErrorsAndDestruction();
+TEST(AudioDecoder, EightBytePacketIsTooShort) {
+  AudioDecoder decoder;
+  std::array<uint8_t, 8> shortPacket{};
+
+  auto result = decoder.decode(shortPacket);
+
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(result.error().kind, DecoderFailure::Kind::packetTooShort);
+}
+
+TEST(AudioDecoder, DecodingBeforePreparationReportsMissingFormat) {
+  AudioDecoder decoder;
+  std::array<uint8_t, 16> packet{};
+
+  auto result = decoder.decode(packet);
+
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(result.error().kind, DecoderFailure::Kind::notPrepared);
+}
+
+TEST(AudioDecoder, InvalidEncodedPacketPreservesFormatUntilDestruction) {
+  const auto before = contextsReleased;
+  {
+    AudioDecoder decoder;
+    std::array<uint8_t, 16> invalidPacket{};
+    ASSERT_TRUE(decoder.prepare(*AudioFormat::fromSsrc(ALAC_44100_S16_2)));
+    auto invalid = decoder.decode(invalidPacket);
+    ASSERT_FALSE(invalid.has_value());
+    EXPECT_TRUE(invalid.error().kind == DecoderFailure::Kind::sendFailed ||
+                invalid.error().kind == DecoderFailure::Kind::receiveFailed)
+        << "Failure kind " << static_cast<int>(invalid.error().kind);
+    ASSERT_TRUE(decoder.currentFormat().has_value());
+    EXPECT_EQ(decoder.currentFormat()->ssrc(), ALAC_44100_S16_2);
+  }
+  EXPECT_EQ(contextsReleased, before + 1);
 }
 
 TEST(AudioDecoder, PlayerBoundaryPreservesKnownFormatAndClearsIdempotently) {
-  checkPlayerBoundary();
+  SessionState session{};
+  prepare_decoding_chain(&session, ALAC_44100_S16_2);
+  EXPECT_EQ(session.inputAudio.sampleRate(), 44100);
+  EXPECT_EQ(session.inputAudio.framesPerPacket(), 352);
+  EXPECT_TRUE(session.inputAudio.isDecodedFormatValid());
+  prepare_decoding_chain(&session, static_cast<ssrc_t>(0xf00d));
+  ASSERT_TRUE(session.decoder.currentFormat().has_value());
+  EXPECT_EQ(session.decoder.currentFormat()->ssrc(), ALAC_44100_S16_2);
+  EXPECT_EQ(session.inputAudio.sampleRate(), 44100);
+  std::array<uint8_t, 8> shortPacket{};
+  EXPECT_EQ(block_to_avframe(&session, shortPacket.data(), shortPacket.size()), nullptr);
+  std::array<uint8_t, 16> invalidPacket{};
+  EXPECT_EQ(block_to_avframe(&session, invalidPacket.data(), invalidPacket.size()), nullptr);
+  clear_decoding_chain(&session);
+  clear_decoding_chain(&session);
+  EXPECT_FALSE(session.decoder.currentFormat());
 }
 
 TEST(AudioDecoder, NonSilentAlacRoundtripPreservesDistinctLeftAndRightSamples) {

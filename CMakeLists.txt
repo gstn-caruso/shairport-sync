@@ -226,7 +226,7 @@ if(BUILD_TESTING)
   target_link_libraries(audio-decoder-test PRIVATE receiver GTest::gtest_main)
   target_link_options(audio-decoder-test PRIVATE -Wl,--wrap=avcodec_open2 -Wl,--wrap=avcodec_send_packet
     -Wl,--wrap=avcodec_free_context -Wl,--wrap=av_frame_free)
-  gtest_discover_tests(audio-decoder-test PROPERTIES TIMEOUT 5)
+  gtest_discover_tests(audio-decoder-test NO_PRETTY_VALUES PROPERTIES TIMEOUT 5)
   add_executable(audio-format-test tests/audio_format_test.cpp)
   target_compile_options(audio-format-test PRIVATE -UNDEBUG)
   target_link_libraries(audio-format-test PRIVATE receiver-audio-format GTest::gtest_main)
