@@ -31,6 +31,20 @@ TEST(VolumePolicy, OutsideHardwareMaximumWithoutRangeIsReported) {
   EXPECT_EQ(plan.gainFixed16, 65536);
 }
 
+TEST(VolumePolicy, OutsideHardwareMaximumWithRangeUsesSoftwareHeadroom) {
+  VolumeSettings settings;
+  settings.maximumDb = -50;
+  settings.rangeDb = 60;
+  settings.profile = VolumeProfile::flat;
+  OutputVolumeCapabilities hardware{{VolumeRange{-4000, 0}}, true};
+  auto plan = VolumePolicy::plan(-15, settings, hardware);
+  EXPECT_EQ(plan.hardwareAttenuation, -4000);
+  EXPECT_EQ(plan.softwareAttenuation, -4000);
+  EXPECT_EQ(plan.scaledAttenuation, 3000);
+  EXPECT_FALSE(plan.maximumIgnored);
+  EXPECT_FALSE(plan.rangeIgnored);
+}
+
 TEST(VolumePolicy, ProfilesPreserveAttenuationAndFixedGain) {
   VolumeSettings settings;
   settings.rangeDb = 60;
