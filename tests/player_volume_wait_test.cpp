@@ -1,10 +1,10 @@
 #include "session/session_state.hpp"
 #include "volume/volume_runtime.hpp"
 #include <gtest/gtest.h>
-#include <cassert>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <functional>
 #include <mutex>
 #include <thread>
 #include <unistd.h>
@@ -91,12 +91,13 @@ static int underrunDelay(long *frames) {
 static int play(void *buffer, int frames, int type, uint32_t timestamp, uint64_t) {
   if (type == play_samples_are_untimed) {
     std::lock_guard lock(observation);
-    assert(frames > 0 && frames <= 4410);
+    EXPECT_GT(frames, 0);
+    EXPECT_LE(frames, 4410);
     prerollFrames += frames;
     changed.notify_all();
   }
   if (type == play_samples_are_timed && timestamp == 1000) {
-    assert(frames >= 0);
+    EXPECT_GE(frames, 0);
     const auto *bytes = static_cast<const uint8_t *>(buffer);
     {
       std::lock_guard lock(observation);
@@ -114,32 +115,64 @@ static void *idleReceiver(void *) {
     pause();
 }
 static std::vector<uint8_t> encodedConstant() {
-  AVCodecContext *encoder = avcodec_alloc_context3(avcodec_find_encoder(AV_CODEC_ID_ALAC));
-  assert(encoder);
+  const auto freeEncoder = [](AVCodecContext *context) { avcodec_free_context(&context); };
+  std::unique_ptr<AVCodecContext, decltype(freeEncoder)> encoder(
+      avcodec_alloc_context3(avcodec_find_encoder(AV_CODEC_ID_ALAC)), freeEncoder);
+  EXPECT_TRUE(encoder);
+  if (!encoder)
+    return {};
   encoder->sample_fmt = AV_SAMPLE_FMT_S16P;
   encoder->sample_rate = 44100;
   av_channel_layout_default(&encoder->ch_layout, 2);
-  assert(avcodec_open2(encoder, encoder->codec, nullptr) == 0);
+  const auto opened = avcodec_open2(encoder.get(), encoder->codec, nullptr);
+  EXPECT_EQ(opened, 0);
+  if (opened != 0)
+    return {};
   OwnedAudioFrame frame(av_frame_alloc());
+  EXPECT_TRUE(frame);
+  if (!frame)
+    return {};
   frame->format = encoder->sample_fmt;
   frame->sample_rate = 44100;
   frame->nb_samples = 352;
-  assert(av_channel_layout_copy(&frame->ch_layout, &encoder->ch_layout) == 0);
-  assert(av_frame_get_buffer(frame.get(), 0) == 0);
+  const auto layoutCopied = av_channel_layout_copy(&frame->ch_layout, &encoder->ch_layout);
+  EXPECT_EQ(layoutCopied, 0);
+  if (layoutCopied != 0)
+    return {};
+  const auto allocated = av_frame_get_buffer(frame.get(), 0);
+  EXPECT_EQ(allocated, 0);
+  if (allocated != 0)
+    return {};
   for (unsigned channel = 0; channel < 2; ++channel)
     for (int sample = 0; sample < frame->nb_samples; ++sample)
       reinterpret_cast<int16_t *>(frame->data[channel])[sample] = 6000;
-  assert(avcodec_send_frame(encoder, frame.get()) == 0);
-  AVPacket *packet = av_packet_alloc();
-  assert(avcodec_receive_packet(encoder, packet) == 0);
+  const auto sent = avcodec_send_frame(encoder.get(), frame.get());
+  EXPECT_EQ(sent, 0);
+  if (sent != 0)
+    return {};
+  const auto freePacket = [](AVPacket *packet) { av_packet_free(&packet); };
+  std::unique_ptr<AVPacket, decltype(freePacket)> packet(av_packet_alloc(), freePacket);
+  EXPECT_TRUE(packet);
+  if (!packet)
+    return {};
+  const auto received = avcodec_receive_packet(encoder.get(), packet.get());
+  EXPECT_EQ(received, 0);
+  if (received != 0)
+    return {};
   std::vector<uint8_t> bytes(packet->data, packet->data + packet->size);
-  av_packet_free(&packet);
-  avcodec_free_context(&encoder);
   return bytes;
 }
-static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames, bool submit,
-                          bool mute = false, bool waitOnly = false, bool anchor = true,
-                          int expectedPreroll = 0, bool conversion = true) {
+struct PlaybackScenario {
+  bool hasDelay = false;
+  uint64_t frameTime = 999000000;
+  int expectedFrames = 352;
+  bool submit = true, mute = false, waitOnly = false, anchor = true;
+  int expectedPreroll = 0;
+  bool conversion = true;
+};
+static void checkPlayback(PlaybackScenario scenario) {
+  const auto [hasDelay, frameTime, expectedFrames, submit, mute, waitOnly, anchor,
+              expectedPreroll, conversion] = scenario;
   const auto savedOutput = config.output;
   const auto savedOutputConfiguration = config.current_output_configuration;
   const auto savedDecoder = config.decoder_in_use;
@@ -151,6 +184,23 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
   const auto savedAutomaticLeadIn = config.audio_backend_silent_lead_in_time_auto;
   const auto savedErrorReported = config.unfixable_error_reported;
   const auto savedSharedLevel = sharedVolumeLevel.current();
+  struct RestoreConfiguration {
+    std::function<void()> restore;
+    ~RestoreConfiguration() { restore(); }
+  } restore{[&] {
+    activeSession = nullptr;
+    config.output = savedOutput;
+    config.current_output_configuration = savedOutputConfiguration;
+    config.decoder_in_use = savedDecoder;
+    config.playback_mode = savedMode;
+    config.packet_stuffing = savedStuffing;
+    config.no_sync = savedSync;
+    config.volume_control_profile = savedProfile;
+    config.volume_range_db = savedRange;
+    config.audio_backend_silent_lead_in_time_auto = savedAutomaticLeadIn;
+    config.unfixable_error_reported = savedErrorReported;
+    sharedVolumeLevel.remember(savedSharedLevel);
+  }};
   waiting = played = waitingAfterPacket = waitingWithArrival = false;
   referenceAvailable = anchor;
   frameTimeAvailable = conversion;
@@ -160,12 +210,22 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
   outputFrames = 0;
   outputSample = 0;
   auto packet = encodedConstant();
+  ASSERT_FALSE(packet.empty());
   SessionState session{};
   activeSession = &session;
-  assert(pthread_mutex_init(&session.flush_mutex, nullptr) == 0);
+  ASSERT_EQ(pthread_mutex_init(&session.flush_mutex, nullptr), 0);
   session.airplay_stream_type = realtime_stream;
-  assert(pthread_create(&session.rtp_realtime_audio_thread, nullptr, idleReceiver, nullptr) == 0);
-  assert(pthread_create(&session.rtp_ap2_control_thread, nullptr, idleReceiver, nullptr) == 0);
+  const auto audioStarted = pthread_create(&session.rtp_realtime_audio_thread, nullptr, idleReceiver, nullptr);
+  if (audioStarted != 0)
+    pthread_mutex_destroy(&session.flush_mutex);
+  ASSERT_EQ(audioStarted, 0);
+  const auto controlStarted = pthread_create(&session.rtp_ap2_control_thread, nullptr, idleReceiver, nullptr);
+  if (controlStarted != 0) {
+    pthread_cancel(session.rtp_realtime_audio_thread);
+    pthread_join(session.rtp_realtime_audio_thread, nullptr);
+    pthread_mutex_destroy(&session.flush_mutex);
+  }
+  ASSERT_EQ(controlStarted, 0);
   audio_output backend{};
   backend.get_configuration = chooseOutput;
   backend.play = play;
@@ -180,7 +240,15 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
   config.audio_backend_silent_lead_in_time_auto = 1;
   sharedVolumeLevel.remember(0);
   pthread_t player;
-  assert(pthread_create(&player, nullptr, player_thread_func, &session) == 0);
+  const auto playerStarted = pthread_create(&player, nullptr, player_thread_func, &session);
+  if (playerStarted != 0) {
+    pthread_cancel(session.rtp_realtime_audio_thread);
+    pthread_cancel(session.rtp_ap2_control_thread);
+    pthread_join(session.rtp_realtime_audio_thread, nullptr);
+    pthread_join(session.rtp_ap2_control_thread, nullptr);
+    pthread_mutex_destroy(&session.flush_mutex);
+  }
+  ASSERT_EQ(playerStarted, 0);
   {
     std::unique_lock lock(observation);
     if (arrivalPublicationProbe)
@@ -191,7 +259,8 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
   player_volume(-15, &session);
   if (mute) player_volume(-144, &session);
   const int gain = session.volumeControl.pcmSnapshot().gainFixed16;
-  assert(gain > 0 && gain < 65536);
+  EXPECT_GT(gain, 0);
+  EXPECT_LT(gain, 65536);
   const auto publishPacket = [&] {
     EXPECT_EQ(player_put_packet(ALAC_44100_S16_2, 7, 1000, packet.data(), packet.size(), 0, 0,
                                 &session), 352);
@@ -212,81 +281,75 @@ static void checkPlayback(bool hasDelay, uint64_t frameTime, int expectedFrames,
     else
       changed.wait(lock, [=] { return waitOnly ? waitingWithArrival : waitingAfterPacket; });
   }
-  assert(pthread_cancel(player) == 0);
-  void *completion;
-  assert(pthread_join(player, &completion) == 0 && completion == PTHREAD_CANCELED);
+  EXPECT_EQ(pthread_cancel(player), 0);
+  void *completion = nullptr;
+  EXPECT_EQ(pthread_join(player, &completion), 0);
+  EXPECT_EQ(completion, PTHREAD_CANCELED);
   activeSession = nullptr;
-  assert(pthread_mutex_destroy(&session.flush_mutex) == 0);
-  assert(played == submit);
+  EXPECT_EQ(pthread_mutex_destroy(&session.flush_mutex), 0);
+  EXPECT_EQ(played, submit);
   const auto statistics = session.statistics.snapshot();
-  assert(statistics.packets == 1 && statistics.playNumber == (waitOnly ? 0 : 1));
-  assert(statistics.frames == (submit ? expectedFrames : 0));
-  assert(statistics.measurements == (submit && expectedFrames > 0 ? 1 : 0));
-  assert(session.statistics.sessionSummary(1000000000).hasObservedFrame == !waitOnly);
+  EXPECT_EQ(statistics.packets, 1);
+  EXPECT_EQ(statistics.playNumber, (waitOnly ? 0 : 1));
+  EXPECT_EQ(statistics.frames, (submit ? expectedFrames : 0));
+  EXPECT_EQ(statistics.measurements, (submit && expectedFrames > 0 ? 1 : 0));
+  EXPECT_EQ(session.statistics.sessionSummary(1000000000).hasObservedFrame, !waitOnly);
   EXPECT_EQ(prerollFrames, expectedPreroll);
   if (submit) {
-    assert(outputFrames == expectedFrames);
+    EXPECT_EQ(outputFrames, expectedFrames);
     if (expectedFrames > 0) {
       const int expected = mute ? 0 : 6000 * gain / 65536;
-      assert(outputSample >= expected - 1 && outputSample <= expected + 1);
+      EXPECT_NEAR(outputSample, expected, 1);
     }
   }
-  config.output = savedOutput;
-  config.current_output_configuration = savedOutputConfiguration;
-  config.decoder_in_use = savedDecoder;
-  config.playback_mode = savedMode;
-  config.packet_stuffing = savedStuffing;
-  config.no_sync = savedSync;
-  config.volume_control_profile = savedProfile;
-  config.volume_range_db = savedRange;
-  config.audio_backend_silent_lead_in_time_auto = savedAutomaticLeadIn;
-  config.unfixable_error_reported = savedErrorReported;
-  sharedVolumeLevel.remember(savedSharedLevel);
 }
 
 TEST(PlayerVolumeWait, NoDelayUsesUpdatedGainAndFullPacketLength) {
-  checkPlayback(false, 999000000, 352, true);
+  checkPlayback({});
 }
 
 TEST(PlayerVolumeWait, UnderrunDelaySkipsFortyFourFramesEvenWhenSyncIsDisabled) {
-  checkPlayback(true, 999000000, 308, true);
+  checkPlayback({.hasDelay = true, .expectedFrames = 308});
 }
 
 TEST(PlayerVolumeWait, ContinuingDiscardWaitsWithoutSubmittingCallback) {
-  checkPlayback(true, 991000000, 0, false);
+  checkPlayback({.hasDelay = true, .frameTime = 991000000, .expectedFrames = 0, .submit = false});
 }
 
 TEST(PlayerVolumeWait, ExactDiscardSubmitsZeroFrames) {
-  checkPlayback(true, 992000000, 0, true);
+  checkPlayback({.hasDelay = true, .frameTime = 992000000, .expectedFrames = 0});
 }
 
 TEST(PlayerVolumeWait, MuteSubmitsSilenceAtFullPacketLength) {
-  checkPlayback(false, 999000000, 352, true, true);
+  checkPlayback({.mute = true});
 }
 
 TEST(PlayerVolumeWait, MissingAnchorWaitsWithoutPlayback) {
-  checkPlayback(false, 999000000, 0, false, false, true, false);
+  checkPlayback({.expectedFrames = 0, .submit = false, .waitOnly = true, .anchor = false});
 }
 
 TEST(PlayerVolumeWait, ZeroFrameTimeWaitsWithoutPlayback) {
-  checkPlayback(false, 0, 0, false, false, true);
+  checkPlayback({.frameTime = 0, .expectedFrames = 0, .submit = false, .waitOnly = true});
 }
 
 TEST(PlayerVolumeWait, NoDelayPrerollSubmitsSilenceThenWaits) {
-  checkPlayback(false, 1150000000, 0, false, false, true, true, 6615);
+  checkPlayback({.frameTime = 1150000000, .expectedFrames = 0, .submit = false,
+                 .waitOnly = true, .expectedPreroll = 6615});
 }
 
 TEST(PlayerVolumeWait, PacketWaitsForArrivalPublicationBeforePreroll) {
   ArrivalPublicationProbe probe;
   arrivalPublicationProbe = &probe;
-  checkPlayback(false, 1150000000, 0, false, false, true, true, 6615);
+  checkPlayback({.frameTime = 1150000000, .expectedFrames = 0, .submit = false,
+                 .waitOnly = true, .expectedPreroll = 6615});
   arrivalPublicationProbe = nullptr;
 }
 
 TEST(PlayerVolumeWait, DelayPrerollSubmitsSilenceThenWaits) {
-  checkPlayback(true, 1050000000, 0, false, false, true, true, 2205);
+  checkPlayback({.hasDelay = true, .frameTime = 1050000000, .expectedFrames = 0, .submit = false,
+                 .waitOnly = true, .expectedPreroll = 2205});
 }
 
 TEST(PlayerVolumeWait, UnavailableFrameTimeConversionWaitsWithoutPlayback) {
-  checkPlayback(false, 999000000, 0, false, false, true, true, 0, false);
+  checkPlayback({.expectedFrames = 0, .submit = false, .waitOnly = true, .conversion = false});
 }
