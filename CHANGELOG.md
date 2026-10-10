@@ -1,3 +1,9 @@
+## [5.7.2](https://github.com/gstn-caruso/shairport-sync/compare/v5.7.1...v5.7.2) (2026-10-10)
+
+### Bug Fixes
+
+* **release:** honor conventional commit version policy ([#28](https://github.com/gstn-caruso/shairport-sync/issues/28)) ([8822f21](https://github.com/gstn-caruso/shairport-sync/commit/8822f217334fb1cf0eedbef7c7d83a84c6ba9d33))
+
 ## [5.7.1](https://github.com/gstn-caruso/shairport-sync/compare/v5.7.0...v5.7.1) (2026-10-10)
 
 ### Code Refactoring
