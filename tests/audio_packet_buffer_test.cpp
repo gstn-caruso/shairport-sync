@@ -74,6 +74,28 @@ TEST(AudioPacketBuffer, ExtractedPacketOwnsDecodedFrameAfterUsedBufferReset) {
   EXPECT_EQ(owned.decodedSampleFormat(), AV_SAMPLE_FMT_S16P);
   EXPECT_FALSE(buffer.front());
   EXPECT_EQ(buffer.occupancy(), 0);
+  const auto afterReset = buffer.accept(65535, 200, [] { return packet(65535, 2000); });
+  EXPECT_EQ(afterReset.kind, ArrivalKind::first);
+  EXPECT_EQ(buffer.occupancy(), 1);
+}
+
+TEST(AudioPacketBuffer, ResetDiscardsQueuedAudioAndStartsANewAdmissionWindow) {
+  AudioPacketBuffer buffer;
+  buffer.accept(2000, 500, [] { return packet(2000, 5000); });
+  const auto beforeReset = buffer.front();
+  ASSERT_TRUE(beforeReset);
+
+  buffer.reset();
+
+  EXPECT_FALSE(buffer.front());
+  EXPECT_EQ(buffer.occupancy(), 0);
+  EXPECT_FALSE(buffer.takeFrontIf(beforeReset->revision));
+  const auto accepted = buffer.accept(30, 1000, [] { return packet(30, 8000); });
+  EXPECT_EQ(accepted.kind, ArrivalKind::first);
+  const auto first = buffer.front();
+  ASSERT_TRUE(first);
+  EXPECT_EQ(first->packet.sequence, 30);
+  EXPECT_EQ(first->packet.timestamp, 8000);
 }
 
 TEST(AudioPacketBuffer, ModularLateDuplicateAndOverflowAdmissionPreserveRevisionsAndFactories) {
