@@ -1,3 +1,13 @@
+## [6.1.1](https://github.com/gstn-caruso/shairport-sync/compare/v6.1.0...v6.1.1) (2026-10-10)
+
+### Bug Fixes
+
+* **activity:** cooperatively stop and restart the monitor ([3ade497](https://github.com/gstn-caruso/shairport-sync/commit/3ade497619b8230967281dae071de4fc370b945e))
+
+### Documentation
+
+* describe integrated timing companion by its role ([#46](https://github.com/gstn-caruso/shairport-sync/issues/46)) ([ef5ea3e](https://github.com/gstn-caruso/shairport-sync/commit/ef5ea3e07ad1108cf91a0f3539fa136ae573206e))
+
 ## [6.1.0](https://github.com/gstn-caruso/shairport-sync/compare/v6.0.1...v6.1.0) (2026-10-10)
 
 ### Features
