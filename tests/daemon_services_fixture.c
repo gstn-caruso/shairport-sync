@@ -14,6 +14,11 @@ static void unexpected_service(void) {
 }
 
 char *realpath(const char *path, char *resolved) {
+  const char *unresolvable = getenv("DAEMON_TEST_UNRESOLVABLE_PATH");
+  if (unresolvable && strcmp(path, unresolvable) == 0) {
+    errno = ENOENT;
+    return NULL;
+  }
   const char *expected = getenv("DAEMON_TEST_DEFAULT_PATH");
   if (expected) {
     if (strcmp(path, expected) != 0) {

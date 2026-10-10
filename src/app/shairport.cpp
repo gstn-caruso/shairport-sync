@@ -165,7 +165,7 @@ static void reject_removed_settings(config_t *settings) {
   }
 }
 
-void load_receiver_configuration() {
+void load_receiver_configuration(const StartupOptions &options) {
   char *raw_service_name = nullptr;
   config.audio_backend_silent_lead_in_time_auto =
       1; // start outputting silence as soon as packets start arriving
@@ -234,7 +234,7 @@ void load_receiver_configuration() {
 
   config_file_real_path = realpath(config.configfile, NULL);
   if (config_file_real_path == NULL) {
-    if (errno != ENOENT)
+    if (options.configurationPath() || errno != ENOENT)
       die("Unable to read configuration %s: %s", config.configfile, strerror(errno));
     debug(2, "can't resolve the configuration file \"%s\".", config.configfile);
   } else {
@@ -1541,7 +1541,7 @@ std::expected<ReceiverSettings, std::string> ConfigurationLoader::load(const Sta
 
   r64init(0);
 
-  load_receiver_configuration();
+  load_receiver_configuration(options);
   if (config.userSuppliedLatency != 0 &&
       (config.userSuppliedLatency < 4410 ||
        config.userSuppliedLatency > BUFFER_FRAMES * 352 - 22050))

@@ -33,6 +33,8 @@ binary=$original_binary
 printf 'general = { name = "Daemon fixture"; port = 7100; };\n' > "$test_dir/valid.conf"
 check_status 0 --check-config --config "$test_dir/valid.conf"
 check_status 0 --config "$test_dir/valid.conf" --check-config
+DAEMON_TEST_UNRESOLVABLE_PATH=$test_dir/valid.conf check_status 1 --check-config --config "$test_dir/valid.conf"
+printf 'general = { port = -1; };\n' | check_status 1 --check-config --config /dev/stdin
 for latency in 0 4410 11025 338398; do
   printf 'latencies = { default = %s; };\n' "$latency" > "$test_dir/latency.conf"
   check_status 0 --check-config --config "$test_dir/latency.conf"
