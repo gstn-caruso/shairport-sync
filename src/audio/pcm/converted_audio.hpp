@@ -1,5 +1,8 @@
 #pragma once
-#include "platform/utilities/ffmpeg_api.h"
+extern "C" {
+#include <libavutil/mem.h>
+}
+#include <cstdint>
 #include "audio/pcm/native_pcm_shape.hpp"
 #include <memory>
 #include <optional>

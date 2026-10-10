@@ -53,6 +53,22 @@ test verifies extraction of the matching `clang-scan-deps`, required by this
 module build. Device playback and hosted CI remain acceptance gates; this slice
 does not complete Stage 7 audio/timing ownership.
 
+The decoder and resampler slice now builds `receiver-audio-decoder` and
+`receiver-audio-resampler` independently. The decoder declares its format,
+FFmpeg codec/util, and thread dependencies; the resampler declares its format,
+FFmpeg resample/util, and thread dependencies. Their public native types retain
+header interfaces with only the required FFmpeg headers. `ConvertedAudio`
+requires only FFmpeg memory allocation. Neither component requires receiver
+configuration, forced logging headers, or the receiver's native dependency
+bundle. Player negotiation and session-boundary tests remain in their own
+receiver-linked suite. Fresh standalone builds in `build/audio-components`
+pass all 12 decoder cases and 11 resampler cases; their link commands contain
+only their component, format, required FFmpeg libraries, and GoogleTest.
+The full pinned Release build passes 390/390 cases in 17.22 seconds; all
+25 decoder, resampler, and player-boundary cases pass under Debug ASan+UBSan.
+This is a dependency boundary within Stage 7, whose broader ownership work
+remains open.
+
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
 fixture comparing every decoded sample; a temporary left/right decoder-plane
