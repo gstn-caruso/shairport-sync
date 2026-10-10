@@ -153,9 +153,11 @@ same version using the tested packages:
 | Any type with `!` or a `BREAKING CHANGE:` footer | Major |
 | `feat` | Minor |
 | `fix`, `perf` | Patch |
-| `docs`, `test`, `refactor`, `style`, `chore`, `build`, `ci` | None |
+| All other commits, including `docs`, `test`, `refactor`, `style`, `chore`, `build`, `ci` | Patch |
 
-The largest required bump wins. Preserve that meaning in squash-merge titles
+Every merge to `master` publishes at least a patch release; an empty unreleased
+commit range does not publish again. The largest required bump wins. Preserve
+that meaning in squash-merge titles
 and bodies. `VERSION` is the CMake version source. For a release, automation
 updates it with `CHANGELOG.md`, commits the
 release metadata, creates `v<version>` and publishes a GitHub Release with the

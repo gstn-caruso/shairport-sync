@@ -17,16 +17,54 @@ TEST(ChannelMapping, DefaultOrderPreservesStereoChannels) {
   checkMapping({}, 5, 9);
 }
 
+TEST(ChannelMapping, DisabledMappingIgnoresDeviceNames) {
+  auto mapping = ChannelMapping::from({"FL", "FR"}, 2, {false, {}, "FR UNKNOWN"});
+  const std::array<int16_t, 2> input{5, 9};
+  std::array<int16_t, 2> output{};
+  ASSERT_TRUE(mapping.map(input, output));
+  EXPECT_EQ(output, input);
+  EXPECT_FALSE(mapping.isIncomplete());
+}
+
 TEST(ChannelMapping, ExplicitNamesOverrideDeviceOrder) {
   checkMapping({true, {"FR", "FL"}, "FL FR"}, 9, 5);
+}
+
+TEST(ChannelMapping, ShortExplicitListFillsFirstUnusedSource) {
+  auto mapping = ChannelMapping::from({"FL", "FR", "FC"}, 3, {true, {"FR"}, ""});
+  const std::array<int16_t, 3> input{5, 9, 13};
+  std::array<int16_t, 3> output{};
+  const std::array<int16_t, 3> expected{9, 5, 13};
+  ASSERT_TRUE(mapping.map(input, output));
+  EXPECT_EQ(output, expected);
+  EXPECT_FALSE(mapping.isIncomplete());
 }
 
 TEST(ChannelMapping, DisabledMappingIgnoresExplicitNames) {
   checkMapping({false, {"FR", "FL"}, ""}, 5, 9);
 }
 
+TEST(ChannelMapping, RepeatedExplicitNameReusesSourceBeforeFallback) {
+  auto mapping = ChannelMapping::from({"FL", "FR", "FC"}, 4, {true, {"FR", "FR"}, ""});
+  const std::array<int16_t, 3> input{5, 9, 13};
+  std::array<int16_t, 4> output{};
+  const std::array<int16_t, 4> expected{9, 9, 5, 13};
+  ASSERT_TRUE(mapping.map(input, output));
+  EXPECT_EQ(output, expected);
+  EXPECT_FALSE(mapping.isIncomplete());
+}
+
 TEST(ChannelMapping, DeviceNamesSupplyOrderWhenExplicitNamesAreEmpty) {
   checkMapping({true, {}, "FR FL"}, 9, 5);
+}
+
+TEST(ChannelMapping, NamesBeyondOutputCapacityDoNotMarkIncomplete) {
+  auto mapping = ChannelMapping::from({"FL", "FR"}, 1, {true, {"FR", "UNKNOWN"}, ""});
+  const std::array<int16_t, 2> input{5, 9};
+  std::array<int16_t, 1> output{};
+  ASSERT_TRUE(mapping.map(input, output));
+  EXPECT_EQ(output[0], 9);
+  EXPECT_FALSE(mapping.isIncomplete());
 }
 
 TEST(ChannelMapping, UnknownNameUsesRemainingUnassignedSourceChannel) {
@@ -35,6 +73,15 @@ TEST(ChannelMapping, UnknownNameUsesRemainingUnassignedSourceChannel) {
 
 TEST(ChannelMapping, FrontMonoMixesChannelsAndSilenceProducesZero) {
   checkMapping({true, {"FM", "--"}, ""}, 6, 0);
+}
+
+TEST(ChannelMapping, FrontMonoWithOneSourceMarksIncompleteAndFallsBack) {
+  auto mapping = ChannelMapping::from({"FL"}, 1, {true, {"FM"}, ""});
+  const std::array<int16_t, 1> input{5};
+  std::array<int16_t, 1> output{};
+  ASSERT_TRUE(mapping.map(input, output));
+  EXPECT_EQ(output, input);
+  EXPECT_TRUE(mapping.isIncomplete());
 }
 
 TEST(ChannelMapping, FrontMonoDividesSignedSamplesBeforeSumming) {

@@ -11,6 +11,8 @@ test('the configured release plugins generate feature, fix and breaking notes fr
   const gitHead = git('rev-parse', 'HEAD');
   const commits = [
     'fix(audio): correct playback timing',
+    'refactor(audio): delegate channel selection',
+    ...['docs', 'style', 'chore', 'test', 'build', 'ci'].map(type => `${type}: record ${type} maintenance`),
     'feat(audio): add an output format',
     'feat(audio)!: remove legacy output\n\nBREAKING CHANGE: legacy output is no longer supported'
   ].map(message => ({message, hash: gitHead}));
@@ -33,6 +35,10 @@ test('the configured release plugins generate feature, fix and breaking notes fr
   assert.match(notes, /compare\/v5\.5\.1\.\.\.v6\.0\.0/);
   assert.match(notes, /### Bug Fixes/);
   assert.match(notes, /correct playback timing/);
+  assert.match(notes, /### Code Refactoring/);
+  assert.match(notes, /delegate channel selection/);
+  for (const type of ['docs', 'style', 'chore', 'test', 'build', 'ci'])
+    assert.ok(notes.includes(`record ${type} maintenance`));
   assert.match(notes, /### Features/);
   assert.match(notes, /add an output format/);
   assert.match(notes, /### ⚠ BREAKING CHANGES/);

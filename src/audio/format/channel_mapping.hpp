@@ -12,6 +12,7 @@ public:
     bool enabled = false;
     std::vector<std::string> names;
     std::string deviceNames;
+    std::vector<std::string> requestedNames() const;
     bool operator==(const Specification &) const = default;
   };
   static ChannelMapping from(std::vector<std::string> sourceNames, unsigned outputChannels,
@@ -25,6 +26,10 @@ public:
   }
 
 private:
+  std::vector<bool> selectRequestedChannels(std::span<const std::string> sourceNames,
+                                            std::span<const std::string> requestedNames,
+                                            std::vector<bool> &used);
+  void fillUnassignedChannels(const std::vector<bool> &assigned, std::vector<bool> &used);
   enum class Source { channel, silence, frontMono };
   struct Selection {
     Source source = Source::silence;

@@ -2,8 +2,35 @@ export default {
   branches: ['master', 'main'],
   tagFormat: 'v${version}',
   plugins: [
-    ['@semantic-release/commit-analyzer', {preset: 'conventionalcommits'}],
-    ['@semantic-release/release-notes-generator', {preset: 'conventionalcommits'}],
+    ['@semantic-release/commit-analyzer', {
+      preset: 'conventionalcommits',
+      // Every merge needs a release, even when upstream would cancel a commit/revert pair.
+      parserOpts: {revertPattern: /(?!)/},
+      releaseRules: [
+        {breaking: true, release: 'major'},
+        {type: 'feat', release: 'minor'},
+        {release: 'patch'}
+      ]
+    }],
+    ['@semantic-release/release-notes-generator', {
+      preset: 'conventionalcommits',
+      presetConfig: {
+        types: [
+          {type: 'feat', section: 'Features'},
+          {type: 'feature', section: 'Features'},
+          {type: 'fix', section: 'Bug Fixes'},
+          {type: 'perf', section: 'Performance Improvements'},
+          {type: 'revert', section: 'Reverts'},
+          {type: 'docs', section: 'Documentation'},
+          {type: 'style', section: 'Styles'},
+          {type: 'chore', section: 'Miscellaneous Chores'},
+          {type: 'refactor', section: 'Code Refactoring'},
+          {type: 'test', section: 'Tests'},
+          {type: 'build', section: 'Build System'},
+          {type: 'ci', section: 'Continuous Integration'}
+        ]
+      }
+    }],
     ['@semantic-release/changelog', {changelogFile: 'CHANGELOG.md'}],
     ['@semantic-release/exec', {
       prepareCmd: `set -eu
