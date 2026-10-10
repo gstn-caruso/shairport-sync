@@ -1,3 +1,13 @@
+## [6.1.0](https://github.com/gstn-caruso/shairport-sync/compare/v6.0.1...v6.1.0) (2026-10-10)
+
+### Features
+
+* **nqptp:** bundle timing companion in receiver releases ([#45](https://github.com/gstn-caruso/shairport-sync/issues/45)) ([95e80a7](https://github.com/gstn-caruso/shairport-sync/commit/95e80a734050aa775f5c1ec64276dc4821617bd7))
+
+### Documentation
+
+* record delivered C++26 migration gates and release evidence ([51e240f](https://github.com/gstn-caruso/shairport-sync/commit/51e240fd4c0137f3c787c8162d4e32f796ce5463))
+
 ## [6.0.1](https://github.com/gstn-caruso/shairport-sync/compare/v6.0.0...v6.0.1) (2026-10-10)
 
 ### Bug Fixes
