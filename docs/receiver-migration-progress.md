@@ -18,7 +18,7 @@ remaining migration and device acceptance work.
 | Stage 3 typed volume | PR42 distinguishes AirPlay wire levels, decibels, centibel attenuation, and Q16 PCM gain. Characterization preserves permissive parsing, float rounding, exact mute semantics, invalid-value attenuation, and effect ordering. Primitive conversion remains at RTSP, native output, subprocess, PCM, and C ABI boundaries. |
 | Pairing prerequisite | PR43 fixes empty TLV output sizing: an empty value requires its two-byte header before capacity is checked. Seven characterization cases cover empty values, exact/insufficient capacity, mixed values, fragmentation/reassembly, and truncated input. This is not completion of Stage 9. |
 
-The next Stage 4 slice gives the activity monitor ownership of its worker,
+The activity-monitor Stage 4 slice gives it ownership of its worker,
 synchronization, deadlines, and admitted effects. Its C API remains intact;
 `ActivityState` still owns transition decisions. Cooperative stop wakes and
 joins the worker, drains admitted effects, and deactivates once. Readiness,
@@ -26,6 +26,17 @@ restart, idle/deadline stopping, hook ordering, caller cancellation, exit-handle
 ordering, and failed worker creation are tested. Independent review approved
 the implementation after a thread-creation exception-safety finding was fixed.
 This completes the monitor slice, rather than all Stage 4 workers.
+
+The listener slice now gives `RtspListener` ownership of its worker, stop state,
+wake descriptor, and listening sockets. Stop requests wake a blocked poll,
+join the worker, and release sockets after the existing session shutdown.
+The RTSP loop returns normally; its process-exit handler runs before owner
+destruction. Listening sockets are nonblocking, while accepted conversation
+sockets remain blocking and close on exec. A stop racing acceptance closes the
+accepted descriptor. Failed bind/listen attempts release their descriptors;
+failed thread creation leaves the registered exit stop safe. This completes
+the listener slice locally, with independent review and hosted CI still pending.
+Conversation, playback, and session workers still use cancellation.
 
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
@@ -100,7 +111,7 @@ installation is requested.
 
 ## Work still open
 
-Stage 4 remains open for the RTSP/listener, playback, and session workers:
+Stage 4 remains open for the RTSP conversation, playback, and session workers:
 request stop, wake blocked workers, join, then release their resources. The
 activity-monitor slice preserves caller-configured blocking hooks and
 nonblocking timeout hooks. A blocking caller hook can delay stop; effect

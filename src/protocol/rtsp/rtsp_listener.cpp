@@ -46,7 +46,12 @@ bool RtspListener::addSocket(int descriptor) {
     close(descriptor);
     return false;
   }
-  sockets_.push_back(descriptor);
+  try {
+    sockets_.push_back(descriptor);
+  } catch (...) {
+    close(descriptor);
+    throw;
+  }
   return true;
 }
 

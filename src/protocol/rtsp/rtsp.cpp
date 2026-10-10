@@ -59,6 +59,8 @@
 #include "platform/utilities/network_utilities.h"
 #include "platform/utilities/rtsp_message_utilities.h"
 #include "protocol/rtsp/rtsp_message.hpp"
+#include "protocol/rtsp/rtsp_listener.hpp"
+#include "platform/utilities/exit.h"
 #include <format>
 #include <new>
 
@@ -2892,38 +2894,12 @@ static const char *format_address(struct sockaddr *fsa) {
 }
 */
 
-void rtsp_listen_loop_cleanup_handler(__attribute__((unused)) void *arg) {
-  int oldState;
-  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
-  debug(2, "rtsp_listen_loop_cleanup_handler called.");
-  sessions.shutdown();
-  int *sockfd = (int *)arg;
-  if (sockfd) {
-    int i;
-    for (i = 1; i <= sockfd[0]; i++) {
-      safe_socket_close(&sockfd[i]);
-    }
-    free(sockfd);
-  }
-  pthread_setcancelstate(oldState, NULL);
-}
-
-void discardUnregisteredSession(void *argument) {
-  auto **session = static_cast<rtsp_conn_info **>(argument);
-  delete *session;
-  *session = nullptr;
-}
-
-void *rtsp_listen_loop(__attribute((unused)) void *arg) {
-  //  #include <syscall.h>
-  //  debug(1, "rtsp_listen_loop PID %d", syscall(SYS_gettid));
-  int oldState;
-  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState);
+static void rtsp_listen_loop(RtspListener &listener, std::stop_token stop) {
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, nullptr);
+  pthread_setname_np(pthread_self(), "listener");
   struct addrinfo hints, *info, *p;
   char portstr[6];
-  int *sockfd = NULL;
-  int nsock = 0;
-  int i, ret;
+  int ret;
 
   principalSession.clear();
 
@@ -2938,10 +2914,13 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
 
   ret = getaddrinfo(NULL, portstr, &hints, &info);
   if (ret) {
-    die("getaddrinfo failed: %s", gai_strerror(ret));
+    warn("getaddrinfo failed: %s", gai_strerror(ret));
+    exit_request(EXIT_FAILURE);
+    return;
   }
 
-  for (p = info; p; p = p->ai_next) {
+  const auto addresses = std::unique_ptr<addrinfo, decltype(&freeaddrinfo)>(info, freeaddrinfo);
+  for (p = addresses.get(); p; p = p->ai_next) {
     ret = 0;
     int lfd = socket(p->ai_family, p->ai_socktype, IPPROTO_TCP);
     int yes = 1;
@@ -2971,6 +2950,9 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
       // one of the address families will fail on some systems that
       // report its availability. do not complain.
 
+      if (!ret)
+        ret = listen(lfd, 255);
+
       if (ret) {
         const char *family;
 #ifdef AF_INET6
@@ -2981,35 +2963,15 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
           family = "IPv4";
         debug(1, "unable to listen on %s port %d. The error is: \"%s\".", family, config.port,
               strerror(errno));
+        close(lfd);
       } else {
-        listen(lfd, 255);
-        nsock++;
-        sockfd = static_cast<int *>(realloc(sockfd, (nsock + 1) * sizeof(int)));
-        sockfd[nsock] = lfd;
-        sockfd[0] = nsock; // the first entry is the number of sockets in the array
+        listener.addSocket(lfd);
       }
     }
 
-    /*
-        listen(lfd, 5);
-        nsock++;
-        sockfd = realloc(sockfd, nsock * sizeof(int));
-        sockfd[nsock - 1] = lfd;
-    */
   }
 
-  freeaddrinfo(info);
-
-  if (nsock) {
-    int maxfd = -1;
-    fd_set fds;
-    FD_ZERO(&fds);
-    // skip the first element in sockfd -- it's the count
-    for (i = 1; i <= nsock; i++) {
-      if (sockfd[i] > maxfd)
-        maxfd = sockfd[i];
-    }
-
+  if (listener.hasSockets() && !stop.stop_requested()) {
     const char **t1 = txt_records; // ap1 text records
     const char **t2 = NULL;        // possibly two text records
 
@@ -3021,57 +2983,25 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
     mdns_register(t1, t2); // note that the dacp thread could still be using the mdns stuff after
                            // all player threads have been terminated, so mdns_unregister can't be
                            // in the rtsp_listen_loop cleanup.
-    pthread_setcancelstate(oldState, NULL);
-    int acceptfd;
-    struct timeval tv;
-    pthread_cleanup_push(rtsp_listen_loop_cleanup_handler, (void *)sockfd);
-    do {
-      pthread_testcancel();
-      tv.tv_sec = 60;
-      tv.tv_usec = 0;
-
-      // skip the first element in sockfd -- it's the count
-      for (i = 1; i <= nsock; i++)
-        FD_SET(sockfd[i], &fds);
-
-      ret = select(maxfd + 1, &fds, 0, 0, &tv);
-
-      if (ret < 0) {
-        if (errno == EINTR)
-          continue;
-        break;
-      }
-
+    while (!stop.stop_requested()) {
       cleanup_threads();
-
-      acceptfd = -1;
-      // skip the first element in sockfd -- it's the count
-      for (i = 1; i <= nsock; i++) {
-        if (FD_ISSET(sockfd[i], &fds)) {
-          acceptfd = sockfd[i];
-          break;
-        }
-      }
-      if (acceptfd < 0) // timeout
-        continue;
-
       SOCKADDR remote;
       socklen_t size_of_reply = sizeof(remote);
-      int acceptedSocket = eintr_checked_accept(acceptfd, (struct sockaddr *)&remote, &size_of_reply);
+      int acceptedSocket = listener.accept(stop, (struct sockaddr *)&remote, &size_of_reply);
       if (acceptedSocket < 0) {
-        perror("failed to accept connection");
         continue;
       }
 
       rtsp_conn_info *conn = new (std::nothrow) rtsp_conn_info{};
       if (conn == 0) {
         close(acceptedSocket);
-        die("Couldn't allocate memory for an rtsp_conn_info record.");
-        continue;
+        warn("Couldn't allocate memory for an rtsp_conn_info record.");
+        exit_request(EXIT_FAILURE);
+        break;
       }
       conn->fd = acceptedSocket;
       conn->remote = remote;
-      pthread_cleanup_push(discardUnregisteredSession, &conn);
+      auto unregistered = std::unique_ptr<SessionState>(conn);
       conn->connection_number = RTSP_connection_index++;
       debug(2, "Connection %d is at: 0x%" PRIxPTR ".", conn->connection_number, (uintptr_t)conn);
 
@@ -3189,32 +3119,60 @@ void *rtsp_listen_loop(__attribute((unused)) void *arg) {
         }
 
         const int connectionNumber = conn->connection_number;
+        if (stop.stop_requested())
+          break;
         int previousState;
         pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
-        auto owner = std::unique_ptr<SessionState>(conn);
+        auto owner = std::move(unregistered);
         conn = nullptr;
         ret = sessions.start(std::move(owner), rtsp_conversation_thread_func);
         pthread_setcancelstate(previousState, nullptr);
-        pthread_testcancel();
         if (ret) {
           char errorstring[1024];
           strerror_r(ret, (char *)errorstring, sizeof(errorstring));
-          die("Connection %d: cannot create an RTSP conversation thread. Error %d: \"%s\".",
+          warn("Connection %d: cannot create an RTSP conversation thread. Error %d: \"%s\".",
               connectionNumber, ret, (char *)errorstring);
+          exit_request(EXIT_FAILURE);
+          break;
         }
 
 
         if (ret == 0)
           debug(3, "Successfully created RTSP receiver thread %d.", connectionNumber);
       }
-      pthread_cleanup_pop(1);
-    } while (1);
-    pthread_cleanup_pop(1); // should never happen
-  } else {
-    die("could not establish a service on port %d -- program terminating. Is another instance of "
+    }
+  } else if (!stop.stop_requested()) {
+    warn("could not establish a service on port %d -- program terminating. Is another instance of "
         "Shairport Sync running on this device?",
         config.port);
+    exit_request(EXIT_FAILURE);
   }
-  debug(1, "Fell out of the RTSP select loop -- this should never happen!");
-  pthread_exit(NULL);
+}
+
+static RtspListener &rtspListener() {
+  static RtspListener listener;
+  return listener;
+}
+
+int rtsp_listener_start() {
+  try {
+    auto &listener = rtspListener();
+    atexit(rtsp_listener_stop);
+    listener.start([&listener](std::stop_token stop) {
+      try {
+        rtsp_listen_loop(listener, stop);
+      } catch (const std::exception &error) {
+        warn("RTSP listener failed: %s", error.what());
+        exit_request(EXIT_FAILURE);
+      }
+      sessions.shutdown();
+    });
+    return 0;
+  } catch (const std::system_error &error) {
+    return error.code().value();
+  }
+}
+
+void rtsp_listener_stop() {
+  rtspListener().stop();
 }

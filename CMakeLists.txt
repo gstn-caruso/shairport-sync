@@ -127,8 +127,10 @@ if(BUILD_TESTING)
   find_package(GTest 1.17 CONFIG REQUIRED)
   include(GoogleTest)
   add_executable(rtsp-listener-test tests/rtsp_listener_test.cpp)
-  target_link_libraries(rtsp-listener-test PRIVATE receiver GTest::gtest_main)
-  target_link_options(rtsp-listener-test PRIVATE -Wl,--wrap=poll)
+  target_link_libraries(rtsp-listener-test PRIVATE receiver GTest::gtest)
+  target_link_options(rtsp-listener-test PRIVATE -Wl,--wrap=poll -Wl,--wrap=accept4
+    -Wl,--wrap=build_bonjour_strings -Wl,--wrap=mdns_register -Wl,--wrap=bind
+    -Wl,--wrap=exit_request)
   gtest_discover_tests(rtsp-listener-test PROPERTIES TIMEOUT 5)
   add_executable(nqptp-integration-test tests/nqptp_integration_test.cpp)
   target_link_libraries(nqptp-integration-test PRIVATE nqptp-core receiver GTest::gtest_main)

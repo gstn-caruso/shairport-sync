@@ -27,7 +27,8 @@ enum rtsp_read_request_response {
 enum rtsp_read_request_response rtsp_read_request(rtsp_conn_info *conn, rtsp_message **message);
 int msg_write_response(rtsp_conn_info *conn, rtsp_message *message);
 
-void *rtsp_listen_loop(__attribute((unused)) void *arg);
+int rtsp_listener_start(void);
+void rtsp_listener_stop(void);
 
 // this can be used to [try to] forcibly stop a play session
 // play_lock_r get_play_lock(rtsp_conn_info *conn, int allow_session_interruption);
