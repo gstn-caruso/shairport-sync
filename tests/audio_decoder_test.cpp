@@ -5,6 +5,8 @@
 #include <string.h>
 #include <malloc.h>
 #include <array>
+#include <memory>
+#include <cstring>
 
 static unsigned contextsOpened, contextsReleased, framesReleased;
 
@@ -187,4 +189,51 @@ TEST(AudioDecoder, ShortUnpreparedAndInvalidPacketsPreserveFormatUntilDestructio
 
 TEST(AudioDecoder, PlayerBoundaryPreservesKnownFormatAndClearsIdempotently) {
   checkPlayerBoundary();
+}
+
+TEST(AudioDecoder, NonSilentAlacRoundtripPreservesDistinctLeftAndRightSamples) {
+  const auto releaseContext = [](AVCodecContext *context) { avcodec_free_context(&context); };
+  const auto releaseFrame = [](AVFrame *frame) { av_frame_free(&frame); };
+  const auto releasePacket = [](AVPacket *packet) { av_packet_free(&packet); };
+  std::unique_ptr<AVCodecContext, decltype(releaseContext)> encoder(
+      avcodec_alloc_context3(avcodec_find_encoder(AV_CODEC_ID_ALAC)), releaseContext);
+  ASSERT_NE(encoder, nullptr);
+  encoder->sample_fmt = AV_SAMPLE_FMT_S16P;
+  encoder->sample_rate = 44100;
+  av_channel_layout_default(&encoder->ch_layout, 2);
+  ASSERT_EQ(avcodec_open2(encoder.get(), encoder->codec, nullptr), 0);
+
+  std::unique_ptr<AVFrame, decltype(releaseFrame)> input(av_frame_alloc(), releaseFrame);
+  ASSERT_NE(input, nullptr);
+  input->format = encoder->sample_fmt;
+  input->sample_rate = encoder->sample_rate;
+  input->nb_samples = 352;
+  ASSERT_EQ(av_channel_layout_copy(&input->ch_layout, &encoder->ch_layout), 0);
+  ASSERT_EQ(av_frame_get_buffer(input.get(), 0), 0);
+  std::array<std::array<int16_t, 352>, 2> expected{};
+  for (int frame = 0; frame < 352; ++frame) {
+    expected[0][frame] = static_cast<int16_t>((frame % 11 - 5) * 3000);
+    expected[1][frame] = static_cast<int16_t>(-12000 + frame * 60);
+  }
+  for (size_t channel = 0; channel < expected.size(); ++channel)
+    std::memcpy(input->data[channel], expected[channel].data(), sizeof(expected[channel]));
+  ASSERT_EQ(avcodec_send_frame(encoder.get(), input.get()), 0);
+  std::unique_ptr<AVPacket, decltype(releasePacket)> packet(av_packet_alloc(), releasePacket);
+  ASSERT_NE(packet, nullptr);
+  ASSERT_EQ(avcodec_receive_packet(encoder.get(), packet.get()), 0);
+  AudioDecoder decoder;
+  ASSERT_TRUE(decoder.prepare(*AudioFormat::fromSsrc(ALAC_44100_S16_2)));
+
+  auto decoded = decoder.decode({packet->data, static_cast<size_t>(packet->size)});
+
+  ASSERT_TRUE(decoded.has_value());
+  ASSERT_EQ((*decoded)->nb_samples, 352);
+  ASSERT_EQ((*decoded)->format, AV_SAMPLE_FMT_S16P);
+  ASSERT_EQ((*decoded)->ch_layout.nb_channels, 2);
+  for (size_t channel = 0; channel < expected.size(); ++channel) {
+    SCOPED_TRACE(testing::Message() << "Channel " << channel);
+    std::array<int16_t, 352> actual;
+    std::memcpy(actual.data(), (*decoded)->data[channel], sizeof(actual));
+    EXPECT_EQ(actual, expected[channel]);
+  }
 }
