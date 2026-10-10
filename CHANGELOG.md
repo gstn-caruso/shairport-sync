@@ -1,0 +1,9 @@
+## [5.6.0](https://github.com/gstn-caruso/shairport-sync/compare/v5.5.1...v5.6.0) (2026-10-10)
+
+### Features
+
+* **release:** publish versioned Debian packages after validated pushes ([#23](https://github.com/gstn-caruso/shairport-sync/issues/23)) ([1438584](https://github.com/gstn-caruso/shairport-sync/commit/1438584317b0c242eb25cb13240bfcccbc88ca18))
+
+### Bug Fixes
+
+* **release:** pin changelog preset compatible with notes writer ([#24](https://github.com/gstn-caruso/shairport-sync/issues/24)) ([3a0fbc9](https://github.com/gstn-caruso/shairport-sync/commit/3a0fbc9a342501b24056d1fdf756e043e44aa56e))
