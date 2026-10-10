@@ -1,7 +1,6 @@
 #include "session/session_registry.hpp"
 #include "cancellation_wait.hpp"
 #include <gtest/gtest.h>
-#include <cassert>
 #include <cerrno>
 #include <condition_variable>
 #include <sys/socket.h>
@@ -13,6 +12,7 @@ struct ShutdownScenario {
   std::condition_variable changed;
   SessionRegistry *registry = nullptr;
   int sockets[2];
+  int startError = 0;
   bool ready = false, destroy = false, cleanupEntered = false, allowCleanup = false;
   bool cleanupFinished = false, destructionReturned = false;
 };
@@ -44,12 +44,18 @@ static void *blockWorker(void *argument) {
   pthread_cleanup_pop(1);
   return nullptr;
 }
-static void startWorker(SessionRegistry &registry) {
+static bool startWorker(SessionRegistry &registry) {
   scenario->registry = &registry;
   auto session = std::make_unique<SessionState>();
   session->connection_number = 1;
   session->fd = scenario->sockets[0];
-  assert(registry.start(std::move(session), blockWorker) == 0);
+  const auto result = registry.start(std::move(session), blockWorker);
+  {
+    std::lock_guard lock(scenario->mutex);
+    scenario->startError = result;
+  }
+  scenario->changed.notify_all();
+  return result == 0;
 }
 static void awaitDestruction() {
   std::unique_lock lock(scenario->mutex);
@@ -57,13 +63,14 @@ static void awaitDestruction() {
 }
 static void announceDestruction() {
   std::lock_guard lock(scenario->mutex);
-  assert(scenario->cleanupFinished);
+  EXPECT_TRUE(scenario->cleanupFinished);
   scenario->destructionReturned = true;
 }
 static void *destroyStack(void *) {
   {
     SessionRegistry registry;
-    startWorker(registry);
+    if (!startWorker(registry))
+      return nullptr;
     awaitDestruction();
   }
   announceDestruction();
@@ -72,7 +79,8 @@ static void *destroyStack(void *) {
 }
 static void *destroyUnique(void *) {
   auto registry = std::make_unique<SessionRegistry>();
-  startWorker(*registry);
+  if (!startWorker(*registry))
+    return nullptr;
   awaitDestruction();
   registry.reset();
   announceDestruction();
@@ -83,7 +91,8 @@ struct UnwindRequested {};
 static void *unwindStack(void *) {
   try {
     SessionRegistry registry;
-    startWorker(registry);
+    if (!startWorker(registry))
+      return nullptr;
     awaitDestruction();
     throw UnwindRequested{};
   } catch (const UnwindRequested &) {
@@ -95,7 +104,8 @@ static void *unwindStack(void *) {
 static void *unwindUnique(void *) {
   try {
     auto registry = std::make_unique<SessionRegistry>();
-    startWorker(*registry);
+    if (!startWorker(*registry))
+      return nullptr;
     awaitDestruction();
     throw UnwindRequested{};
   } catch (const UnwindRequested &) {
@@ -109,7 +119,8 @@ static void *cancelStack(void *) {
   pthread_cleanup_push(announceAfterUnwind, nullptr);
   {
     SessionRegistry registry;
-    startWorker(registry);
+    if (!startWorker(registry))
+      return nullptr;
     awaitDestruction();
   }
   pthread_cleanup_pop(0);
@@ -119,7 +130,8 @@ static void *cancelUnique(void *) {
   pthread_cleanup_push(announceAfterUnwind, nullptr);
   {
     auto registry = std::make_unique<SessionRegistry>();
-    startWorker(*registry);
+    if (!startWorker(*registry))
+      return nullptr;
     awaitDestruction();
   }
   pthread_cleanup_pop(0);
@@ -127,57 +139,79 @@ static void *cancelUnique(void *) {
 }
 static void *shutdownTwice(void *) {
   SessionRegistry registry;
-  startWorker(registry);
+  if (!startWorker(registry))
+    return nullptr;
   awaitDestruction();
   registry.shutdown();
   registry.shutdown();
   announceDestruction();
   int sockets[2];
-  assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+  const auto paired = socketpair(AF_UNIX, SOCK_STREAM, 0, sockets);
+  EXPECT_EQ(paired, 0);
+  if (paired != 0)
+    return nullptr;
   auto rejected = std::make_unique<SessionState>();
   rejected->fd = sockets[0];
-  assert(registry.start(std::move(rejected), blockWorker) == ECANCELED);
+  EXPECT_EQ(registry.start(std::move(rejected), blockWorker), ECANCELED);
   char byte;
-  assert(read(sockets[1], &byte, 1) == 0);
+  EXPECT_EQ(read(sockets[1], &byte, 1), 0);
   close(sockets[1]);
   return nullptr;
 }
 static void checkDestructor(void *(*destroyer)(void *), bool cancelDestroyer,
                             bool cancelWhileWaiting = false) {
-  const auto savedScenario = scenario;
   ShutdownScenario current;
+  struct RestoreScenario {
+    ShutdownScenario *saved = scenario;
+    ~RestoreScenario() { scenario = saved; }
+  } restore;
   scenario = &current;
-  assert(socketpair(AF_UNIX, SOCK_STREAM, 0, current.sockets) == 0);
+  ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, current.sockets), 0);
   pthread_t retiring;
-  assert(pthread_create(&retiring, nullptr, destroyer, nullptr) == 0);
+  const auto created = pthread_create(&retiring, nullptr, destroyer, nullptr);
+  if (created != 0) {
+    close(current.sockets[0]);
+    close(current.sockets[1]);
+  }
+  ASSERT_EQ(created, 0);
+  int startError;
   {
     std::unique_lock lock(current.mutex);
-    current.changed.wait(lock, [&] { return current.ready; });
+    current.changed.wait(lock, [&] { return current.ready || current.startError != 0; });
     current.destroy = !cancelWhileWaiting;
+    startError = current.startError;
+  }
+  if (startError != 0) {
+    EXPECT_EQ(pthread_join(retiring, nullptr), 0);
+    close(current.sockets[1]);
+    FAIL() << "Session worker creation failed: " << startError;
   }
   current.changed.notify_all();
   if (cancelWhileWaiting)
-    assert(pthread_cancel(retiring) == 0);
+    EXPECT_EQ(pthread_cancel(retiring), 0);
   {
     std::unique_lock lock(current.mutex);
     current.changed.wait(lock, [&] { return current.cleanupEntered; });
   }
   if (cancelDestroyer && !cancelWhileWaiting)
-    assert(pthread_cancel(retiring) == 0);
+    EXPECT_EQ(pthread_cancel(retiring), 0);
   char byte;
-  assert(recv(current.sockets[1], &byte, 1, MSG_DONTWAIT) == -1 && errno == EAGAIN);
+  const auto received = recv(current.sockets[1], &byte, 1, MSG_DONTWAIT);
+  const auto receiveError = errno;
+  EXPECT_EQ(received, -1);
+  EXPECT_EQ(receiveError, EAGAIN);
   {
     std::lock_guard lock(current.mutex);
     current.allowCleanup = true;
   }
   current.changed.notify_all();
-  void *result;
-  assert(pthread_join(retiring, &result) == 0);
-  assert(result == (cancelDestroyer ? PTHREAD_CANCELED : nullptr));
-  assert(current.destructionReturned && current.cleanupFinished);
-  assert(read(current.sockets[1], &byte, 1) == 0);
+  void *result = nullptr;
+  EXPECT_EQ(pthread_join(retiring, &result), 0);
+  EXPECT_EQ(result, (cancelDestroyer ? PTHREAD_CANCELED : nullptr));
+  EXPECT_TRUE(current.destructionReturned);
+  EXPECT_TRUE(current.cleanupFinished);
+  EXPECT_EQ(read(current.sockets[1], &byte, 1), 0);
   close(current.sockets[1]);
-  scenario = savedScenario;
 }
 
 TEST(SessionShutdown, StackDestructionCancelsAndJoinsBeforeClosingSocket) {
