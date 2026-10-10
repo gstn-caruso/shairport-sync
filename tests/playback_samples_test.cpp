@@ -1,12 +1,14 @@
 #include "audio/pcm/playback_samples.hpp"
 #include <gtest/gtest.h>
-#include <cassert>
 #include <cstring>
 #include <bit>
 #include <vector>
 
 static int32_t sampleAt(const EncodedPcm &audio, size_t sample) {
-  assert(sample < audio.bytes().size() / 4);
+  if (sample >= audio.bytes().size() / 4) {
+    ADD_FAILURE() << "Sample " << sample << " is outside " << audio.bytes().size() / 4 << " samples";
+    return 0;
+  }
   const auto bytes = audio.bytes().subspan(sample * 4, 4);
   const uint32_t value = uint32_t(bytes[0]) | uint32_t(bytes[1]) << 8 |
                          uint32_t(bytes[2]) << 16 | uint32_t(bytes[3]) << 24;
@@ -22,8 +24,12 @@ static ConvertedAudio nativeAudio(std::vector<Sample> values, unsigned channels,
 }
 static EncodedPcm encode(PlaybackSamples &samples, PcmEncoder &encoder,
                          const ConvertedAudio &audio, PlaybackMode mode, Correction correction) {
-  assert(samples.prepare(audio, mode));
-  assert(encoder.configure({SPS_FORMAT_S32_LE, audio.shape().channels()}, audio.shape().effectiveBits()));
+  const auto prepared = samples.prepare(audio, mode);
+  EXPECT_TRUE(prepared);
+  const auto configured = encoder.configure({SPS_FORMAT_S32_LE, audio.shape().channels()}, audio.shape().effectiveBits());
+  EXPECT_TRUE(configured);
+  if (!prepared || !configured)
+    return {};
   encoder.beginFrame(0x10000, mode == PlaybackMode::mono);
   return samples.encode(encoder, correction);
 }
@@ -31,7 +37,13 @@ static EncodedPcm encode(PlaybackSamples &samples, PcmEncoder &encoder,
 static constexpr std::array modes{PlaybackMode::stereo, PlaybackMode::mono, PlaybackMode::reverse,
                                   PlaybackMode::left, PlaybackMode::right};
 
-static void checkNative16Normalization(PlaybackSamples &samples, PcmEncoder &encoder) {
+class PlaybackSampleContract : public testing::Test {
+protected:
+  PlaybackSamples samples{[](size_t) { return size_t{1}; }};
+  PcmEncoder encoder{[] { return int64_t{0}; }};
+};
+
+TEST_F(PlaybackSampleContract, Native16NormalizationPreservesExtremeStereoBytes) {
   ASSERT_TRUE(encoder.configure({SPS_FORMAT_S32_LE, 2}, 16));
   auto audio = *ConvertedAudio::allocate(400, 100, 0, {2, 16, 16});
   for (size_t frame = 0; frame < 100; ++frame) {
@@ -47,8 +59,7 @@ static void checkNative16Normalization(PlaybackSamples &samples, PcmEncoder &enc
   EXPECT_EQ(std::memcmp(encoded.bytes().data(), expected, sizeof(expected)), 0);
 }
 
-static void checkStereoModes(PlaybackSamples &samples, PcmEncoder &encoder) {
-  ASSERT_NO_FATAL_FAILURE(checkNative16Normalization(samples, encoder));
+TEST_F(PlaybackSampleContract, StereoModesPreserveNative16And32ChannelExpectations) {
   const std::array<std::array<int32_t, 2>, 5> expected16{{
     {INT32_MIN, 2147418112}, {-32768, -32768}, {2147418112, INT32_MIN},
     {INT32_MIN, INT32_MIN}, {2147418112, 2147418112}
@@ -65,6 +76,7 @@ static void checkStereoModes(PlaybackSamples &samples, PcmEncoder &encoder) {
     {-3, 2}, {-1, -1}, {2, -3}, {-3, -3}, {2, 2}
   }};
   for (size_t mode = 0; mode < modes.size(); ++mode) {
+    SCOPED_TRACE(testing::Message() << "Playback mode " << static_cast<int>(modes[mode]));
     auto from16 = nativeAudio(stereo16, 2, 16);
     auto result16 = encode(samples, encoder, from16, modes[mode], {CorrectionStyle::basic, 0});
     EXPECT_EQ(sampleAt(result16, 0), expected16[mode][0]);
@@ -76,14 +88,15 @@ static void checkStereoModes(PlaybackSamples &samples, PcmEncoder &encoder) {
   }
 }
 
-static void checkMultichannelOrder(PlaybackSamples &samples, PcmEncoder &encoder) {
-  ASSERT_NO_FATAL_FAILURE(checkStereoModes(samples, encoder));
+TEST_F(PlaybackSampleContract, MonoAndSurroundPayloadsKeepChannelOrderInEveryMode) {
   for (unsigned channels : {1U, 6U, 8U}) {
+    SCOPED_TRACE(testing::Message() << "Channels " << channels);
     std::vector<int16_t> input(100 * channels);
     for (size_t index = 0; index < input.size(); ++index)
       input[index] = static_cast<int16_t>(int(index % channels) - 3);
     auto audio = nativeAudio(input, channels, 16);
     for (auto mode : modes) {
+      SCOPED_TRACE(testing::Message() << "Playback mode " << static_cast<int>(mode));
       auto result = encode(samples, encoder, audio, mode, {CorrectionStyle::basic, 0});
       EXPECT_EQ(result.frames(), 100);
       for (unsigned channel = 0; channel < channels; ++channel)
@@ -92,18 +105,25 @@ static void checkMultichannelOrder(PlaybackSamples &samples, PcmEncoder &encoder
   }
 }
 
-static void checkEmptyAndIncoherentPayloads(PlaybackSamples &samples, PcmEncoder &encoder) {
-  ASSERT_NO_FATAL_FAILURE(checkMultichannelOrder(samples, encoder));
+TEST_F(PlaybackSampleContract, EmptyPayloadClearsPreviouslyPreparedSamples) {
+  auto valid = nativeAudio(std::vector<int16_t>(200, 1), 2, 16);
+  ASSERT_TRUE(samples.prepare(valid, PlaybackMode::stereo));
+  ASSERT_TRUE(encoder.configure({SPS_FORMAT_S32_LE, 2}, 16));
   ConvertedAudio empty;
   EXPECT_TRUE(samples.prepare(empty, PlaybackMode::stereo));
   EXPECT_TRUE(samples.encode(encoder, {CorrectionStyle::basic, 1}).bytes().empty());
+}
+
+TEST_F(PlaybackSampleContract, IncoherentPayloadClearsPreviouslyPreparedSamples) {
+  auto valid = nativeAudio(std::vector<int16_t>(200, 1), 2, 16);
+  ASSERT_TRUE(samples.prepare(valid, PlaybackMode::stereo));
+  ASSERT_TRUE(encoder.configure({SPS_FORMAT_S32_LE, 2}, 16));
   auto incoherent = *ConvertedAudio::allocate(3, 100, 0, {2, 16, 16});
   EXPECT_FALSE(samples.prepare(incoherent, PlaybackMode::stereo));
   EXPECT_TRUE(samples.encode(encoder, {CorrectionStyle::basic, 1}).bytes().empty());
 }
 
-static void checkBasicInteriorCorrection(PlaybackSamples &samples, PcmEncoder &encoder) {
-  ASSERT_NO_FATAL_FAILURE(checkEmptyAndIncoherentPayloads(samples, encoder));
+TEST_F(PlaybackSampleContract, BasicInteriorCorrectionAveragesEachChannelAndChoosesOnlyWhenNeeded) {
   std::vector<int32_t> ramp(200);
   for (size_t frame = 0; frame < 100; ++frame) {
     ramp[frame * 2] = static_cast<int32_t>(frame * 100);
@@ -111,9 +131,10 @@ static void checkBasicInteriorCorrection(PlaybackSamples &samples, PcmEncoder &e
   }
   auto rampAudio = nativeAudio(ramp, 2, 32);
   for (size_t selectedAt : {size_t{1}, size_t{98}}) {
+    SCOPED_TRACE(testing::Message() << "Correction at frame " << selectedAt);
     unsigned choices = 0;
     PlaybackSamples selected([&](size_t frames) {
-      assert(frames == 100);
+      EXPECT_EQ(frames, 100);
       ++choices;
       return selectedAt;
     });
@@ -134,11 +155,11 @@ static void checkBasicInteriorCorrection(PlaybackSamples &samples, PcmEncoder &e
   }
 }
 
-static void checkVernierLimits(PlaybackSamples &samples, PcmEncoder &encoder) {
-  ASSERT_NO_FATAL_FAILURE(checkBasicInteriorCorrection(samples, encoder));
+TEST_F(PlaybackSampleContract, VernierCorrectionRespectsMinimumLengthAndRequestedCounts) {
   for (size_t frames : {size_t{99}, size_t{100}}) {
     auto constant = nativeAudio(std::vector<int32_t>(frames * 2, 1000), 2, 32);
     for (int delta : {-20, -1, 0, 1, 20}) {
+      SCOPED_TRACE(testing::Message() << frames << " frames, correction " << delta);
       auto corrected = encode(samples, encoder, constant, PlaybackMode::stereo,
                                {CorrectionStyle::vernier, delta});
       EXPECT_EQ(corrected.frames(), static_cast<size_t>(int(frames) + (frames == 99 ? 0 : delta)));
@@ -148,51 +169,15 @@ static void checkVernierLimits(PlaybackSamples &samples, PcmEncoder &encoder) {
   }
 }
 
-TEST(PlaybackSamples, Native16NormalizationPreservesExtremeStereoBytes) {
-  PlaybackSamples samples([](size_t) { return size_t{1}; });
-  PcmEncoder encoder([] { return int64_t{0}; });
-  checkNative16Normalization(samples, encoder);
-}
-
-TEST(PlaybackSamples, StereoModesPreserveNative16And32ChannelExpectations) {
-  PlaybackSamples samples([](size_t) { return size_t{1}; });
-  PcmEncoder encoder([] { return int64_t{0}; });
-  checkStereoModes(samples, encoder);
-}
-
-TEST(PlaybackSamples, MonoAndSurroundPayloadsKeepChannelOrderInEveryMode) {
-  PlaybackSamples samples([](size_t) { return size_t{1}; });
-  PcmEncoder encoder([] { return int64_t{0}; });
-  checkMultichannelOrder(samples, encoder);
-}
-
-TEST(PlaybackSamples, EmptyAndIncoherentPayloadsClearPreviouslyPreparedSamples) {
-  PlaybackSamples samples([](size_t) { return size_t{1}; });
-  PcmEncoder encoder([] { return int64_t{0}; });
-  checkEmptyAndIncoherentPayloads(samples, encoder);
-}
-
-TEST(PlaybackSamples, BasicInteriorCorrectionAveragesEachChannelAndChoosesOnlyWhenNeeded) {
-  PlaybackSamples samples([](size_t) { return size_t{1}; });
-  PcmEncoder encoder([] { return int64_t{0}; });
-  checkBasicInteriorCorrection(samples, encoder);
-}
-
-TEST(PlaybackSamples, VernierCorrectionRespectsMinimumLengthAndRequestedCounts) {
-  PlaybackSamples samples([](size_t) { return size_t{1}; });
-  PcmEncoder encoder([] { return int64_t{0}; });
-  checkVernierLimits(samples, encoder);
-}
-
-TEST(PlaybackSamples, EncodedHandoffPreservesStereoBytesAndBoundsBasicCorrection) {
-  PlaybackSamples samples([](size_t) { return size_t{1}; });
-  PcmEncoder encoder([] { return int64_t{0}; });
-  ASSERT_NO_FATAL_FAILURE(checkVernierLimits(samples, encoder));
+TEST_F(PlaybackSampleContract, EncodedHandoffPreservesStereoBytesAndBoundsBasicCorrection) {
   std::array<int32_t, 512> playback;
   PlaybackSamples handoff([](size_t) { return size_t{1}; });
   const auto encodeCorrection = [&](bool interpolate, int delta) {
     auto native = nativeAudio(std::vector<int32_t>(playback.begin(), playback.end()), 2, 16);
-    assert(handoff.prepare(native, PlaybackMode::stereo));
+    const auto prepared = handoff.prepare(native, PlaybackMode::stereo);
+    EXPECT_TRUE(prepared);
+    if (!prepared)
+      return EncodedPcm{};
     return handoff.encode(encoder, {interpolate ? CorrectionStyle::vernier : CorrectionStyle::basic, delta});
   };
   playback.fill(0x12340000);
