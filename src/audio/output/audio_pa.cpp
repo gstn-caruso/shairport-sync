@@ -57,6 +57,7 @@ pa_threaded_mainloop *mainloop;
 pa_mainloop_api *mainloop_api;
 pa_context *context;
 pa_stream *stream;
+static bool mainloop_started = false;
 
 static int32_t current_encoded_output_format = 0;
 const char *default_channel_layouts = NULL;
@@ -551,19 +552,26 @@ static int init(__attribute__((unused)) int argc, __attribute__((unused)) char *
   pa_threaded_mainloop_lock(mainloop);
 
   // Start the mainloop
-  if (pa_threaded_mainloop_start(mainloop) != 0)
+  if (pa_threaded_mainloop_start(mainloop) != 0) {
+    pa_threaded_mainloop_unlock(mainloop);
     die("could not start the pulseaudio threaded mainloop");
+  }
+  mainloop_started = true;
 
-  if (pa_context_connect(context, config.pa_server, PA_CONTEXT_NOFLAGS, NULL) != 0)
+  if (pa_context_connect(context, config.pa_server, PA_CONTEXT_NOFLAGS, NULL) != 0) {
+    pa_threaded_mainloop_unlock(mainloop);
     die("failed to connect to the pulseaudio context -- the error message is \"%s\".",
         pa_strerror(pa_context_errno(context)));
+  }
 
   // Wait for the context to be ready
   for (;;) {
     pa_context_state_t context_state = pa_context_get_state(context);
-    if (!PA_CONTEXT_IS_GOOD(context_state))
+    if (!PA_CONTEXT_IS_GOOD(context_state)) {
+      pa_threaded_mainloop_unlock(mainloop);
       die("pa context is not good -- the error message \"%s\".",
           pa_strerror(pa_context_errno(context)));
+    }
     if (context_state == PA_CONTEXT_READY)
       break;
     pa_threaded_mainloop_wait(mainloop);
@@ -573,14 +581,29 @@ static int init(__attribute__((unused)) int argc, __attribute__((unused)) char *
 }
 
 static void deinit(void) {
-  // debug(1, "pa deinit");
-  if (stream != NULL) {
-    check_pa_stream_status(stream, "audio_pa deinitialisation.");
-    pa_stream_disconnect(stream);
+  if (mainloop_started) {
     pa_threaded_mainloop_stop(mainloop);
-    pa_threaded_mainloop_free(mainloop);
-    debug(1, "pa deinit done");
+    mainloop_started = false;
   }
+  if (stream != NULL) {
+    pa_stream_disconnect(stream);
+    pa_stream_unref(stream);
+    stream = nullptr;
+  }
+  if (context != nullptr) {
+    pa_context_disconnect(context);
+    pa_context_unref(context);
+    context = nullptr;
+  }
+  if (mainloop != nullptr) {
+    pa_threaded_mainloop_free(mainloop);
+    mainloop = nullptr;
+  }
+  free(audio_lmb);
+  audio_lmb = nullptr;
+  audio_toq = audio_eoq = audio_umb = nullptr;
+  audio_size = audio_occupancy = 0;
+  current_encoded_output_format = 0;
 }
 
 /*
