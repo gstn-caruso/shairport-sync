@@ -154,3 +154,10 @@ jobs:
           name: release-ctest-${{ github.sha }}
           path: build/release/Testing/Temporary/
           if-no-files-found: ignore
+      - name: Upload prepared release packages after failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-packages-${{ github.sha }}
+          path: build/release/packages/*
+          if-no-files-found: ignore
