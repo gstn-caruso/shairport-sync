@@ -127,14 +127,11 @@ void ActivityMonitor::waitForInactivity() {
   }
 }
 
-static ActivityMonitor &activityMonitor() {
-  static ActivityMonitor monitor;
-  return monitor;
-}
+static ActivityMonitor monitor;
 
-void activity_monitor_start() { activityMonitor().start(); }
-void activity_monitor_stop() { activityMonitor().stop(); }
+void activity_monitor_start() { monitor.start(); }
+void activity_monitor_stop() { monitor.stop(); }
 void activity_monitor_signify_activity(int active) {
-  activityMonitor().signifyActivity(active != 0);
+  monitor.signifyActivity(active != 0);
 }
-am_state activity_status() { return activityMonitor().status(); }
+am_state activity_status() { return monitor.status(); }
