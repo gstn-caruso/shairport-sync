@@ -18,3 +18,24 @@ the shared release version, NQPTP 1.2.8 and smi10. Companion compilation uses
 Timing and lifecycle behavior, packaging and sanitizer checks are recorded in
 the following scenarios. No isolated check establishes real AirPlay playback,
 multiroom synchronization or privileged systemd service operation.
+
+## Timing characterization
+
+The six `NqptpTiming.*` cases first passed against the untouched pinned upstream
+C implementation, then passed against the bundled C++ implementation. This is a
+behavior-preserving characterization scenario, so the upstream baseline is the
+oracle rather than an invented failing business expectation.
+The same test source supports `-DNQPTP_REFERENCE`: compile the upstream
+`nqptp-clock-sources.c`, `nqptp-message-handlers.c`, `general-utilities.c`,
+`nqptp-utilities.c` and `debug.c` with `cc -DCONFIG_FOR_LINUX -I<upstream>`;
+link those objects and `tests/nqptp_timing_test.cpp` with Clang C++26,
+`-DNQPTP_REFERENCE -I<upstream> -lgtest_main -lgtest -pthread -lrt`.
+The reference adapter suppresses only network awakening announcements.
+
+Observed offsets for the deterministic smoothing sequence: `9000000000`,
+`9001000000`, `9001000000`, `9002187500`, `9002177735` nanoseconds.
+Changing the announced grandmaster restarts smoothing at `10000000000`.
+First-peer selection, peer replacement, signed Follow_Up correction,
+unchanged Sync semantics, pause, end, brief resume, expired resume and clearing
+the timing group have matching shared-memory results. No runtime network or
+privileged operation was used for these cases.
