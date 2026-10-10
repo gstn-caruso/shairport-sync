@@ -106,3 +106,12 @@ Reproduce with `DESTDIR=<stage> cmake --install <build>`, then
 Unit validation uses the same ROOT/PREFIX with `tests/nqptp_unit_test.cmake`.
 All successful installation checks used staging directories; no host binary or
 unit was installed, enabled or started.
+
+## Numeric peer syntax compatibility
+
+Final boundary inspection found that `inet_pton` rejects valid numeric host
+forms accepted by upstream's `AI_NUMERICHOST` parser. A seventh upstream oracle
+case passed for IPv4 `127.1` and scoped IPv6 `fe80::1%lo`, then failed against
+the bundled guard (`build/numeric-host-red.log`). The guard now uses the same
+numeric-only address parser as upstream before mutation. All peer syntax and
+timing characterization cases pass; no DNS lookup is introduced.

@@ -106,6 +106,15 @@ TEST_F(NqptpTiming, SelectsFirstPeerAndReplacesTheTimingGroup) {
   EXPECT_EQ(nqptp::find_clock_source_record(second, nqptp::clocks_private), -1);
 }
 
+TEST_F(NqptpTiming, RetainsUpstreamNumericHostAddressSyntax) {
+  control("T 127.1");
+  EXPECT_STREQ(nqptp::clocks_private[0].ip, "127.1");
+  EXPECT_EQ(nqptp::clocks_private[0].family, AF_INET);
+  control("T fe80::1%lo");
+  EXPECT_STREQ(nqptp::clocks_private[0].ip, "fe80::1%lo");
+  EXPECT_EQ(nqptp::clocks_private[0].family, AF_INET6);
+}
+
 TEST_F(NqptpTiming, CorrectsFollowUpOffsetAndRetainsUpstreamSyncSemantics) {
   start();
   nqptp::ptp_sync_message sync{};

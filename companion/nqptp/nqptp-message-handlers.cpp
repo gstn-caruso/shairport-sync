@@ -24,6 +24,7 @@
 #include <unistd.h> // usleep
 #include <string>
 #include <string_view>
+#include <netdb.h>
 
 #include "debug.h"
 #include "general-utilities.h"
@@ -57,10 +58,13 @@ static bool valid_control_message(const char *buf, ssize_t length) {
     if (peer.empty() || peer.size() >= sizeof(clock_source_private_data::ip))
       return false;
     const std::string address(peer);
-    in6_addr parsed{};
-    if (inet_pton(AF_INET, address.c_str(), &parsed) != 1 &&
-        inet_pton(AF_INET6, address.c_str(), &parsed) != 1)
+    addrinfo hint{};
+    hint.ai_family = PF_UNSPEC;
+    hint.ai_flags = AI_NUMERICHOST;
+    addrinfo *parsed = nullptr;
+    if (getaddrinfo(address.c_str(), nullptr, &hint, &parsed) != 0)
       return false;
+    freeaddrinfo(parsed);
     if (end == std::string_view::npos)
       return true;
     text.remove_prefix(end + 1);
