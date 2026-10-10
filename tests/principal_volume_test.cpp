@@ -15,18 +15,18 @@ TEST(PrincipalVolume, RetiredTicketsCannotCommitSharedVolumeEffects) {
   ASSERT_TRUE(firstTicket);
   EXPECT_EQ(principal.snapshot().id, 1);
   ASSERT_TRUE(principal.acquire(second, true).accepted);
-  EXPECT_FALSE(principal.commitIfSelected(*firstTicket, [&] { shared.remember(-30); }));
-  EXPECT_EQ(shared.current(), -24);
+  EXPECT_FALSE(principal.commitIfSelected(*firstTicket, [&] { shared.remember(AirPlayVolume{-30}); }));
+  EXPECT_EQ(shared.current(), AirPlayVolume{-24});
   const auto secondTicket = principal.ticketFor(2);
   ASSERT_TRUE(secondTicket);
-  EXPECT_TRUE(principal.commitIfSelected(*secondTicket, [&] { shared.remember(-15); }));
-  EXPECT_EQ(shared.current(), -15);
+  EXPECT_TRUE(principal.commitIfSelected(*secondTicket, [&] { shared.remember(AirPlayVolume{-15}); }));
+  EXPECT_EQ(shared.current(), AirPlayVolume{-15});
   principal.releaseIfCurrent(2);
-  EXPECT_FALSE(principal.commitIfSelected(*secondTicket, [&] { shared.remember(0); }));
+  EXPECT_FALSE(principal.commitIfSelected(*secondTicket, [&] { shared.remember(AirPlayVolume{0}); }));
 }
 
 TEST(PrincipalVolume, ConcurrentReplacementRejectsOldEffectAndCommitsNewLevel) {
-  SharedVolumeLevel shared(-15);
+  SharedVolumeLevel shared(AirPlayVolume{-15});
   RuntimePrincipalSession concurrent;
   SessionState oldSession{}, newSession{};
   oldSession.connection_number = 3;
@@ -46,7 +46,7 @@ TEST(PrincipalVolume, ConcurrentReplacementRejectsOldEffectAndCommitsNewLevel) {
       changed.wait(lock, [&] { return replacementSelected; });
     }
     if (ticket)
-      EXPECT_FALSE(concurrent.commitIfSelected(*ticket, [&] { shared.remember(-30); }));
+      EXPECT_FALSE(concurrent.commitIfSelected(*ticket, [&] { shared.remember(AirPlayVolume{-30}); }));
   });
   {
     std::unique_lock lock(ordering);
@@ -61,6 +61,6 @@ TEST(PrincipalVolume, ConcurrentReplacementRejectsOldEffectAndCommitsNewLevel) {
   oldEffect.join();
   const auto newTicket = concurrent.ticketFor(4);
   ASSERT_TRUE(newTicket);
-  EXPECT_TRUE(concurrent.commitIfSelected(*newTicket, [&] { shared.remember(-12); }));
-  EXPECT_EQ(shared.current(), -12);
+  EXPECT_TRUE(concurrent.commitIfSelected(*newTicket, [&] { shared.remember(AirPlayVolume{-12}); }));
+  EXPECT_EQ(shared.current(), AirPlayVolume{-12});
 }

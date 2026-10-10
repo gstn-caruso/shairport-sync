@@ -837,7 +837,7 @@ if (config_lookup(config.cfg, "general.alac_decoder") != NULL)
     config.regtype2 = strdup("_airplay._tcp");
 
   // now set the initial volume to the default volume
-  sharedVolumeLevel.remember(config.default_airplay_volume);
+  sharedVolumeLevel.remember(AirPlayVolume{config.default_airplay_volume});
 
   config.service_name = service_name(raw_service_name);
 

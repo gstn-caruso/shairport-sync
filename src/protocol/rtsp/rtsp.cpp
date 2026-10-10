@@ -741,7 +741,7 @@ plist_t generateInfoPlist(rtsp_conn_info *conn) {
     snprintf(senderAddress, sizeof(senderAddress), "%s:%u", conn->client_ip_string,
              conn->client_rtsp_port);
     plist_dict_set_item(response_plist, "senderAddress", plist_new_string(senderAddress));
-    plist_dict_set_item(response_plist, "initialVolume", plist_new_real(suggested_volume(conn)));
+    plist_dict_set_item(response_plist, "initialVolume", plist_new_real(suggestedSessionVolume(conn).value()));
     plist_dict_set_item(response_plist, "sourceVersion", plist_new_string(config.srcvers));
 
     // Create a dictionary of supported formats for the bufferStream
@@ -2570,12 +2570,12 @@ void handle_set_parameter_parameter(rtsp_conn_info *conn, RtspMessage *req,
   for (const auto &parameter : req->parameterLines()) {
     const char *cp = parameter.c_str();
     if (!strncmp(cp, "volume: ", strlen("volume: "))) {
-      float volume = atof(cp + strlen("volume: "));
+      const auto volume = AirPlayVolume::fromWireParameter(cp + strlen("volume: "));
       debug(3, "Connection %d: request to set AirPlay Volume to: %f.", conn->connection_number,
-            volume);
+            volume.value());
       conn->volumeControl.rememberLevel(volume);
       if (const auto ticket = principalSession.ticketFor(conn->connection_number)) {
-        command_set_volume(volume);
+        command_set_volume(volume.value());
         applySessionVolumeEffects(volume, *conn, [&] {
           principalSession.commitIfSelected(*ticket, [&] { sharedVolumeLevel.remember(volume); });
         });
@@ -2599,9 +2599,9 @@ static void handle_get_parameter(__attribute__((unused)) rtsp_conn_info *conn, R
 
   if (req->requestsVolume()) {
     debug(2, "Connection %d: current volume (%.6f) requested", conn->connection_number,
-          suggested_volume(conn));
+          suggestedSessionVolume(conn).value());
 
-    resp->replaceBody(std::format("\r\nvolume: {:.6f}\r\n", suggested_volume(conn)));
+    resp->replaceBody(std::format("\r\nvolume: {:.6f}\r\n", suggestedSessionVolume(conn).value()));
   }
   resp->respondWith(200);
 }

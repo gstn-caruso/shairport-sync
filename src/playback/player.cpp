@@ -508,8 +508,14 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
   return result;
 }
 
+static void applyAndRememberSessionVolume(AirPlayVolume level, SessionState &session);
+
+AirPlayVolume suggestedSessionVolume(const SessionState *session) {
+  return session ? session->volumeControl.suggestedLevel(sharedVolumeLevel) : sharedVolumeLevel.current();
+}
+
 double suggested_volume(rtsp_conn_info *conn) {
-  return conn ? conn->volumeControl.suggestedLevel(sharedVolumeLevel) : sharedVolumeLevel.current();
+  return suggestedSessionVolume(conn).value();
 }
 
 void player_thread_cleanup_handler(void *arg) {
@@ -592,7 +598,7 @@ static PlaybackMode playbackModeFor(playback_mode_type mode) {
 
 static PcmVolumeSnapshot beginPcmFrame(rtsp_conn_info *conn) {
   const auto volume = conn->volumeControl.pcmSnapshot();
-  conn->pcmEncoder.beginFrame(volume.gainFixed16, config.playback_mode == ST_mono);
+  conn->pcmEncoder.beginFrame(volume.gainFixed16.value(), config.playback_mode == ST_mono);
   return volume;
 }
 
@@ -661,9 +667,9 @@ void *player_thread_func(void *arg) {
   // if not already set, set the volume to the pending_airplay_volume, if any, or otherwise to the
   // suggested volume.
 
-  double initial_volume = suggested_volume(conn);
-  debug(2, "Set initial volume to %.6f.", initial_volume);
-  player_volume(initial_volume, conn); // will contain a cancellation point if asked to wait
+  const auto initialVolume = suggestedSessionVolume(conn);
+  debug(2, "Set initial volume to %.6f.", initialVolume.value());
+  applyAndRememberSessionVolume(initialVolume, *conn);
 
   debug(2, "Play begin");
 
@@ -975,23 +981,23 @@ void *player_thread_func(void *arg) {
   pthread_exit(NULL);
 }
 
-static void applyVolumePlan(double level, rtsp_conn_info *conn) {
+static void applyVolumePlan(AirPlayVolume level, rtsp_conn_info *conn) {
   VolumeSettings settings;
   switch (config.volume_control_profile) {
   case VCP_standard: settings.profile = VolumeProfile::standard; break;
   case VCP_flat: settings.profile = VolumeProfile::flat; break;
   case VCP_dasl_tapered: settings.profile = VolumeProfile::dasl; break;
   }
-  if (config.volume_max_db_set) settings.maximumDb = config.volume_max_db;
-  settings.rangeDb = config.volume_range_db;
+  if (config.volume_max_db_set) settings.maximumDb = Decibels{static_cast<double>(config.volume_max_db)};
+  settings.rangeDb = Decibels{static_cast<double>(config.volume_range_db)};
   settings.hardwarePriority = config.volume_range_hw_priority != 0;
   settings.ignoreControl = config.ignore_volume_control != 0;
   OutputVolumeCapabilities capabilities;
   capabilities.canSetHardwareVolume = config.output->volume != nullptr;
   if (config.output->parameters) {
     if (const auto parameters = config.output->parameters(); parameters && parameters->volume_range)
-      capabilities.range = VolumeRange{parameters->volume_range->minimum_volume_dB,
-                                      parameters->volume_range->maximum_volume_dB};
+      capabilities.range = VolumeRange{CentibelAttenuation{static_cast<double>(parameters->volume_range->minimum_volume_dB)},
+                                      CentibelAttenuation{static_cast<double>(parameters->volume_range->maximum_volume_dB)}};
   }
   const auto plan = VolumePolicy::plan(level, settings, capabilities);
   if (plan.maximumIgnored)
@@ -1000,19 +1006,19 @@ static void applyVolumePlan(double level, rtsp_conn_info *conn) {
     warn("The range requested is too large to accommodate -- ignored.");
   bool hardwareMuted = false;
   if (plan.requestMute && config.output->mute) hardwareMuted = config.output->mute(1) == 0;
-  if (plan.hardwareAttenuation) config.output->volume(*plan.hardwareAttenuation);
+  if (plan.hardwareAttenuation) config.output->volume(plan.hardwareAttenuation->value());
   conn->volumeControl.apply(plan, hardwareMuted);
-  if (level != -144 && config.logOutputLevel)
-    inform("Output Level set to: %.2f dB.", plan.scaledAttenuation / 100);
+  if (!level.isMute() && config.logOutputLevel)
+    inform("Output Level set to: %.2f dB.", plan.scaledAttenuation.value() / 100);
   if (plan.unmute && config.output->mute) config.output->mute(0);
 }
 
-void applySessionVolume(double level, SessionState &session) {
-  command_set_volume(level);
+void applySessionVolume(AirPlayVolume level, SessionState &session) {
+  command_set_volume(level.value());
   applySessionVolumeEffects(level, session);
 }
 
-void applySessionVolumeEffects(double level, SessionState &session,
+void applySessionVolumeEffects(AirPlayVolume level, SessionState &session,
                                const std::function<void()> &publish) {
   int previousState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
@@ -1024,12 +1030,17 @@ void applySessionVolumeEffects(double level, SessionState &session,
 }
 
 void player_volume_without_notification(double level, rtsp_conn_info *conn) {
-  applySessionVolumeEffects(level, *conn, [&] { sharedVolumeLevel.remember(level); });
+  const AirPlayVolume volume{level};
+  applySessionVolumeEffects(volume, *conn, [&] { sharedVolumeLevel.remember(volume); });
+}
+
+static void applyAndRememberSessionVolume(AirPlayVolume level, SessionState &session) {
+  command_set_volume(level.value());
+  applySessionVolumeEffects(level, session, [&] { sharedVolumeLevel.remember(level); });
 }
 
 void player_volume(double level, rtsp_conn_info *conn) {
-  command_set_volume(level);
-  player_volume_without_notification(level, conn);
+  applyAndRememberSessionVolume(AirPlayVolume{level}, *conn);
 }
 
 void do_flush(uint32_t timestamp, rtsp_conn_info *conn) {
