@@ -1,7 +1,11 @@
 #pragma once
 
 #include "audio/format/audio_format.hpp"
-#include "platform/utilities/ffmpeg_api.h"
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavutil/frame.h>
+#include <libavutil/samplefmt.h>
+}
 #include <expected>
 #include <memory>
 #include <mutex>
