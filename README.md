@@ -9,12 +9,14 @@ This fork supports realtime and buffered playback, encrypted pairing, Home
 integration and sender-controlled volume. It runs as a **systemd user service**
 and works with PulseAudio or PipeWire's `pipewire-pulse` compatibility server.
 
-The supported stack is Linux, AirPlay 2, PulseAudio, Avahi, NQPTP, OpenSSL and
-FFmpeg. NQPTP 1.2.8 is maintained here as the separate `shairport-sync-nqptp`
-system service, built and packaged with the receiver. Both applications use
-C++26 and the same release version; the bundled pairing dependency
-remains C. AirPlay 1 and alternative audio or discovery backends are not
-supported.
+This repository now maintains both the **audio receiver** and its **timing
+companion**. The companion tracks the sender's clock in a separate system
+service; both applications are built, tested and packaged together, use C++26
+and share one release version. No separate timing-project checkout is needed.
+
+The supported stack is Linux, AirPlay 2, PulseAudio, Avahi, OpenSSL and FFmpeg,
+with the bundled timing companion. The pairing dependency remains C. AirPlay 1
+and alternative audio or discovery backends are not supported.
 
 ## Start here
 
@@ -37,7 +39,7 @@ flowchart TD
     sender["AirPlay device"]
     subgraph system["Linux system services"]
         avahi["Avahi: Bonjour discovery"]
-        nqptp["NQPTP: PTP clock tracking"]
+        timing["Timing companion: PTP clock tracking"]
     end
     subgraph user["Linux audio user's session"]
         receiver["Shairport Sync"]
@@ -45,10 +47,10 @@ flowchart TD
     end
     speakers["Audio device and speakers"]
     sender -->|"Discover receiver"| avahi
-    sender -->|"PTP timing traffic"| nqptp
+    sender -->|"PTP timing traffic"| timing
     sender -->|"Session control and encrypted audio"| receiver
     receiver -.->|"Publish receiver records"| avahi
-    nqptp -->|"Clock information via shared memory"| receiver
+    timing -->|"Clock information via shared memory"| receiver
     receiver -->|"PCM audio"| audio
     audio --> speakers
 ```
@@ -56,13 +58,14 @@ flowchart TD
 | Component | Responsibility |
 | --- | --- |
 | **Avahi** | Publishes Bonjour records so AirPlay devices can find the receiver. |
-| **NQPTP** | Tracks the AirPlay PTP clock and exposes its relationship to the local clock through shared memory. |
+| **Timing companion** | Tracks the AirPlay PTP clock and exposes its relationship to the local clock through shared memory. |
 | **Shairport Sync** | Pairs with senders, manages sessions, receives and decodes audio, controls volume and schedules playback. |
 | **PulseAudio / pipewire-pulse** | Negotiates the output format and channel layout, queues PCM audio and routes it to a sink. |
 
-Avahi and NQPTP must already be running as system services. Shairport Sync runs
-as the user who owns the audio session. The user service installer starts the
-receiver; it does not install or start those system services.
+Avahi and the timing companion must be running before the receiver starts.
+Installation ships both the companion's system unit and the receiver's user
+unit without enabling or starting them. Shairport Sync runs as the user who
+owns the audio session; Avahi remains a separately installed system service.
 
 Avahi advertises `_airplay._tcp` and a complementary `_raop._tcp` record for
 AirPlay 2 discovery. The RAOP record does not enable AirPlay 1 playback.
@@ -79,7 +82,7 @@ sequenceDiagram
     participant S as AirPlay device
     participant A as Avahi
     participant R as Shairport Sync
-    participant N as NQPTP
+    participant N as Timing companion
     participant P as PulseAudio / pipewire-pulse
     R->>N: Validate shared-memory interface at startup
     R->>A: Publish discovery records
@@ -168,7 +171,7 @@ clock information and output latency to schedule playback:
 ```mermaid
 flowchart TD
     anchor["Sender anchor: audio frame + AirPlay clock time"]
-    clock["NQPTP: AirPlay clock relative to local clock"]
+    clock["Timing companion: AirPlay clock relative to local clock"]
     rtp["RTP clock mapping"]
     target["Target playback time on the local clock"]
     delay["PulseAudio latency measurement"]
@@ -182,7 +185,7 @@ flowchart TD
 ```
 
 1. **Translate the timeline.** RTP timestamps identify positions in the audio
-   stream. Sender anchors and NQPTP clock information map those positions to
+   stream. Sender anchors and companion clock information map those positions to
    local playback times.
 2. **Account for queued output.** The backend reports latency, allowing
    playback timing to plan initial silence and release audio ahead of its
@@ -192,7 +195,7 @@ flowchart TD
    discard audio when resynchronization is needed. Tolerances and interpolation
    are configurable in the sample configuration.
 
-NQPTP supplies clock information, not audio. It must expose **shared-memory
+The timing companion supplies clock information, not audio. It exposes **shared-memory
 interface version 10**. Missing, inaccessible, uninitialized, truncated or
 incompatible shared memory stops startup before the receiver listens or
 advertises. Passing that startup check does not by itself establish an active
@@ -215,7 +218,7 @@ ctest --test-dir build/cmake --output-on-failure
 DESTDIR="$PWD/build/cmake/stage" cmake --install build/cmake
 ```
 
-Inspect the staged binary, manual and configuration under
+Inspect both staged binaries, service units, licenses, manual and configuration under
 `build/cmake/stage` before installing on the host:
 
 ```sh
@@ -224,8 +227,9 @@ sudo cp --no-clobber /etc/shairport-sync.conf.sample /etc/shairport-sync.conf
 ```
 
 These commands use the default `/usr/local` prefix and put the sample
-configuration in `/etc`. If you choose another prefix, update the user service's
-executable path before installing it.
+configuration in `/etc`. The installed service units use the selected prefix.
+See [BUILD.md](BUILD.md#debian-packages-and-releases) for Debian packaging and
+the supported distribution; packages also contain both applications and units.
 
 ## Configure and start
 
@@ -242,26 +246,40 @@ volume, synchronization, session and diagnostic settings.
 See [CONFIGURATION.md](CONFIGURATION.md) before migrating an older configuration:
 legacy backend selectors and several upstream options have been removed.
 
-Before starting, make sure NQPTP and Avahi are running and the current user has
-a PulseAudio-compatible audio session. PipeWire users need `pipewire-pulse`.
+Before starting, make sure Avahi is running and the current user has a
+PulseAudio-compatible audio session. PipeWire users need `pipewire-pulse`.
 The network must permit Bonjour discovery and negotiated AirPlay traffic;
 the RTSP listener uses **TCP port 7000** by default, with additional audio and
 control ports negotiated during setup.
 
-As the user who owns the audio session, preview installation, then install and
-start the service:
+If you previously installed a standalone timing service, stop and disable it
+before activating the bundled companion. Both use the same timing ports and
+shared-memory object. Follow the
+[migration instructions](BUILD.md#migrating-a-separately-installed-nqptp),
+including checks for manually started processes and stale shared memory.
+
+Start the timing companion first, then enable the receiver as the user who owns
+the audio session. The companion's current executable and system unit are named
+`shairport-sync-nqptp`; use that exact name in commands:
 
 ```sh
-sh user-service-install.sh --dry-run
-sh user-service-install.sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now shairport-sync-nqptp
+systemctl --user daemon-reload
+systemctl --user enable --now shairport-sync
 systemctl --user status shairport-sync
 journalctl --user -u shairport-sync
 ```
 
-Do not run the installer as root. The installed unit launches
-`/usr/local/bin/shairport-sync`, enables startup with the user's `default.target`
-and restarts the receiver on failure. It does not configure system-wide
-receiver startup independently of the user session.
+The companion needs UDP ports **319/320**, loopback UDP **9000** and the `/nqptp`
+shared-memory object. Its system unit supplies the privilege needed to bind
+the timing ports. Inspect its logs with
+`sudo journalctl -u shairport-sync-nqptp`.
+
+The receiver starts with the user's `default.target` and restarts on failure.
+Its startup depends on the user's audio session. After every companion restart,
+also run `systemctl --user restart shairport-sync` to remap shared memory;
+systemd does not coordinate dependencies between the system and user managers.
 
 Select the receiver in your device's AirPlay output picker and start playback.
 After changing configuration, restart the receiver:
@@ -288,12 +306,12 @@ files, tests and installation.
 | [`src/audio`](src/audio) | Formats, channel mapping, decoding, buffering, resampling, PCM and output adapters. |
 | [`src/packets`](src/packets) | Retransmission planning. |
 | [`src/playback`](src/playback) | Player coordination, playback-thread lifecycle, timing, synchronization and statistics. |
-| [`src/timing`](src/timing) | RTP clock mapping and NQPTP shared-memory access. |
+| [`src/timing`](src/timing) | RTP clock mapping and companion shared-memory access. |
 | [`src/volume`](src/volume) | Volume policy, session volume state and runtime effects. |
 | [`src/monitoring`](src/monitoring) | Receiver activity state and monitoring. |
 | [`src/runtime`](src/runtime), [`src/platform/utilities`](src/platform/utilities) | Shared runtime support and platform/protocol utilities. |
 | [`pair_ap`](pair_ap) | Bundled C pairing implementation. |
-| [`companion/nqptp`](companion/nqptp) | Bundled timing companion, runtime ownership and upstream provenance. |
+| [Timing companion](companion/nqptp) | PTP clock tracking, socket and shared-memory ownership; see its [upstream provenance](companion/nqptp/PROVENANCE.md). |
 
 Packets, audio formats, PCM, playback timing, volume policy, RTP clocks and text
 formatting have separate library targets. Other packages contribute to the
@@ -306,7 +324,8 @@ CTest commands.
 [CI](.github/workflows/receiver.yml) builds Release, Debug, ASan+UBSan and TSan
 configurations, runs CTest contracts and checks staged installation. Tests cover
 decoding, buffering, timing, volume, session lifecycle, RTSP handling and startup
-validation. [VALIDATION.md](VALIDATION.md) records coverage and reproducible
+validation, plus companion timing, lifecycle and socket/shared-memory integration.
+[VALIDATION.md](VALIDATION.md) records coverage and reproducible
 device checks.
 
 Automated tests do not establish playback quality or multiroom timing. Actual
@@ -315,7 +334,8 @@ integration end to end.
 
 | Symptom | First checks |
 | --- | --- |
-| Receiver fails before becoming visible | Read the user-service log; check NQPTP availability and shared-memory compatibility. |
+| Receiver fails before becoming visible | Read the user-service log; check timing-companion availability and shared-memory compatibility. |
+| Timing companion fails to start | Read its system-service log; check for an existing timing service, port conflicts or stale shared memory using the migration guide. |
 | Service runs but receiver is absent from the picker | Check Avahi, receiver naming and whether the network permits Bonjour discovery. |
 | Receiver connects but produces no sound | Check the audio user's PulseAudio / `pipewire-pulse` session and the configured server and sink. |
 | Dropouts or timing problems | Enable diagnostics; check packet loss, clock information and output latency. |
