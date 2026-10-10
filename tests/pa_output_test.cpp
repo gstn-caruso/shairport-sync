@@ -13,8 +13,9 @@ extern pa_threaded_mainloop *mainloop;
 namespace {
 bool corked;
 unsigned starts;
+unsigned canceledReservations;
 size_t writableBytes;
-enum class WriteFailure { none, zeroReservation, nullReservation, rejectedWrite };
+enum class WriteFailure { none, zeroReservation, nullReservation, subframeReservation, rejectedWrite };
 WriteFailure writeFailure;
 pa_stream_request_cb_t writeCallback;
 std::vector<unsigned char> writable(176400);
@@ -50,9 +51,10 @@ int __wrap_pa_stream_begin_write(pa_stream *, void **data, size_t *size) {
   *data = writable.data();
   if (writeFailure == WriteFailure::zeroReservation) *size = 0;
   if (writeFailure == WriteFailure::nullReservation) *data = nullptr;
+  if (writeFailure == WriteFailure::subframeReservation) *size = 3;
   return 0;
 }
-int __wrap_pa_stream_cancel_write(pa_stream *) { return 0; }
+int __wrap_pa_stream_cancel_write(pa_stream *) { ++canceledReservations; return 0; }
 int __wrap_pa_stream_write(pa_stream *, const void *data, size_t size, pa_free_cb_t, int64_t, pa_seek_mode_t) {
   if (writeFailure == WriteFailure::rejectedWrite) return -1;
   auto bytes = static_cast<const unsigned char *>(data);
@@ -64,7 +66,7 @@ int __wrap_pa_stream_write(pa_stream *, const void *data, size_t size, pa_free_c
 class PaOutput : public testing::Test {
 protected:
   void SetUp() override {
-    delivered.clear(); starts = 0; writableBytes = writable.size(); writeFailure = WriteFailure::none;
+    delivered.clear(); starts = 0; canceledReservations = 0; writableBytes = writable.size(); writeFailure = WriteFailure::none;
     context = nullptr;
     mainloop = reinterpret_cast<pa_threaded_mainloop *>(1);
     ASSERT_EQ(audio_pa.configure(CHANNELS_TO_ENCODED_FORMAT(2) | RATE_TO_ENCODED_FORMAT(44100) | FORMAT_TO_ENCODED_FORMAT(SPS_FORMAT_S16_LE), nullptr), 0);
@@ -144,6 +146,7 @@ TEST_F(PaOutput, ZeroReservationReturnsAndPreservesPcmForRetry) {
   std::vector<unsigned char> frame{1, 2, 3, 4};
   play(frame);
   EXPECT_TRUE(delivered.empty());
+  EXPECT_EQ(canceledReservations, 1u);
   writeFailure = WriteFailure::none;
   writeCallback(stream, 4, nullptr);
   EXPECT_EQ(delivered, frame);
@@ -154,6 +157,7 @@ TEST_F(PaOutput, NullReservationReturnsAndPreservesPcmForRetry) {
   std::vector<unsigned char> frame{1, 2, 3, 4};
   play(frame);
   EXPECT_TRUE(delivered.empty());
+  EXPECT_EQ(canceledReservations, 1u);
   writeFailure = WriteFailure::none;
   writeCallback(stream, 4, nullptr);
   EXPECT_EQ(delivered, frame);
@@ -164,7 +168,20 @@ TEST_F(PaOutput, RejectedServerWritePreservesPcmForRetry) {
   std::vector<unsigned char> frame{1, 2, 3, 4};
   play(frame);
   EXPECT_TRUE(delivered.empty());
+  EXPECT_EQ(canceledReservations, 1u);
   writeFailure = WriteFailure::none;
   writeCallback(stream, 4, nullptr);
   EXPECT_EQ(delivered, frame);
+}
+
+TEST_F(PaOutput, SubframeReservationIsCanceledAndPreservesPcmForRetry) {
+  writeFailure = WriteFailure::subframeReservation;
+  std::vector<unsigned char> frame{1, 2, 3, 4};
+  play(frame);
+  EXPECT_TRUE(delivered.empty());
+  EXPECT_EQ(canceledReservations, 1u);
+  writeFailure = WriteFailure::none;
+  writeCallback(stream, 4, nullptr);
+  EXPECT_EQ(delivered, frame);
+  EXPECT_EQ(canceledReservations, 1u);
 }
