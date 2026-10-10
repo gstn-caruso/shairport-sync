@@ -1,3 +1,9 @@
+## [5.7.0](https://github.com/gstn-caruso/shairport-sync/compare/v5.6.0...v5.7.0) (2026-10-10)
+
+### Features
+
+* **release:** publish native arm64 Debian packages alongside amd64 ([#25](https://github.com/gstn-caruso/shairport-sync/issues/25)) ([764f7b3](https://github.com/gstn-caruso/shairport-sync/commit/764f7b3b1c69810da91e8cae6ddcc275b94cf417))
+
 ## [5.6.0](https://github.com/gstn-caruso/shairport-sync/compare/v5.5.1...v5.6.0) (2026-10-10)
 
 ### Features
