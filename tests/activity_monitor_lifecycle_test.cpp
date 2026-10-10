@@ -279,6 +279,22 @@ TEST(ActivityMonitorLifecycle, StopWaitsForAdmittedHookWithoutBlockingStatusOrAl
   EXPECT_EQ(activity_status(), am_inactive);
 }
 
+TEST(ActivityMonitorLifecycle, TimeoutHookRunsWithoutWaitingEvenWhenCallerHooksBlock) {
+  HookTranscript hooks(0.03, true);
+  hooks.release();
+  activity_monitor_signify_activity(1);
+  EXPECT_EQ(hooks.next().transition, 'A');
+  activity_monitor_signify_activity(0);
+  const auto stopHook = hooks.next();
+  ASSERT_EQ(stopHook.transition, 'D');
+  EXPECT_EQ(waitpid(stopHook.child, nullptr, WNOHANG), 0);
+  const auto before = std::chrono::steady_clock::now();
+  activity_monitor_stop();
+  EXPECT_LT(std::chrono::steady_clock::now() - before, 500ms);
+  hooks.release();
+  EXPECT_EQ(hooks.next(50).transition, '\0');
+}
+
 TEST(ActivityMonitorLifecycle, DuplicateLifecycleAndPendingDeadlineDeactivateExactlyOnce) {
   HookTranscript hooks(0.1);
   hooks.release();
@@ -293,4 +309,3 @@ TEST(ActivityMonitorLifecycle, DuplicateLifecycleAndPendingDeadlineDeactivateExa
   EXPECT_EQ(hooks.next(150).transition, '\0');
   EXPECT_EQ(activity_status(), am_inactive);
 }
-
