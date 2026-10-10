@@ -21,6 +21,16 @@ TEST(VolumePolicy, HardwareFractionalMaximumTruncatesBeforeScaling) {
   EXPECT_FALSE(plan.maximumIgnored);
 }
 
+TEST(VolumePolicy, OutsideHardwareMaximumWithoutRangeIsReported) {
+  VolumeSettings settings;
+  settings.maximumDb = -50;
+  OutputVolumeCapabilities hardware{{VolumeRange{-4000, 0}}, true};
+  auto plan = VolumePolicy::plan(0, settings, hardware);
+  EXPECT_TRUE(plan.maximumIgnored);
+  EXPECT_EQ(plan.hardwareAttenuation, 0);
+  EXPECT_EQ(plan.gainFixed16, 65536);
+}
+
 TEST(VolumePolicy, ProfilesPreserveAttenuationAndFixedGain) {
   VolumeSettings settings;
   settings.rangeDb = 60;
