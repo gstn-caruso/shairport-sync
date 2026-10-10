@@ -67,6 +67,15 @@ TEST(VolumePolicy, OversizedMixedRangeReportsIgnoredRequest) {
   EXPECT_EQ(plan.gainFixed16, int(65536 * std::pow(10, -2815.0 / 2000)));
 }
 
+TEST(VolumePolicy, HardwareRangeWithoutSetterEmitsNoGainDecision) {
+  OutputVolumeCapabilities hardware{{VolumeRange{-4000, 0}}, false};
+  auto plan = VolumePolicy::plan(-15, {}, hardware);
+  EXPECT_FALSE(plan.hardwareAttenuation);
+  EXPECT_FALSE(plan.gainFixed16);
+  EXPECT_EQ(plan.softwareAttenuation, 0);
+  EXPECT_TRUE(plan.unmute);
+}
+
 TEST(VolumePolicy, ProfilesPreserveAttenuationAndFixedGain) {
   VolumeSettings settings;
   settings.rangeDb = 60;
