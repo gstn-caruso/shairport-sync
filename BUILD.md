@@ -120,6 +120,7 @@ the package does not install or start NQPTP, Avahi or the receiver.
 Build a package locally with the installed distribution's dependencies:
 
 ```sh
+sudo apt-get install dpkg-dev file
 cmake -S . -B build/package -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=cmake/clang-toolchain.cmake \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
