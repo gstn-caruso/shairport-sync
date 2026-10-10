@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <future>
+#include <latch>
 #include <poll.h>
 #include <string>
 #include <sys/wait.h>
@@ -308,4 +309,27 @@ TEST(ActivityMonitorLifecycle, DuplicateLifecycleAndPendingDeadlineDeactivateExa
   EXPECT_EQ(hooks.next().transition, 'D');
   EXPECT_EQ(hooks.next(150).transition, '\0');
   EXPECT_EQ(activity_status(), am_inactive);
+}
+
+TEST(ActivityMonitorLifecycle, ConcurrentSignalsAndStatusRemainInactiveAfterStop) {
+  config.disable_standby_mode = disable_standby_auto;
+  config.active_state_timeout = 0.0;
+  activity_monitor_start();
+  std::latch begin(1);
+  std::array<std::thread, 4> callers;
+  for (auto &caller : callers)
+    caller = std::thread([&] {
+      begin.wait();
+      for (int signal = 0; signal < 100; ++signal) {
+        activity_monitor_signify_activity(signal % 2);
+        const auto status = activity_status();
+        EXPECT_TRUE(status == am_inactive || status == am_active);
+      }
+    });
+  begin.count_down();
+  activity_monitor_stop();
+  for (auto &caller : callers)
+    caller.join();
+  EXPECT_EQ(activity_status(), am_inactive);
+  EXPECT_EQ(config.keep_dac_busy, 0);
 }
