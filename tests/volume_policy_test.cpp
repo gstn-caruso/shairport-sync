@@ -2,6 +2,32 @@
 #include <gtest/gtest.h>
 #include <cmath>
 #include <initializer_list>
+#include <limits>
+
+TEST(VolumePolicy, NonfiniteLevelsSelectMinimumAttenuationWithoutRequestingMute) {
+  for (const double level : {std::numeric_limits<double>::quiet_NaN(),
+                            std::numeric_limits<double>::infinity(),
+                            -std::numeric_limits<double>::infinity()}) {
+    SCOPED_TRACE(level);
+    const auto plan = VolumePolicy::plan(level, {}, {});
+    EXPECT_EQ(plan.softwareAttenuation, -9630);
+    EXPECT_EQ(plan.gainFixed16, 1);
+    EXPECT_FALSE(plan.requestMute);
+    EXPECT_TRUE(plan.unmute);
+  }
+}
+
+TEST(VolumePolicy, OnlyTheExactMuteSentinelRequestsMute) {
+  const auto plan = VolumePolicy::plan(-144.000001, {}, {});
+  EXPECT_EQ(plan.softwareAttenuation, -9630);
+  EXPECT_FALSE(plan.requestMute);
+  EXPECT_TRUE(plan.unmute);
+}
+
+TEST(VolumePolicy, StandardProfileRetainsIntegerHalfSlopeForOddHardwareRange) {
+  const auto plan = VolumePolicy::plan(-15, {}, {{VolumeRange{-4001, 0}}, true});
+  EXPECT_NEAR(*plan.hardwareAttenuation, -1200.2, 1e-9);
+}
 
 TEST(VolumePolicy, SoftwareOnlyFractionalLimitsPreserveTruncation) {
   VolumeSettings settings;
