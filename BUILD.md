@@ -66,7 +66,10 @@ test executables. This improves targeted feedback rather than clean-build time.
 CI runs separate CMake Release, Debug, ASan+UBSan and TSan builds,
 all with the same pinned compiler and library. Every build runs its contracts
 and stages the binary, manual and sample configuration without starting a service.
-The sanitizer jobs check instrumentation in receiver C++ object files.
+The sanitizer jobs check instrumentation in receiver C++ object files. TSan
+detects data races between threads; ASan detects memory misuse and UBSan detects
+undefined behavior. All four builds must pass before a release can publish.
+Failed tests upload CTest diagnostics, and an empty test selection fails CI.
 
 The compiler installation must include compiler-rt runtimes for sanitizer builds;
 the official binary archive used by CI includes them. Some source-built asdf
@@ -104,3 +107,142 @@ starting the receiver. When migrating an existing configuration, see
 From the repository root, `./user-service-install.sh --dry-run` previews user service installation. `./user-service-install.sh` installs and starts the unit for your current user. Its default executable path is `/usr/local/bin/shairport-sync`; edit the unit if you chose another prefix. Do not run the installer as root. NQPTP and Avahi must already be running.
 
 `systemctl --user status shairport-sync` and `journalctl --user -u shairport-sync` show receiver status and logs. The unit does not create a system account or install a system-wide receiver service.
+
+## Debian packages and releases
+
+Every CI Release build uploads a `.deb` and checksum as workflow artifacts,
+including changes that do not increase the version. Packages built by CI target
+Ubuntu 26.04 amd64 and depend on that distribution's runtime libraries; they are
+not universal packages for older Ubuntu or Debian releases. CPack derives the
+library dependencies with `dpkg-shlibdeps`. NQPTP must be installed separately;
+the package does not install or start NQPTP, Avahi or the receiver.
+
+Build a package locally with the installed distribution's dependencies:
+
+```sh
+sudo apt-get install dpkg-dev file
+cmake -S . -B build/package -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/clang-toolchain.cmake \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+  -DCMAKE_INSTALL_SYSCONFDIR=/etc -DUSE_GIT_VERSION=OFF
+cmake --build build/package --parallel 2
+ctest --test-dir build/package --no-tests=error --output-on-failure
+cpack --config build/package/CPackConfig.cmake -B build/package/packages
+sudo apt install ./build/package/packages/shairport-sync_*.deb
+```
+
+The package contains `/usr/bin/shairport-sync`, the manual, license notices,
+configuration documentation and `/etc/shairport-sync.conf.sample`. Copy the
+sample to `/etc/shairport-sync.conf` and configure it before starting. The
+packaged user unit uses `/usr/bin/shairport-sync`; enable it with
+`systemctl --user enable --now shairport-sync` from the PulseAudio user's session
+after starting NQPTP and Avahi. Remove any older user-unit override that still
+points to `/usr/local/bin/shairport-sync`.
+
+Pushes to `master` or `main`, including merged PRs, run the same validation.
+After all checks pass, semantic-release analyzes commits since the last release:
+
+| Commit type | Version change |
+| --- | --- |
+| Any type with `!` or a `BREAKING CHANGE:` footer | Major |
+| `feat` | Minor |
+| `fix`, `perf` | Patch |
+| `docs`, `test`, `refactor`, `style`, `chore`, `build`, `ci` | None |
+
+The largest required bump wins. Preserve that meaning in squash-merge titles
+and bodies. `VERSION` is the CMake version source. For a release, automation
+updates it with `CHANGELOG.md`, builds and tests that version, commits the
+release metadata, creates `v<version>` and publishes a GitHub Release with the
+`.deb` and `SHA256SUMS`. Release binaries use the package version instead of a
+Git description. Release jobs are serialized; superseded runs skip publication
+so a later validated push covers their commits.
+
+For the initial rollout, tag the last pre-automation `master` commit
+`3740f383` as `v5.5.1` before merging this workflow. This establishes the existing
+version baseline; a feature then releases 5.6.0 rather than starting at 1.0.0.
+Do not increment `VERSION` manually for subsequent changes. Release tooling is
+pinned by `.github/release/package-lock.json`; reproduce its policy checks with
+`npm ci --prefix .github/release` and `npm test --prefix .github/release`.
+
+### Recovering a partially published release
+
+A failure can occur after the release metadata commit is pushed but before the
+tag or GitHub Release is published. Rerunning that workflow can skip the release
+because the branch now points to the metadata commit. Recover the intended
+version from that commit; do not bump `VERSION` again or run semantic-release
+against a different source commit. Failed release jobs retain prepared packages
+as `release-packages-<source-sha>` when those files exist, plus CTest diagnostics.
+
+Record the failed run ID, its source SHA and the exact automated
+`chore(release): <version>` commit from the run logs and branch history. In a
+fresh recovery clone, fetch the branch and tags, then inspect that commit:
+
+```sh
+git clone https://github.com/gstn-caruso/shairport-sync.git recovery
+cd recovery
+git fetch origin --tags
+release_commit='REPLACE_WITH_EXACT_METADATA_COMMIT_SHA'
+source_sha='REPLACE_WITH_FAILED_RUN_SOURCE_SHA'
+failed_run='REPLACE_WITH_FAILED_RUN_ID'
+release_version=$(git show "$release_commit:VERSION")
+release_tag="v$release_version"
+test "$(git rev-parse "$release_commit^")" = "$source_sha"
+git diff "$source_sha" "$release_commit" --stat
+git show "$release_commit:CHANGELOG.md" > recovery-notes.md
+```
+
+The metadata commit must change only `VERSION` and `CHANGELOG.md`, and its
+changelog must describe the intended version. Stop if the source or version
+does not match. If the tag exists, verify that it points to this exact commit:
+`test "$(git rev-parse "$release_tag^{commit}")" = "$release_commit"`.
+If the failure happened before tag creation, create and push only that missing
+tag: `git tag "$release_tag" "$release_commit"`, then
+`git push origin "refs/tags/$release_tag"`. Do not move an existing tag.
+
+Download the prepared packages from the failed run and verify them before upload:
+
+```sh
+gh run download "$failed_run" --name "release-packages-$source_sha" --dir recovery-assets
+(cd recovery-assets && sha256sum --check SHA256SUMS)
+test "$(dpkg-deb -f recovery-assets/*.deb Version)" = "$release_version"
+```
+
+If packaging or checksum generation failed, or the artifact has expired,
+check out the exact release commit with `git checkout --detach "$release_commit"`
+in this recovery clone and rebuild using the package commands above. Keep
+`/usr`, `/etc` and `USE_GIT_VERSION=OFF`, run the tests, and verify the extracted
+binary reports the intended version. Use Ubuntu 26.04 amd64 to reproduce the CI
+distribution target. Copy the resulting `.deb` to `recovery-assets` and create
+its checksum with
+`(cd recovery-assets && sha256sum *.deb > SHA256SUMS)`, then repeat the checksum
+and package-version checks. This rebuild retains the recorded source and version
+without creating another metadata commit or bump.
+
+Inspect `gh release view "$release_tag" --json isDraft,assets,targetCommitish`.
+If a draft exists, download its current assets to a separate directory, compare
+each existing file against the verified recovery files, and upload only missing
+assets with `gh release upload "$release_tag" recovery-assets/FILE` (replace
+`FILE` with the missing `.deb` or `SHA256SUMS`). Finish that draft with
+`gh release edit "$release_tag" --draft=false --notes-file recovery-notes.md`.
+If the release does not exist, create it for the verified existing tag and exact
+metadata commit:
+
+```sh
+gh release create "$release_tag" recovery-assets/*.deb recovery-assets/SHA256SUMS \
+  --verify-tag --target "$release_commit" --title "$release_tag" \
+  --notes-file recovery-notes.md
+```
+
+Do not treat an authentication or network error as proof that a release is
+missing. For an already published release, download its assets and verify their
+hashes against `SHA256SUMS`; identical assets require no replacement. Stop on
+any hash mismatch. If that release is incomplete, upload only its missing
+assets after comparing all existing assets with the verified recovery files.
+Do not use `--clobber`, delete a published release, or replace
+published binaries with a differing rebuild. Verify the final tag, release,
+version and downloaded checksums before declaring recovery complete.
+
+Release tooling currently has 15 upstream dependency audit advisories, including
+the commit-analyzer's `micromatch`/`braces` chain and bundled npm dependencies.
+Check with `npm audit --prefix .github/release`; the pinned latest tooling and
+safe automatic fixes did not resolve these advisories at initial rollout.
