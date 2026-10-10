@@ -151,14 +151,14 @@ same version using the tested packages:
 | Any type with `!` or a `BREAKING CHANGE:` footer | Major |
 | `feat` | Minor |
 | `fix`, `perf` | Patch |
-| All other commits, including `docs`, `test`, `refactor`, `style`, `chore`, `build`, `ci` | Patch |
+| All other commits, including `docs`, `test`, `refactor`, `style`, `chore`, `build`, `ci` | No release by themselves |
 
-Every merge to `master` publishes at least a patch release; an empty unreleased
-commit range does not publish again. The largest required bump wins. Preserve
+Merges publish a release only when the unreleased commit range requires a bump;
+an empty range does not publish again. The largest required bump wins. Preserve
 that meaning in squash-merge titles
 and bodies. `VERSION` is the CMake version source. For a release, automation
 updates it with `CHANGELOG.md`, commits the
-release metadata, creates `v<version>` and publishes a GitHub Release with the
+release metadata, creates `v<version>` and publishes a GitHub Release with
 the amd64 `.deb` file and `SHA256SUMS`. AMD64 builds
 and tests the planned version before publication. The publisher requires exactly
 one amd64 package with matching package name, version and
