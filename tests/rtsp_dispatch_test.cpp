@@ -38,6 +38,23 @@ TEST_F(RtspDispatch, GettingVolumeReturnsTheSessionLevelWithSixDecimalPlaces) {
   EXPECT_EQ(response.bodyText(), "\r\nvolume: -15.000000\r\n");
 }
 
+TEST_F(RtspDispatch, GettingVolumeReturnsTheLevelSetByThePreviousRequest) {
+  request.request("SET_PARAMETER");
+  request.addHeader("Content-Type", "text/parameters");
+  request.replaceBody("volume: -15.000000\r\nprogress: 0/44100/88200\r\n");
+  dispatch();
+  ASSERT_EQ(response.responseCode(), 200);
+  request = RtspMessage{};
+  response = RtspMessage{};
+  request.request("GET_PARAMETER");
+  request.replaceBody("volume\r\n");
+
+  dispatch();
+
+  EXPECT_EQ(response.responseCode(), 200);
+  EXPECT_EQ(response.bodyText(), "\r\nvolume: -15.000000\r\n");
+}
+
 struct MethodResponse {
   const char *method;
   int status;
