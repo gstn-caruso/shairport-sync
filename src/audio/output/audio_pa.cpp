@@ -606,15 +606,13 @@ static int play(void *buf, int samples, __attribute__((unused)) int sample_type,
   size_t bytes_to_transfer = samples * format_info->bytes_per_sample *
                              CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format);
 
-  output_queue.enqueue({static_cast<const std::byte *>(buf), bytes_to_transfer});
-
-  if ((output_queue.occupiedBytes() >=
-       (RATE_FROM_ENCODED_FORMAT(current_encoded_output_format) * format_info->bytes_per_sample *
-        CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format)) /
-           4) &&
-      (pa_stream_is_corked(stream))) {
-    // debug(1,"Uncorked");
-    pa_stream_cork(stream, 0, stream_success_cb, mainloop);
+  const auto accepted = output_queue.enqueue({static_cast<const std::byte *>(buf), bytes_to_transfer});
+  if (accepted > 0) {
+    const auto writable = pa_stream_writable_size(stream);
+    if (writable != static_cast<size_t>(-1) && writable > 0)
+      stream_write_cb(stream, writable, mainloop);
+    if (pa_stream_is_corked(stream) > 0)
+      pa_stream_cork(stream, 0, stream_success_cb, mainloop);
   }
   pa_threaded_mainloop_unlock(mainloop);
   return 0;

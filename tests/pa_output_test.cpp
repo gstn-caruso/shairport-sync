@@ -13,6 +13,7 @@ extern pa_threaded_mainloop *mainloop;
 namespace {
 bool corked;
 unsigned starts;
+size_t writableBytes;
 pa_stream_request_cb_t writeCallback;
 std::vector<unsigned char> writable(176400);
 std::vector<unsigned char> delivered;
@@ -41,6 +42,7 @@ pa_operation *__wrap_pa_stream_cork(pa_stream *, int value, pa_stream_success_cb
 pa_operation *__wrap_pa_stream_flush(pa_stream *, pa_stream_success_cb_t, void *) { delivered.clear(); return nullptr; }
 int __wrap_pa_stream_disconnect(pa_stream *) { return 0; }
 void __wrap_pa_stream_unref(pa_stream *) {}
+size_t __wrap_pa_stream_writable_size(const pa_stream *) { return writableBytes; }
 int __wrap_pa_stream_begin_write(pa_stream *, void **data, size_t *size) {
   *size = std::min(*size, writable.size());
   *data = writable.data();
@@ -56,7 +58,7 @@ int __wrap_pa_stream_write(pa_stream *, const void *data, size_t size, pa_free_c
 class PaOutput : public testing::Test {
 protected:
   void SetUp() override {
-    delivered.clear(); starts = 0;
+    delivered.clear(); starts = 0; writableBytes = writable.size();
     context = nullptr;
     mainloop = reinterpret_cast<pa_threaded_mainloop *>(1);
     ASSERT_EQ(audio_pa.configure(CHANNELS_TO_ENCODED_FORMAT(2) | RATE_TO_ENCODED_FORMAT(44100) | FORMAT_TO_ENCODED_FORMAT(SPS_FORMAT_S16_LE), nullptr), 0);
@@ -71,6 +73,62 @@ TEST_F(PaOutput, QuarterSecondStartsAndDeliversPcm) {
   std::vector<unsigned char> bytes(44100, 42);
   play(bytes);
   EXPECT_EQ(starts, 1u);
+  EXPECT_EQ(delivered, bytes);
   writeCallback(stream, bytes.size(), nullptr);
   EXPECT_EQ(delivered, bytes);
+}
+
+TEST_F(PaOutput, OneFrameStartsWithoutWaitingForMorePcm) {
+  std::vector<unsigned char> bytes{1, 2, 3, 4};
+  play(bytes);
+  EXPECT_EQ(starts, 1u);
+  EXPECT_EQ(delivered, bytes);
+  writeCallback(stream, bytes.size(), nullptr);
+  EXPECT_EQ(delivered, bytes);
+}
+
+TEST_F(PaOutput, EmptyAndRejectedWritesDoNotStartPlayback) {
+  std::vector<unsigned char> empty;
+  play(empty);
+  EXPECT_EQ(starts, 0u);
+  writableBytes = 0;
+  std::vector<unsigned char> full(176400, 9);
+  play(full);
+  EXPECT_EQ(starts, 1u);
+  corked = true;
+  std::vector<unsigned char> frame(4, 1);
+  play(frame);
+  EXPECT_EQ(starts, 1u);
+  writeCallback(stream, full.size(), nullptr);
+  EXPECT_EQ(delivered, full);
+}
+
+TEST_F(PaOutput, SeveralSmallWritesDeliverFifoWithoutExtraCallbacks) {
+  std::vector<unsigned char> first{1, 2, 3, 4};
+  std::vector<unsigned char> second{5, 6, 7, 8};
+  play(first); play(second);
+  EXPECT_EQ(delivered, (std::vector<unsigned char>{1, 2, 3, 4, 5, 6, 7, 8}));
+  EXPECT_EQ(starts, 1u);
+}
+
+TEST_F(PaOutput, FlushDiscardsQueuedPcmAndOneFrameResumes) {
+  writableBytes = 0;
+  std::vector<unsigned char> old(8, 7);
+  play(old);
+  audio_pa.flush();
+  EXPECT_TRUE(corked);
+  writableBytes = writable.size();
+  std::vector<unsigned char> next{1, 2, 3, 4};
+  play(next);
+  EXPECT_EQ(delivered, next);
+  EXPECT_EQ(starts, 2u);
+}
+
+TEST_F(PaOutput, EnqueueAfterEmptyCallbackMakesProgress) {
+  writeCallback(stream, 4096, nullptr);
+  EXPECT_TRUE(delivered.empty());
+  std::vector<unsigned char> frame{1, 2, 3, 4};
+  play(frame);
+  EXPECT_EQ(delivered, frame);
+  EXPECT_EQ(starts, 1u);
 }
