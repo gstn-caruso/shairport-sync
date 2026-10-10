@@ -36,14 +36,12 @@ export default {
       prepareCmd: `set -eu
 test "$RELEASE_VERSION" = '<%= nextRelease.version %>'
 set -- build/release/packages/*.deb
-test "$#" -eq 2
-for architecture in amd64 arm64; do
-  package="build/release/packages/shairport-sync_<%= nextRelease.version %>_$architecture.deb"
-  test -f "$package"
-  test "$(dpkg-deb -f "$package" Package)" = shairport-sync
-  test "$(dpkg-deb -f "$package" Version)" = '<%= nextRelease.version %>'
-  test "$(dpkg-deb -f "$package" Architecture)" = "$architecture"
-done
+test "$#" -eq 1
+package="build/release/packages/shairport-sync_<%= nextRelease.version %>_amd64.deb"
+test -f "$package"
+test "$(dpkg-deb -f "$package" Package)" = shairport-sync
+test "$(dpkg-deb -f "$package" Version)" = '<%= nextRelease.version %>'
+test "$(dpkg-deb -f "$package" Architecture)" = amd64
 (cd build/release/packages && sha256sum *.deb > SHA256SUMS)
 printf '%s\\n' '<%= nextRelease.version %>' > VERSION`
     }],

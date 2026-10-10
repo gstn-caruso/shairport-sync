@@ -49,8 +49,6 @@ jobs:
         platform:
           - architecture: amd64
             runner: ubuntu-latest
-          - architecture: arm64
-            runner: ubuntu-24.04-arm
     env:
       ASDF_DATA_DIR: /opt/asdf
     steps:
@@ -172,12 +170,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: deb-ubuntu-26.04-amd64-${{ github.sha }}
-          path: build/release/packages
-      - name: Download tested arm64 package
-        if: steps.freshness.outputs.current == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: deb-ubuntu-26.04-arm64-${{ github.sha }}
           path: build/release/packages
       - uses: actions/setup-node@v4
         if: steps.freshness.outputs.current == 'true'

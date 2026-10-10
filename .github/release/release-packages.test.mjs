@@ -25,15 +25,14 @@ const silentOutput = () => new Writable({write(chunk, encoding, callback) { call
 const context = cwd => ({cwd, env: {...process.env, RELEASE_VERSION: version}, nextRelease: {version}, logger: {log() {}}, stdout: silentOutput(), stderr: silentOutput()});
 const execution = config.plugins.find(([name]) => name === '@semantic-release/exec')[1];
 
-test('publication prepares the same version from exactly two native packages', async () => {
+test('publication prepares the same version from the AMD64 package alone', async () => {
   const cwd = fixture();
   try {
     packageFor(cwd, 'amd64');
-    packageFor(cwd, 'arm64');
     await prepare(execution, context(cwd));
     assert.equal(readFileSync(join(cwd, 'VERSION'), 'utf8'), `${version}\n`);
     const checksums = readFileSync(join(cwd, 'build/release/packages/SHA256SUMS'), 'utf8');
-    assert.equal(checksums.trim().split('\n').length, 2);
+    assert.equal(checksums.trim().split('\n').length, 1);
     execFileSync('sha256sum', ['--check', 'SHA256SUMS'], {cwd: join(cwd, 'build/release/packages'), stdio: 'pipe'});
   } finally {
     rmSync(cwd, {recursive: true, force: true});
@@ -41,22 +40,21 @@ test('publication prepares the same version from exactly two native packages', a
 });
 
 for (const [failure, arrange] of [
-  ['missing ARM64', () => {}],
-  ['wrong version', cwd => packageFor(cwd, 'arm64', '5.6.0')],
-  ['wrong architecture', cwd => packageFor(cwd, 'amd64', version, 'arm64')],
+  ['missing AMD64', () => {}],
+  ['wrong version', cwd => packageFor(cwd, 'amd64', '5.6.0')],
+  ['wrong architecture', cwd => packageFor(cwd, 'arm64', version, 'amd64')],
   ['unexpected extra package', cwd => {
+    packageFor(cwd, 'amd64');
     packageFor(cwd, 'arm64');
-    packageFor(cwd, 'all');
   }],
   ['changed plan', (cwd, invocation) => {
-    packageFor(cwd, 'arm64');
+    packageFor(cwd, 'amd64');
     invocation.env.RELEASE_VERSION = '5.8.0';
   }]
 ]) {
   test(`publication rejects ${failure} before updating VERSION`, async () => {
     const cwd = fixture();
     try {
-      packageFor(cwd, 'amd64');
       const invocation = context(cwd);
       arrange(cwd, invocation);
       await assert.rejects(prepare(execution, invocation));
