@@ -231,6 +231,32 @@ TEST(ActivityMonitorLifecycle, StopClosesAdmissionAndCanRestart) {
   activity_monitor_stop();
 }
 
+static void *signifyFromCancellableCaller(void *) {
+  activity_monitor_signify_activity(1);
+  return nullptr;
+}
+
+TEST(ActivityMonitorLifecycle, CancelledHookCallerReleasesAdmissionAndOwnerRemainsRestartable) {
+  HookTranscript hooks;
+  pthread_t caller;
+  ASSERT_EQ(pthread_create(&caller, nullptr, signifyFromCancellableCaller, nullptr), 0);
+  ASSERT_EQ(hooks.next().transition, 'A');
+  ASSERT_EQ(pthread_cancel(caller), 0);
+  void *result = nullptr;
+  ASSERT_EQ(pthread_join(caller, &result), 0);
+  EXPECT_EQ(result, PTHREAD_CANCELED);
+  hooks.release();
+  activity_monitor_stop();
+  EXPECT_EQ(hooks.next().transition, 'D');
+  EXPECT_EQ(activity_status(), am_inactive);
+  activity_monitor_start();
+  hooks.release();
+  activity_monitor_signify_activity(1);
+  EXPECT_EQ(hooks.next().transition, 'A');
+  activity_monitor_stop();
+  EXPECT_EQ(hooks.next().transition, 'D');
+}
+
 TEST(ActivityMonitorLifecycle, StopWaitsForAdmittedHookWithoutBlockingStatusOrAllowingLateActivation) {
   HookTranscript hooks;
   auto activation = std::async(std::launch::async, [] { activity_monitor_signify_activity(1); });
@@ -249,4 +275,3 @@ TEST(ActivityMonitorLifecycle, StopWaitsForAdmittedHookWithoutBlockingStatusOrAl
   EXPECT_EQ(hooks.next(50).transition, '\0');
   EXPECT_EQ(activity_status(), am_inactive);
 }
-
