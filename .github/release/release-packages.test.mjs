@@ -106,10 +106,14 @@ test('semantic-release dry-run invokes the planner hook with the calculated bump
       const result = await semanticRelease({
         ...plan, repositoryUrl: ${JSON.stringify(pathToFileURL(remote).href)}, dryRun: true, ci: false,
         plugins: plan.plugins.filter(([name]) => ['@semantic-release/commit-analyzer', '@semantic-release/release-notes-generator', '@semantic-release/exec'].includes(name))
-      });
+      }, {env: {PATH: process.env.PATH, GITHUB_OUTPUT: process.env.GITHUB_OUTPUT}});
       if (result.nextRelease.version !== '5.7.0') process.exit(1);
     `;
-    execFileSync(process.execPath, ['--input-type=module', '-e', integration], {cwd, env: {...process.env, GITHUB_OUTPUT: output}, stdio: 'pipe'});
+    execFileSync(process.execPath, ['--input-type=module', '-e', integration], {
+      cwd,
+      env: {...process.env, GITHUB_OUTPUT: output, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/25/merge', GITHUB_HEAD_REF: 'feat/arm64-debian-releases'},
+      stdio: 'pipe'
+    });
     assert.equal(readFileSync(output, 'utf8'), `version=${version}\n`);
     assert.equal(existsSync(join(cwd, 'VERSION')), false);
     assert.throws(() => git('rev-parse', '--verify', 'refs/tags/v5.7.0'));
