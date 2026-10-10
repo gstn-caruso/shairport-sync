@@ -75,6 +75,8 @@ void going_inactive(int block) {
 }
 
 void activity_monitor_signify_activity(int active) {
+  if (!activity_monitor_running)
+    return;
   // this could be pthread_cancelled and there is likely to be cancellation points in the
   // hooked-on procedures
   pthread_mutex_lock(&activity_monitor_mutex);
@@ -98,20 +100,12 @@ void activity_thread_cleanup_handler(__attribute__((unused)) void *arg) {
 }
 
 void *activity_monitor_thread_code(void *arg) {
-  int rc = pthread_mutex_init(&activity_monitor_mutex, NULL);
-  if (rc)
-    die("activity_monitor: error %d initialising activity_monitor_mutex.", rc);
-
-  rc = pthread_cond_init(&activity_monitor_cv, NULL);
-  if (rc)
-    die("activity_monitor: error %d initialising activity_monitor_cv.", rc);
+  int rc;
   pthread_cleanup_push(activity_thread_cleanup_handler, arg);
 
   uint64_t sec;
   uint64_t nsec;
   struct timespec time_for_wait;
-
-  activity_state_reset(activity_state_instance());
 
   pthread_mutex_lock(&activity_monitor_mutex);
   do {
@@ -147,6 +141,13 @@ void *activity_monitor_thread_code(void *arg) {
 enum am_state activity_status() { return activity_state_status(activity_state_instance()); }
 
 void activity_monitor_start() {
+  int rc = pthread_mutex_init(&activity_monitor_mutex, NULL);
+  if (rc)
+    die("activity_monitor: error %d initialising activity_monitor_mutex.", rc);
+  rc = pthread_cond_init(&activity_monitor_cv, NULL);
+  if (rc)
+    die("activity_monitor: error %d initialising activity_monitor_cv.", rc);
+  activity_state_reset(activity_state_instance());
   // debug(1,"activity_monitor_start");
   named_pthread_create(&activity_monitor_thread, NULL, activity_monitor_thread_code, NULL,
                        "activity_mon");
