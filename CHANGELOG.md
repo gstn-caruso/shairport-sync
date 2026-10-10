@@ -1,3 +1,19 @@
+## [6.0.1](https://github.com/gstn-caruso/shairport-sync/compare/v6.0.0...v6.0.1) (2026-10-10)
+
+### Bug Fixes
+
+* **pairing:** reserve headers for empty TLV values ([4a3c585](https://github.com/gstn-caruso/shairport-sync/commit/4a3c585c9e8b0f1af059ef4eaef82eac45bd743b))
+
+### Code Refactoring
+
+* **volume:** distinguish wire levels attenuation and PCM gain ([35a27e2](https://github.com/gstn-caruso/shairport-sync/commit/35a27e217a5bbdc7df374fb70324df3208721e9a))
+
+### Tests
+
+* **audio:** expose packet admission and flush outcomes ([#39](https://github.com/gstn-caruso/shairport-sync/issues/39)) ([56eee8e](https://github.com/gstn-caruso/shairport-sync/commit/56eee8e0e7a992d95064da74648fd0ba40e3c39b))
+* **player:** clarify playback and cancellation contracts ([#41](https://github.com/gstn-caruso/shairport-sync/issues/41)) ([558b990](https://github.com/gstn-caruso/shairport-sync/commit/558b9907d2c4d6bb675ab4f9b2943bf3edabd3d7))
+* **runtime:** clarify volume effects and owned resource cleanup ([#40](https://github.com/gstn-caruso/shairport-sync/issues/40)) ([37237d5](https://github.com/gstn-caruso/shairport-sync/commit/37237d51516c7b1405c747c7e443dac27b60c3ef))
+
 ## [6.0.0](https://github.com/gstn-caruso/shairport-sync/compare/v5.7.2...v6.0.0) (2026-10-10)
 
 ### ⚠ BREAKING CHANGES
