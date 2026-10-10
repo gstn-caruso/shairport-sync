@@ -26,6 +26,10 @@ public:
   }
 
 private:
+  std::vector<bool> selectRequestedChannels(std::span<const std::string> sourceNames,
+                                            std::span<const std::string> requestedNames,
+                                            std::vector<bool> &used);
+  void fillUnassignedChannels(const std::vector<bool> &assigned, std::vector<bool> &used);
   enum class Source { channel, silence, frontMono };
   struct Selection {
     Source source = Source::silence;
