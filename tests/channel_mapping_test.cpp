@@ -44,6 +44,16 @@ TEST(ChannelMapping, DisabledMappingIgnoresExplicitNames) {
   checkMapping({false, {"FR", "FL"}, ""}, 5, 9);
 }
 
+TEST(ChannelMapping, RepeatedExplicitNameReusesSourceBeforeFallback) {
+  auto mapping = ChannelMapping::from({"FL", "FR", "FC"}, 4, {true, {"FR", "FR"}, ""});
+  const std::array<int16_t, 3> input{5, 9, 13};
+  std::array<int16_t, 4> output{};
+  const std::array<int16_t, 4> expected{9, 9, 5, 13};
+  ASSERT_TRUE(mapping.map(input, output));
+  EXPECT_EQ(output, expected);
+  EXPECT_FALSE(mapping.isIncomplete());
+}
+
 TEST(ChannelMapping, DeviceNamesSupplyOrderWhenExplicitNamesAreEmpty) {
   checkMapping({true, {}, "FR FL"}, 9, 5);
 }
