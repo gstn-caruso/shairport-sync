@@ -28,6 +28,7 @@
 // http://stackoverflow.com/questions/29977651/how-can-the-pulseaudio-asynchronous-library-be-used-to-play-raw-pcm-data
 
 #include "audio/output/audio.h"
+#include "audio/output/pcm_output_queue.hpp"
 #include "runtime/common.h"
 #include <errno.h>
 #include <pthread.h>
@@ -51,8 +52,6 @@ static pa_sps_t format_lookup[] = {{PA_SAMPLE_S16LE, SPS_FORMAT_S16_LE, 2},
 #define CHANNEL_MAP_SIZE 1024
 static char channel_map[CHANNEL_MAP_SIZE + 1];
 
-static pthread_mutex_t buffer_mutex = PTHREAD_MUTEX_INITIALIZER;
-
 pa_threaded_mainloop *mainloop;
 pa_mainloop_api *mainloop_api;
 pa_context *context;
@@ -61,8 +60,7 @@ static bool mainloop_started = false;
 
 static int32_t current_encoded_output_format = 0;
 const char *default_channel_layouts = NULL;
-static char *audio_lmb, *audio_umb, *audio_toq, *audio_eoq;
-static size_t audio_size, audio_occupancy;
+static PcmOutputQueue output_queue;
 
 // use an SPS_FORMAT_... to find an entry in the format_lookup table or return NULL
 static pa_sps_t *sps_format_lookup(sps_format_t to_find) {
@@ -170,6 +168,7 @@ static int32_t get_configuration(unsigned int channels, unsigned int rate, unsig
 static int configure(int32_t requested_encoded_format, char **resulting_channel_map) {
   debug(3, "pa: configure %s.", short_format_description(requested_encoded_format));
   int response = 0;
+  pa_threaded_mainloop_lock(mainloop);
   if (current_encoded_output_format != requested_encoded_format) {
     uint64_t start_time = get_absolute_time_in_ns();
     if (current_encoded_output_format == 0)
@@ -187,13 +186,8 @@ static int configure(int32_t requested_encoded_format, char **resulting_channel_
     if (format_info == NULL)
       die("pa: can't find format information!");
 
-    if (audio_lmb != NULL) {
-      free(audio_lmb); // release previous buffer
-    }
-
     if (stream != NULL) {
       // debug(1, "pa: stopping and releasing the current stream...");
-      pa_threaded_mainloop_lock(mainloop);
       if (pa_stream_is_corked(stream) == 0) {
         // debug(1,"Flush and cork for flush.");
         pa_stream_flush(stream, stream_success_cb, NULL);
@@ -201,21 +195,11 @@ static int configure(int32_t requested_encoded_format, char **resulting_channel_
       }
       pa_stream_disconnect(stream);
       pa_stream_unref(stream);
-      pa_threaded_mainloop_unlock(mainloop);
       stream = NULL;
     }
 
-    audio_size = RATE_FROM_ENCODED_FORMAT(current_encoded_output_format) *
-                 format_info->bytes_per_sample *
-                 CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format) * 1; // one seconds
-    audio_lmb = static_cast<char *>(malloc(audio_size));
-    if (audio_lmb == NULL)
-      die("Can't allocate %zd bytes for pulseaudio buffer.", audio_size);
-    audio_toq = audio_eoq = audio_lmb;
-    audio_umb = audio_lmb + audio_size;
-    audio_occupancy = 0;
-
-    pa_threaded_mainloop_lock(mainloop);
+    output_queue = PcmOutputQueue(RATE_FROM_ENCODED_FORMAT(current_encoded_output_format),
+        format_info->bytes_per_sample * CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format));
     // Create a playback stream
     pa_sample_spec sample_specifications;
     sample_specifications.format = format_info->pa_format;
@@ -463,8 +447,6 @@ static int configure(int32_t requested_encoded_format, char **resulting_channel_
       pa_threaded_mainloop_wait(mainloop);
     }
 
-    pa_threaded_mainloop_unlock(mainloop);
-
     // to here
 
     int64_t elapsed_time = get_absolute_time_in_ns() - start_time;
@@ -475,6 +457,7 @@ static int configure(int32_t requested_encoded_format, char **resulting_channel_
   if ((response == 0) && (resulting_channel_map != NULL)) {
     *resulting_channel_map = channel_map;
   }
+  pa_threaded_mainloop_unlock(mainloop);
   return response;
 }
 
@@ -531,7 +514,7 @@ void load_pulseaudio_settings() {
 static int init(__attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
 
   stream = NULL;    // no stream
-  audio_lmb = NULL; // no buffer
+  output_queue = PcmOutputQueue{};
 
   // Get a mainloop and its context
 
@@ -599,10 +582,7 @@ static void deinit(void) {
     pa_threaded_mainloop_free(mainloop);
     mainloop = nullptr;
   }
-  free(audio_lmb);
-  audio_lmb = nullptr;
-  audio_toq = audio_eoq = audio_umb = nullptr;
-  audio_size = audio_occupancy = 0;
+  output_queue = PcmOutputQueue{};
   current_encoded_output_format = 0;
 }
 
@@ -618,6 +598,7 @@ static int play(void *buf, int samples, __attribute__((unused)) int sample_type,
                 __attribute__((unused)) uint64_t playtime) {
   // debug(1,"pa_play of %d samples.",samples);
   // copy the samples into the queue
+  pa_threaded_mainloop_lock(mainloop);
   check_pa_stream_status(stream, "audio_pa play.");
 
   pa_sps_t *format_info =
@@ -625,51 +606,30 @@ static int play(void *buf, int samples, __attribute__((unused)) int sample_type,
   size_t bytes_to_transfer = samples * format_info->bytes_per_sample *
                              CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format);
 
-  pthread_mutex_lock(&buffer_mutex);
-  size_t bytes_available = audio_size - audio_occupancy;
-  if (bytes_available < bytes_to_transfer)
-    bytes_to_transfer = bytes_available;
-  if ((bytes_to_transfer > 0) && (audio_lmb != NULL)) {
-    size_t space_to_end_of_buffer = audio_umb - audio_eoq;
-    if (space_to_end_of_buffer >= bytes_to_transfer) {
-      memcpy(audio_eoq, buf, bytes_to_transfer);
-      audio_eoq += bytes_to_transfer;
-    } else {
-      memcpy(audio_eoq, buf, space_to_end_of_buffer);
-      buf = static_cast<char *>(buf) + space_to_end_of_buffer;
-      memcpy(audio_lmb, buf, bytes_to_transfer - space_to_end_of_buffer);
-      audio_eoq = audio_lmb + bytes_to_transfer - space_to_end_of_buffer;
-    }
-    audio_occupancy += bytes_to_transfer;
-  }
+  output_queue.enqueue({static_cast<const std::byte *>(buf), bytes_to_transfer});
 
-  if ((audio_occupancy >=
+  if ((output_queue.occupiedBytes() >=
        (RATE_FROM_ENCODED_FORMAT(current_encoded_output_format) * format_info->bytes_per_sample *
         CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format)) /
            4) &&
       (pa_stream_is_corked(stream))) {
     // debug(1,"Uncorked");
-    pthread_mutex_unlock(&buffer_mutex);
-    pa_threaded_mainloop_lock(mainloop);
     pa_stream_cork(stream, 0, stream_success_cb, mainloop);
-    pa_threaded_mainloop_unlock(mainloop);
-  } else {
-    pthread_mutex_unlock(&buffer_mutex);
   }
+  pa_threaded_mainloop_unlock(mainloop);
   return 0;
 }
 
 int pa_delay(long *the_delay) {
   // debug(1, "pa delay");
+  pa_threaded_mainloop_lock(mainloop);
   check_pa_stream_status(stream, "audio_pa delay.");
   // debug(1,"pa_delay");
   long result = 0;
   int reply = 0;
   pa_usec_t latency;
   int negative;
-  pa_threaded_mainloop_lock(mainloop);
   int gl = pa_stream_get_latency(stream, &latency, &negative);
-  pa_threaded_mainloop_unlock(mainloop);
   if (gl == -PA_ERR_NODATA) {
     reply = -ENODEV;
   } else if (gl != 0) {
@@ -678,11 +638,12 @@ int pa_delay(long *the_delay) {
     pa_sps_t *format_info =
         sps_format_lookup(static_cast<sps_format_t>(FORMAT_FROM_ENCODED_FORMAT(current_encoded_output_format)));
     // convert audio_occupancy bytes to frames and latency microseconds into frames
-    result = (audio_occupancy / (format_info->bytes_per_sample *
+    result = (output_queue.occupiedBytes() / (format_info->bytes_per_sample *
                                  CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format))) +
              (latency * RATE_FROM_ENCODED_FORMAT(current_encoded_output_format)) / 1000000;
     reply = 0;
   }
+  pa_threaded_mainloop_unlock(mainloop);
   *the_delay = result;
   return reply;
 }
@@ -697,13 +658,9 @@ static void flush(void) {
       pa_stream_flush(stream, stream_success_cb, NULL);
       pa_stream_cork(stream, 1, stream_success_cb, mainloop);
     }
+    output_queue.clear();
     pa_threaded_mainloop_unlock(mainloop);
   }
-  pthread_mutex_lock(&buffer_mutex);
-  audio_toq = audio_eoq = audio_lmb;
-  audio_umb = audio_lmb + audio_size;
-  audio_occupancy = 0;
-  pthread_mutex_unlock(&buffer_mutex);
 }
 
 static void stop(void) {
@@ -717,13 +674,9 @@ static void stop(void) {
       pa_stream_flush(stream, stream_success_cb, NULL);
       pa_stream_cork(stream, 1, stream_success_cb, mainloop);
     }
+    output_queue.clear();
     pa_threaded_mainloop_unlock(mainloop);
   }
-  pthread_mutex_lock(&buffer_mutex);
-  audio_toq = audio_eoq = audio_lmb;
-  audio_umb = audio_lmb + audio_size;
-  audio_occupancy = 0;
-  pthread_mutex_unlock(&buffer_mutex);
 }
 
 void context_state_cb(__attribute__((unused)) pa_context *local_context, void *local_mainloop) {
@@ -740,53 +693,34 @@ void stream_write_cb(pa_stream *local_stream, size_t requested_bytes,
                      __attribute__((unused)) void *userdata) {
   // debug(1, "pa stream_write_cb");
   check_pa_stream_status(local_stream, "audio_pa stream_write_cb.");
-  int bytes_to_transfer = requested_bytes;
-  int bytes_transferred = 0;
+  size_t bytes_to_transfer = requested_bytes;
   uint8_t *buffer = NULL;
   int ret = 0;
-  pthread_mutex_lock(&buffer_mutex);
-  pthread_cleanup_push(mutex_unlock, (void *)&buffer_mutex);
-  while ((bytes_to_transfer > 0) && (audio_occupancy > 0) && (ret == 0)) {
+  while ((bytes_to_transfer > 0) && (output_queue.occupiedBytes() > 0) && (ret == 0)) {
     if (pa_stream_is_suspended(local_stream))
       debug(1, "local_stream is suspended");
     size_t bytes_we_can_transfer = bytes_to_transfer;
-    if (audio_occupancy == 0) {
+    if (output_queue.occupiedBytes() == 0) {
       pa_stream_cork(local_stream, 1, stream_success_cb, mainloop);
       debug(1, "stream_write_cb: corked");
     }
-    if (audio_occupancy < bytes_we_can_transfer) {
+    if (output_queue.occupiedBytes() < bytes_we_can_transfer) {
       // debug(1, "Underflow? We have %d bytes but we are asked for %d bytes", audio_occupancy,
       //       bytes_we_can_transfer);
-      bytes_we_can_transfer = audio_occupancy;
+      bytes_we_can_transfer = output_queue.occupiedBytes();
     }
 
     // bytes we can transfer will never be greater than the bytes available
 
     ret = pa_stream_begin_write(local_stream, (void **)&buffer, &bytes_we_can_transfer);
-    if ((ret == 0) && (buffer != NULL) && (audio_lmb != NULL)) {
-      if (bytes_we_can_transfer <= (size_t)(audio_umb - audio_toq)) {
-        // the bytes are all in a row in the audo buffer
-        memcpy(buffer, audio_toq, bytes_we_can_transfer);
-        audio_toq += bytes_we_can_transfer;
-        ret = pa_stream_write(local_stream, buffer, bytes_we_can_transfer, NULL, 0LL,
-                              PA_SEEK_RELATIVE);
-      } else {
-        // the bytes are in two places in the audio buffer
-        size_t first_portion_to_write = audio_umb - audio_toq;
-        if (first_portion_to_write != 0)
-          memcpy(buffer, audio_toq, first_portion_to_write);
-        uint8_t *new_buffer = buffer + first_portion_to_write;
-        memcpy(new_buffer, audio_lmb, bytes_we_can_transfer - first_portion_to_write);
-        ret = pa_stream_write(local_stream, buffer, bytes_we_can_transfer, NULL, 0LL,
-                              PA_SEEK_RELATIVE);
-        audio_toq = audio_lmb + bytes_we_can_transfer - first_portion_to_write;
-      }
-      bytes_transferred += bytes_we_can_transfer;
-      audio_occupancy -= bytes_we_can_transfer;
+    if ((ret == 0) && (buffer != NULL)) {
+      bytes_we_can_transfer = output_queue.copyTo({reinterpret_cast<std::byte *>(buffer), bytes_we_can_transfer});
+      ret = pa_stream_write(local_stream, buffer, bytes_we_can_transfer, NULL, 0LL,
+                            PA_SEEK_RELATIVE);
+      output_queue.consume(bytes_we_can_transfer);
       bytes_to_transfer -= bytes_we_can_transfer;
     }
   }
-  pthread_cleanup_pop(1); // release the mutex
   if (ret != 0)
     debug(1, "error writing to pa buffer");
 }
