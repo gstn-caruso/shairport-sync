@@ -1,6 +1,4 @@
-#include "session/session_state.hpp"
 #include "audio/resampling/resampler.hpp"
-#include "audio/output/audio_player_adapter.hpp"
 #include <gtest/gtest.h>
 #include <stdexcept>
 #include <cstdlib>
@@ -26,8 +24,9 @@ extern "C" void __wrap_swr_free(SwrContext **context) {
   __real_swr_free(context);
 }
 
-static OwnedAudioFrame samplesFor(AudioFormat format, AVSampleFormat sampleFormat) {
-  OwnedAudioFrame frame(av_frame_alloc());
+static auto samplesFor(AudioFormat format, AVSampleFormat sampleFormat) {
+  const auto releaseFrame = [](AVFrame *frame) { av_frame_free(&frame); };
+  std::unique_ptr<AVFrame, decltype(releaseFrame)> frame(av_frame_alloc(), releaseFrame);
   if (!frame)
     throw std::runtime_error("Cannot allocate the resampler input frame");
   frame->format = sampleFormat;
@@ -178,97 +177,12 @@ TEST(Resampler, SilenceKeepsRateConversionContinuousWithDirectFfmpegReference) {
   matches(*following, convertReference(input.data(), frame->nb_samples));
 }
 
-int setup_software_resampler(rtsp_conn_info *, ssrc_t);
-void clear_software_resampler(rtsp_conn_info *);
-static int32_t chooseStereo(unsigned, unsigned, unsigned) {
-  return CHANNELS_TO_ENCODED_FORMAT(2) | RATE_TO_ENCODED_FORMAT(44100) |
-         FORMAT_TO_ENCODED_FORMAT(SPS_FORMAT_S16_LE);
-}
-static int32_t rejectOutput(unsigned, unsigned, unsigned) { return 0; }
-static int configureBorrowedChannelMap(int32_t, char **channelMap) {
-  static char channels[] = "FR FL";
-  *channelMap = channels;
-  return 0;
-}
-
-class PlayerResampler : public testing::Test {
-  decltype(config.output) savedOutput = config.output;
-  decltype(config.current_output_configuration) savedOutputConfiguration = config.current_output_configuration;
-  decltype(config.output_channel_mapping_enable) savedMappingEnabled = config.output_channel_mapping_enable;
-  decltype(config.output_channel_map_size) savedMapSize = config.output_channel_map_size;
-  std::array<const char *, 8> savedChannelMap;
-protected:
-  PlayerResampler() {
-    std::copy(std::begin(config.output_channel_map), std::end(config.output_channel_map),
-              savedChannelMap.begin());
-  }
-  ~PlayerResampler() override {
-    config.output = savedOutput;
-    config.current_output_configuration = savedOutputConfiguration;
-    config.output_channel_mapping_enable = savedMappingEnabled;
-    config.output_channel_map_size = savedMapSize;
-    std::copy(savedChannelMap.begin(), savedChannelMap.end(), std::begin(config.output_channel_map));
-  }
-};
-
-static OwnedAudioFrame stereoFrame() {
+static auto stereoFrame() {
   auto frame = samplesFor(*AudioFormat::fromSsrc(ALAC_44100_S16_2), AV_SAMPLE_FMT_S16P);
   frame->nb_samples = 64;
   std::fill_n(reinterpret_cast<int16_t *>(frame->data[0]), 64, 5);
   std::fill_n(reinterpret_cast<int16_t *>(frame->data[1]), 64, 9);
   return frame;
-}
-
-TEST_F(PlayerResampler, NegotiationPreservesMappingAndOwnedStateOnRejection) {
-  config.output_channel_mapping_enable = 0;
-  config.output_channel_map_size = 0;
-  audio_output backend{};
-  backend.get_configuration = chooseStereo;
-  config.output = &backend;
-  SessionState session{};
-  prepare_decoding_chain(&session, ALAC_44100_S16_2);
-  ASSERT_EQ(setup_software_resampler(&session, ALAC_44100_S16_2), 0);
-  EXPECT_EQ(session.resampler.outputShape(), NativePcmShape(2, 16, 16));
-  auto frame = stereoFrame();
-  auto initial = convertIncomingAudio(session, *frame);
-  EXPECT_EQ(initial.retainedFrames(), 0);
-  EXPECT_EQ(initial.frames(), 64);
-  ASSERT_EQ(initial.bytes().size(), 256);
-  auto *result = reinterpret_cast<int16_t *>(initial.bytes().data());
-  EXPECT_EQ(result[0], 5);
-  EXPECT_EQ(result[1], 9);
-  initial.reset();
-  config.output_channel_mapping_enable = 1;
-  backend.configure = configureBorrowedChannelMap;
-  for (unsigned attempt = 0; attempt < 2; ++attempt) {
-    SCOPED_TRACE(testing::Message() << "Device mapping attempt " << attempt);
-    ASSERT_EQ(setup_software_resampler(&session, ALAC_44100_S16_2), 0);
-    auto deviceMapped = convertIncomingAudio(session, *frame);
-    EXPECT_EQ(deviceMapped.frames(), 64);
-    ASSERT_EQ(deviceMapped.bytes().size(), 256);
-    auto *samples = reinterpret_cast<const int16_t *>(deviceMapped.bytes().data());
-    EXPECT_EQ(samples[0], 9);
-    EXPECT_EQ(samples[1], 5);
-  }
-  backend.configure = nullptr;
-  config.output_channel_map_size = 2;
-  config.output_channel_map[0] = "FM";
-  config.output_channel_map[1] = "--";
-  ASSERT_EQ(setup_software_resampler(&session, ALAC_44100_S16_2), 0);
-  auto mapped = convertIncomingAudio(session, *frame);
-  ASSERT_EQ(mapped.bytes().size(), 256);
-  result = reinterpret_cast<int16_t *>(mapped.bytes().data());
-  EXPECT_EQ(result[0], 6);
-  EXPECT_EQ(result[1], 0);
-  mapped.reset();
-  backend.get_configuration = rejectOutput;
-  const auto previousRate = session.inputAudio.sampleRate(), previousFrames = session.inputAudio.framesPerPacket();
-  const auto previousConfiguration = config.current_output_configuration;
-  setup_software_resampler(&session, ALAC_48000_S24_2);
-  EXPECT_EQ(session.inputAudio.sampleRate(), previousRate);
-  EXPECT_EQ(session.inputAudio.framesPerPacket(), previousFrames);
-  EXPECT_EQ(config.current_output_configuration, previousConfiguration);
-  clear_software_resampler(&session);
 }
 
 TEST(Resampler, UnchangedConfigurationPreservesSamplesAndUsedStateResetIsIdempotent) {

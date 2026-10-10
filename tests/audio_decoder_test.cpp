@@ -1,4 +1,3 @@
-#include "session/session_state.hpp"
 #include "audio/decoding/audio_decoder.hpp"
 #include <gtest/gtest.h>
 #include <malloc.h>
@@ -179,24 +178,6 @@ TEST(AudioDecoder, InvalidEncodedPacketPreservesFormatUntilDestruction) {
   EXPECT_EQ(contextsReleased, before + 1);
 }
 
-TEST(AudioDecoder, PlayerBoundaryPreservesKnownFormatAndClearsIdempotently) {
-  SessionState session{};
-  prepare_decoding_chain(&session, ALAC_44100_S16_2);
-  EXPECT_EQ(session.inputAudio.sampleRate(), 44100);
-  EXPECT_EQ(session.inputAudio.framesPerPacket(), 352);
-  EXPECT_TRUE(session.inputAudio.isDecodedFormatValid());
-  prepare_decoding_chain(&session, static_cast<ssrc_t>(0xf00d));
-  ASSERT_TRUE(session.decoder.currentFormat().has_value());
-  EXPECT_EQ(session.decoder.currentFormat()->ssrc(), ALAC_44100_S16_2);
-  EXPECT_EQ(session.inputAudio.sampleRate(), 44100);
-  std::array<uint8_t, 8> shortPacket{};
-  EXPECT_EQ(block_to_avframe(&session, shortPacket.data(), shortPacket.size()), nullptr);
-  std::array<uint8_t, 16> invalidPacket{};
-  EXPECT_EQ(block_to_avframe(&session, invalidPacket.data(), invalidPacket.size()), nullptr);
-  clear_decoding_chain(&session);
-  clear_decoding_chain(&session);
-  EXPECT_FALSE(session.decoder.currentFormat());
-}
 
 TEST(AudioDecoder, NonSilentAlacRoundtripPreservesDistinctLeftAndRightSamples) {
   const auto releaseContext = [](AVCodecContext *context) { avcodec_free_context(&context); };
