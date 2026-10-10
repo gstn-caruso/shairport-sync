@@ -74,7 +74,7 @@ protected:
 
 TEST_F(VolumeAdapter, HardwareGainPrecedesSoftwareUpdateAndUnmute) {
   auto &session = state.session;
-  session.volumeControl.apply({.gainFixed16 = 1234}, false);
+  session.volumeControl.apply({.gainFixed16 = FixedGain16{1234}}, false);
   applySessionVolume(-15, session);
   EXPECT_EQ(state.effects, (std::vector{Effect::hardwareGain, Effect::hardwareUnmute}));
   EXPECT_FALSE(session.volumeControl.pcmSnapshot().softwareMuted);
@@ -104,7 +104,7 @@ TEST_F(VolumeAdapter, IgnoredVolumeRemembersSharedLevelWithoutChangingMutedPcm) 
 
 TEST_F(VolumeAdapter, IgnoringVolumeAfterHardwareMuteFailureRetainsAppliedGain) {
   auto &session = state.session;
-  session.volumeControl.apply({.gainFixed16 = 1234}, false);
+  session.volumeControl.apply({.gainFixed16 = FixedGain16{1234}}, false);
   applySessionVolume(-15, session);
   state.muteResult = 1;
   applySessionVolume(-144, session);

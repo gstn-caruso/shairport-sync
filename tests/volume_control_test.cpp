@@ -23,14 +23,14 @@ TEST(VolumeControl, RememberedLevelOverridesSubsequentSharedChanges) {
 
 TEST(VolumeControl, SoftwareGainAndUnmuteUpdatePcmSnapshot) {
   VolumeControl first;
-  first.apply({.gainFixed16 = 1234, .unmute = true}, false);
+  first.apply({.gainFixed16 = FixedGain16{1234}, .unmute = true}, false);
   EXPECT_EQ(first.pcmSnapshot().gainFixed16, 1234);
   EXPECT_FALSE(first.pcmSnapshot().softwareMuted);
 }
 
 TEST(VolumeControl, EmptyDecisionRetainsSoftwareMuteAndPreviousGain) {
   VolumeControl first;
-  first.apply({.gainFixed16 = 1234, .unmute = true}, false);
+  first.apply({.gainFixed16 = FixedGain16{1234}, .unmute = true}, false);
   first.apply({.requestMute = true}, false);
   EXPECT_TRUE(first.pcmSnapshot().softwareMuted);
   first.apply({}, false);
@@ -40,25 +40,25 @@ TEST(VolumeControl, EmptyDecisionRetainsSoftwareMuteAndPreviousGain) {
 
 TEST(VolumeControl, HardwareMuteRequestKeepsSoftwareUnmuted) {
   VolumeControl first;
-  first.apply({.gainFixed16 = 1234, .unmute = true}, false);
+  first.apply({.gainFixed16 = FixedGain16{1234}, .unmute = true}, false);
   first.apply({.requestMute = true}, false);
   first.apply({}, false);
-  first.apply({.gainFixed16 = 65536, .unmute = true}, false);
+  first.apply({.gainFixed16 = FixedGain16{65536}, .unmute = true}, false);
   first.apply({.requestMute = true}, true);
   EXPECT_FALSE(first.pcmSnapshot().softwareMuted);
 }
 
 TEST(VolumeControl, ConcurrentSnapshotsKeepGainAndMuteConsistent) {
   VolumeControl first;
-  first.apply({.gainFixed16 = 1234, .unmute = true}, false);
+  first.apply({.gainFixed16 = FixedGain16{1234}, .unmute = true}, false);
   first.apply({.requestMute = true}, false);
   first.apply({}, false);
-  first.apply({.gainFixed16 = 65536, .unmute = true}, false);
+  first.apply({.gainFixed16 = FixedGain16{65536}, .unmute = true}, false);
   first.apply({.requestMute = true}, true);
   std::thread setter([&] {
     for (int i = 0; i < 10000; ++i) {
-      first.apply({.gainFixed16 = 11, .requestMute = true}, false);
-      first.apply({.gainFixed16 = 22, .unmute = true}, false);
+      first.apply({.gainFixed16 = FixedGain16{11}, .requestMute = true}, false);
+      first.apply({.gainFixed16 = FixedGain16{22}, .unmute = true}, false);
     }
   });
   for (int i = 0; i < 10000; ++i) {

@@ -982,28 +982,28 @@ static void applyVolumePlan(double level, rtsp_conn_info *conn) {
   case VCP_flat: settings.profile = VolumeProfile::flat; break;
   case VCP_dasl_tapered: settings.profile = VolumeProfile::dasl; break;
   }
-  if (config.volume_max_db_set) settings.maximumDb = config.volume_max_db;
-  settings.rangeDb = config.volume_range_db;
+  if (config.volume_max_db_set) settings.maximumDb = Decibels{static_cast<double>(config.volume_max_db)};
+  settings.rangeDb = Decibels{static_cast<double>(config.volume_range_db)};
   settings.hardwarePriority = config.volume_range_hw_priority != 0;
   settings.ignoreControl = config.ignore_volume_control != 0;
   OutputVolumeCapabilities capabilities;
   capabilities.canSetHardwareVolume = config.output->volume != nullptr;
   if (config.output->parameters) {
     if (const auto parameters = config.output->parameters(); parameters && parameters->volume_range)
-      capabilities.range = VolumeRange{parameters->volume_range->minimum_volume_dB,
-                                      parameters->volume_range->maximum_volume_dB};
+      capabilities.range = VolumeRange{CentibelAttenuation{static_cast<double>(parameters->volume_range->minimum_volume_dB)},
+                                      CentibelAttenuation{static_cast<double>(parameters->volume_range->maximum_volume_dB)}};
   }
-  const auto plan = VolumePolicy::plan(level, settings, capabilities);
+  const auto plan = VolumePolicy::plan(AirPlayVolume{level}, settings, capabilities);
   if (plan.maximumIgnored)
     warn("The maximum output level is outside the range of the hardware mixer -- ignored");
   if (plan.rangeIgnored)
     warn("The range requested is too large to accommodate -- ignored.");
   bool hardwareMuted = false;
   if (plan.requestMute && config.output->mute) hardwareMuted = config.output->mute(1) == 0;
-  if (plan.hardwareAttenuation) config.output->volume(*plan.hardwareAttenuation);
+  if (plan.hardwareAttenuation) config.output->volume(plan.hardwareAttenuation->value());
   conn->volumeControl.apply(plan, hardwareMuted);
   if (level != -144 && config.logOutputLevel)
-    inform("Output Level set to: %.2f dB.", plan.scaledAttenuation / 100);
+    inform("Output Level set to: %.2f dB.", plan.scaledAttenuation.value() / 100);
   if (plan.unmute && config.output->mute) config.output->mute(0);
 }
 

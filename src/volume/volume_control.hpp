@@ -27,7 +27,7 @@ public:
   }
   void apply(const VolumePlan &plan, bool hardwareMuteSucceeded) {
     std::lock_guard lock(mutex_);
-    if (plan.gainFixed16) pcm_.gainFixed16 = *plan.gainFixed16;
+    if (plan.gainFixed16) pcm_.gainFixed16 = plan.gainFixed16->value();
     if (plan.requestMute && !hardwareMuteSucceeded) pcm_.softwareMuted = true;
     if (plan.unmute) pcm_.softwareMuted = false;
   }
