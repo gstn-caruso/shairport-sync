@@ -126,6 +126,15 @@ include(CTest)
 if(BUILD_TESTING)
   find_package(GTest 1.17 CONFIG REQUIRED)
   include(GoogleTest)
+  add_executable(pa-output-test tests/pa_output_test.cpp)
+  target_link_libraries(pa-output-test PRIVATE receiver GTest::gtest_main)
+  foreach(function pa_threaded_mainloop_lock pa_threaded_mainloop_unlock pa_threaded_mainloop_free
+      pa_stream_new pa_stream_set_state_callback pa_stream_set_write_callback
+      pa_stream_connect_playback pa_stream_get_state pa_stream_is_corked pa_stream_is_suspended
+      pa_stream_cork pa_stream_flush pa_stream_disconnect pa_stream_unref pa_stream_begin_write pa_stream_write)
+    target_link_options(pa-output-test PRIVATE "-Wl,--wrap=${function}")
+  endforeach()
+  gtest_discover_tests(pa-output-test PROPERTIES TIMEOUT 5)
   add_executable(rtsp-listener-test tests/rtsp_listener_test.cpp)
   target_link_libraries(rtsp-listener-test PRIVATE receiver GTest::gtest)
   target_link_options(rtsp-listener-test PRIVATE -Wl,--wrap=poll -Wl,--wrap=accept4
