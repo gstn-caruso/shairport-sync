@@ -1,7 +1,7 @@
 # Receiver migration progress
 
 Evidence recorded on 2026-10-10 through source commit
-`6c26b8b` (v6.0.1). The
+`279c83e2` (activity-monitor slice on the v6.1.0 baseline). The
 [initial contract inventory](receiver-migration-contracts.md) remains a
 historical baseline. This record distinguishes delivered slices from the
 remaining migration and device acceptance work.
@@ -17,6 +17,15 @@ remaining migration and device acceptance work.
 | Stage 2 daemon entry point | PR38 shipped the minimal foreground interface in v6.0.0. Configuration/version checks run without services; invalid arguments exit 2 and configuration/startup errors exit 1. Configuration type, conversion, path, latency, and channel-map regressions are covered, together with simulated startup cleanup and SIGTERM/SIGINT during blocked startup. |
 | Stage 3 typed volume | PR42 distinguishes AirPlay wire levels, decibels, centibel attenuation, and Q16 PCM gain. Characterization preserves permissive parsing, float rounding, exact mute semantics, invalid-value attenuation, and effect ordering. Primitive conversion remains at RTSP, native output, subprocess, PCM, and C ABI boundaries. |
 | Pairing prerequisite | PR43 fixes empty TLV output sizing: an empty value requires its two-byte header before capacity is checked. Seven characterization cases cover empty values, exact/insufficient capacity, mixed values, fragmentation/reassembly, and truncated input. This is not completion of Stage 9. |
+
+The next Stage 4 slice gives the activity monitor ownership of its worker,
+synchronization, deadlines, and admitted effects. Its C API remains intact;
+`ActivityState` still owns transition decisions. Cooperative stop wakes and
+joins the worker, drains admitted effects, and deactivates once. Readiness,
+restart, idle/deadline stopping, hook ordering, caller cancellation, exit-handler
+ordering, and failed worker creation are tested. Independent review approved
+the implementation after a thread-creation exception-safety finding was fixed.
+This completes the monitor slice, rather than all Stage 4 workers.
 
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
@@ -44,6 +53,15 @@ rg -n '\bassert\(' tests --glob '*.cpp'
 The final search returns no matches (status 1). The test duration measures the
 suite, including configuration checks, rather than playback performance.
 
+The updated baseline includes bundled NQPTP from PR45 and README changes from
+PR46. It passed **354/354** Release cases. The monitor slice passes **369/369**
+Release cases, plus **21/21** targeted cases under each of Debug ASan+UBSan and
+TSan. TSan also passed 30 repeated cancellation/concurrency checks. The actual
+monitor object was checked for sanitizer instrumentation. A real `EAGAIN`
+regression runs in an isolated child, including under root, and verifies safe
+stop, retry, and destruction after failed worker creation. The parent retains
+its credentials and resource limits. Hosted CI remains the merge gate.
+
 ## Release and installed validation
 
 Release automation produced **v6.0.0**, the expected major change for removing
@@ -58,7 +76,8 @@ workflow verified all four AMD64 configurations before publication. The tag,
 `VERSION`, changelog, downloaded checksum, Debian version/architecture,
 extracted binary version, and packaged sample configuration were checked.
 Assets contain only `shairport-sync_6.0.1_amd64.deb` and `SHA256SUMS`, with no
-ARM package. v6.0.1 was not installed; the installed receiver remains v6.0.0.
+ARM package. At that checkpoint, v6.0.1 was not installed and the receiver
+remained v6.0.0.
 
 The v6.0.0 package was installed in the user's existing setup. Its existing receiver
 configuration passed validation and was preserved. A systemd user-service
@@ -66,21 +85,27 @@ override selects `/usr/bin/shairport-sync --config` with that configuration.
 The service remained active with no restart or startup error, connected to
 the existing PulseAudio-on-PipeWire environment, and advertised through
 Avahi. NQPTP was already running. The user subsequently reported that the
-installed v6 works correctly and confirmed stereo playback. Keep that installed
-release unchanged while development continues unless another installation is
-requested.
+installed v6 works correctly and confirmed stereo playback.
 
 This user report validates stereo operation in that setup; the sender device
 and app were not specified. It does not establish the surround, pairing,
 Home integration, reconnect, or multiroom test matrix.
 
+Since that historical installation check, PR45 shipped the bundled timing
+companion in **v6.1.0**. At the start of the monitor slice, the installed package
+was verified as 6.1.0 and its receiver service was active. This migration did
+not install or restart it; no additional device-playback claim follows from
+the package/service check. Keep the installed v6.1.0 unchanged unless another
+installation is requested.
+
 ## Work still open
 
-Stage 4 cooperative worker stopping is next: request stop, wake blocked workers,
-join, then release their resources. The activity monitor is the first candidate;
-its real worker startup, waits, repeated stop, and hook ownership need
-characterization before replacing cancellation. Existing `ActivityState` owns
-activity timing decisions; the lifecycle adapter should own worker termination.
+Stage 4 remains open for the RTSP/listener, playback, and session workers:
+request stop, wake blocked workers, join, then release their resources. The
+activity-monitor slice preserves caller-configured blocking hooks and
+nonblocking timeout hooks. A blocking caller hook can delay stop; effect
+admission is serialized without a FIFO guarantee. Broader subprocess ownership
+and realtime system-clock adjustments remain outside its verified scope.
 
 The daemon settings snapshot still bridges global configuration; complete
 owned settings and explicit dependencies remain migration work. `popt` is
