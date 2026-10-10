@@ -28,7 +28,6 @@
 // http://stackoverflow.com/questions/29977651/how-can-the-pulseaudio-asynchronous-library-be-used-to-play-raw-pcm-data
 
 #include "audio/output/audio.h"
-#include "audio/output/pcm_output_queue.hpp"
 #include "runtime/common.h"
 #include <algorithm>
 #include <errno.h>
@@ -37,6 +36,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+
+import receiver.audio.output.queue;
 
 typedef struct {
   pa_sample_format_t pa_format;

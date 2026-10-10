@@ -38,6 +38,21 @@ failed thread creation leaves the registered exit stop safe. This completes
 the listener slice locally, with independent review and hosted CI still pending.
 Conversation, playback, and session workers still use cancellation.
 
+The output slice gives `PcmOutputQueue` ownership of bounded PCM occupancy,
+whole-frame alignment, wraparound, and FIFO delivery. The named C++ module
+`receiver.audio.output.queue` exports its protocol while its storage definition
+stays in the implementation unit. Its library depends only on the standard
+library; the PulseAudio adapter imports it and owns server reservations,
+submission, and uncorking. The first accepted frame is submitted immediately,
+and failed writes consume no queued bytes. Zero, null, and subframe reservations
+are canceled and retain their PCM for retry. The 12 focused queue/adapter cases
+pass in Release and Debug ASan+UBSan; the full pinned Release build
+`build/output-components` passes 390/390 cases in 16.80 seconds. The queue cases
+link independently of the receiver and PulseAudio. The toolchain packaging
+test verifies extraction of the matching `clang-scan-deps`, required by this
+module build. Device playback and hosted CI remain acceptance gates; this slice
+does not complete Stage 7 audio/timing ownership.
+
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
 fixture comparing every decoded sample; a temporary left/right decoder-plane

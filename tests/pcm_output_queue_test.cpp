@@ -1,6 +1,9 @@
-#include "audio/output/pcm_output_queue.hpp"
 #include <gtest/gtest.h>
 #include <array>
+#include <cstddef>
+#include <span>
+
+import receiver.audio.output.queue;
 
 TEST(PcmOutputQueue, BoundedFramesWrapInFifoOrder) {
   PcmOutputQueue queue(3, 2);
