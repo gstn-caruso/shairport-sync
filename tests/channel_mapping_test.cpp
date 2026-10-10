@@ -75,6 +75,15 @@ TEST(ChannelMapping, FrontMonoMixesChannelsAndSilenceProducesZero) {
   checkMapping({true, {"FM", "--"}, ""}, 6, 0);
 }
 
+TEST(ChannelMapping, FrontMonoWithOneSourceMarksIncompleteAndFallsBack) {
+  auto mapping = ChannelMapping::from({"FL"}, 1, {true, {"FM"}, ""});
+  const std::array<int16_t, 1> input{5};
+  std::array<int16_t, 1> output{};
+  ASSERT_TRUE(mapping.map(input, output));
+  EXPECT_EQ(output, input);
+  EXPECT_TRUE(mapping.isIncomplete());
+}
+
 TEST(ChannelMapping, FrontMonoDividesSignedSamplesBeforeSumming) {
   auto mono = ChannelMapping::from({"FL", "FR"}, 1, {true, {"FM"}, ""});
   const std::array<int32_t, 2> oddSigned{-5, 9};
