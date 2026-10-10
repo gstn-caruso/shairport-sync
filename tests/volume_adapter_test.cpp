@@ -3,6 +3,10 @@
 #include "audio/output/audio_player_adapter.hpp"
 #include <gtest/gtest.h>
 #include <vector>
+#include <type_traits>
+
+static_assert(std::is_invocable_v<decltype(&applySessionVolume), AirPlayVolume, SessionState &>);
+static_assert(!std::is_invocable_v<decltype(&applySessionVolume), double, SessionState &>);
 
 struct VolumeAdapterState {
   enum class Effect { hardwareGain, hardwareUnmute, hardwareMute };
@@ -75,7 +79,7 @@ protected:
 TEST_F(VolumeAdapter, HardwareGainPrecedesSoftwareUpdateAndUnmute) {
   auto &session = state.session;
   session.volumeControl.apply({.gainFixed16 = FixedGain16{1234}}, false);
-  applySessionVolume(-15, session);
+  applySessionVolume(AirPlayVolume{-15}, session);
   EXPECT_EQ(state.effects, (std::vector{Effect::hardwareGain, Effect::hardwareUnmute}));
   EXPECT_FALSE(session.volumeControl.pcmSnapshot().softwareMuted);
 }
@@ -83,7 +87,7 @@ TEST_F(VolumeAdapter, HardwareGainPrecedesSoftwareUpdateAndUnmute) {
 TEST_F(VolumeAdapter, FailedHardwareMuteFallsBackToSoftwareMute) {
   auto &session = state.session;
   state.muteResult = 1;
-  applySessionVolume(-144, session);
+  applySessionVolume(AirPlayVolume{-144}, session);
   EXPECT_EQ(state.effects, std::vector{Effect::hardwareMute});
   EXPECT_TRUE(session.volumeControl.pcmSnapshot().softwareMuted);
 }
@@ -105,9 +109,9 @@ TEST_F(VolumeAdapter, IgnoredVolumeRemembersSharedLevelWithoutChangingMutedPcm) 
 TEST_F(VolumeAdapter, IgnoringVolumeAfterHardwareMuteFailureRetainsAppliedGain) {
   auto &session = state.session;
   session.volumeControl.apply({.gainFixed16 = FixedGain16{1234}}, false);
-  applySessionVolume(-15, session);
+  applySessionVolume(AirPlayVolume{-15}, session);
   state.muteResult = 1;
-  applySessionVolume(-144, session);
+  applySessionVolume(AirPlayVolume{-144}, session);
   config.ignore_volume_control = 1;
 
   player_volume_without_notification(-144, &session);

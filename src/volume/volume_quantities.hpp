@@ -5,8 +5,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <ostream>
-#include <string>
-#include <string_view>
 
 class FixedGain16 {
 public:
@@ -64,9 +62,8 @@ private:
 class AirPlayVolume {
 public:
   explicit constexpr AirPlayVolume(double value) : value_(value) {}
-  static AirPlayVolume fromWireParameter(std::string_view text) {
-    const std::string parameter(text);
-    return AirPlayVolume{static_cast<float>(std::atof(parameter.c_str()))};
+  static AirPlayVolume fromWireParameter(const char *text) {
+    return AirPlayVolume{static_cast<float>(std::atof(text))};
   }
   constexpr double value() const { return value_; }
   constexpr bool isMute() const { return value_ == -144; }

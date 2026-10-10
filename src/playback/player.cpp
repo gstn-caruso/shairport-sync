@@ -508,8 +508,14 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
   return result;
 }
 
+static void applyAndRememberSessionVolume(AirPlayVolume level, SessionState &session);
+
+AirPlayVolume suggestedSessionVolume(const SessionState *session) {
+  return session ? session->volumeControl.suggestedLevel(sharedVolumeLevel) : sharedVolumeLevel.current();
+}
+
 double suggested_volume(rtsp_conn_info *conn) {
-  return (conn ? conn->volumeControl.suggestedLevel(sharedVolumeLevel) : sharedVolumeLevel.current()).value();
+  return suggestedSessionVolume(conn).value();
 }
 
 void player_thread_cleanup_handler(void *arg) {
@@ -661,9 +667,9 @@ void *player_thread_func(void *arg) {
   // if not already set, set the volume to the pending_airplay_volume, if any, or otherwise to the
   // suggested volume.
 
-  double initial_volume = suggested_volume(conn);
-  debug(2, "Set initial volume to %.6f.", initial_volume);
-  player_volume(initial_volume, conn); // will contain a cancellation point if asked to wait
+  const auto initialVolume = suggestedSessionVolume(conn);
+  debug(2, "Set initial volume to %.6f.", initialVolume.value());
+  applyAndRememberSessionVolume(initialVolume, *conn);
 
   debug(2, "Play begin");
 
@@ -975,7 +981,7 @@ void *player_thread_func(void *arg) {
   pthread_exit(NULL);
 }
 
-static void applyVolumePlan(double level, rtsp_conn_info *conn) {
+static void applyVolumePlan(AirPlayVolume level, rtsp_conn_info *conn) {
   VolumeSettings settings;
   switch (config.volume_control_profile) {
   case VCP_standard: settings.profile = VolumeProfile::standard; break;
@@ -993,7 +999,7 @@ static void applyVolumePlan(double level, rtsp_conn_info *conn) {
       capabilities.range = VolumeRange{CentibelAttenuation{static_cast<double>(parameters->volume_range->minimum_volume_dB)},
                                       CentibelAttenuation{static_cast<double>(parameters->volume_range->maximum_volume_dB)}};
   }
-  const auto plan = VolumePolicy::plan(AirPlayVolume{level}, settings, capabilities);
+  const auto plan = VolumePolicy::plan(level, settings, capabilities);
   if (plan.maximumIgnored)
     warn("The maximum output level is outside the range of the hardware mixer -- ignored");
   if (plan.rangeIgnored)
@@ -1002,17 +1008,17 @@ static void applyVolumePlan(double level, rtsp_conn_info *conn) {
   if (plan.requestMute && config.output->mute) hardwareMuted = config.output->mute(1) == 0;
   if (plan.hardwareAttenuation) config.output->volume(plan.hardwareAttenuation->value());
   conn->volumeControl.apply(plan, hardwareMuted);
-  if (level != -144 && config.logOutputLevel)
+  if (!level.isMute() && config.logOutputLevel)
     inform("Output Level set to: %.2f dB.", plan.scaledAttenuation.value() / 100);
   if (plan.unmute && config.output->mute) config.output->mute(0);
 }
 
-void applySessionVolume(double level, SessionState &session) {
-  command_set_volume(level);
+void applySessionVolume(AirPlayVolume level, SessionState &session) {
+  command_set_volume(level.value());
   applySessionVolumeEffects(level, session);
 }
 
-void applySessionVolumeEffects(double level, SessionState &session,
+void applySessionVolumeEffects(AirPlayVolume level, SessionState &session,
                                const std::function<void()> &publish) {
   int previousState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
@@ -1024,12 +1030,17 @@ void applySessionVolumeEffects(double level, SessionState &session,
 }
 
 void player_volume_without_notification(double level, rtsp_conn_info *conn) {
-  applySessionVolumeEffects(level, *conn, [&] { sharedVolumeLevel.remember(AirPlayVolume{level}); });
+  const AirPlayVolume volume{level};
+  applySessionVolumeEffects(volume, *conn, [&] { sharedVolumeLevel.remember(volume); });
+}
+
+static void applyAndRememberSessionVolume(AirPlayVolume level, SessionState &session) {
+  command_set_volume(level.value());
+  applySessionVolumeEffects(level, session, [&] { sharedVolumeLevel.remember(level); });
 }
 
 void player_volume(double level, rtsp_conn_info *conn) {
-  command_set_volume(level);
-  player_volume_without_notification(level, conn);
+  applyAndRememberSessionVolume(AirPlayVolume{level}, *conn);
 }
 
 void do_flush(uint32_t timestamp, rtsp_conn_info *conn) {

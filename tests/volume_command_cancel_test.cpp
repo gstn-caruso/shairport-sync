@@ -15,7 +15,7 @@ void *player_thread_func(void *);
 extern "C" void __wrap_ptp_send_control_message_string(const char *) {}
 static void *idleReceiver(void *) { for (;;) pause(); }
 static void *setVolume(void *argument) {
-  applySessionVolume(-15, *static_cast<SessionState *>(argument));
+  applySessionVolume(AirPlayVolume{-15}, *static_cast<SessionState *>(argument));
   pthread_testcancel();
   return nullptr;
 }
