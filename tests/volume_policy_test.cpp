@@ -3,6 +3,14 @@
 #include <cmath>
 #include <initializer_list>
 
+TEST(VolumePolicy, SoftwareOnlyFractionalLimitsPreserveTruncation) {
+  VolumeSettings settings;
+  settings.maximumDb = -6.75;
+  settings.rangeDb = 20.009;
+  EXPECT_EQ(VolumePolicy::plan(0, settings, {}).softwareAttenuation, -600);
+  EXPECT_EQ(VolumePolicy::plan(-30, settings, {}).softwareAttenuation, -2600);
+}
+
 TEST(VolumePolicy, ProfilesPreserveAttenuationAndFixedGain) {
   VolumeSettings settings;
   settings.rangeDb = 60;
