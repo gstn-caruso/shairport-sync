@@ -52,8 +52,8 @@ void ActivityMonitor::start() {
   if (running_)
     return;
   activity_ = ActivityState{};
-  running_ = true;
   worker_ = std::thread(&ActivityMonitor::waitForInactivity, this);
+  running_ = true;
 }
 
 void ActivityMonitor::stop() {

@@ -1,4 +1,5 @@
 #include "monitoring/activity_monitor.h"
+#include "monitoring/activity_monitor.hpp"
 #include "runtime/common.h"
 #include <gtest/gtest.h>
 #include <chrono>
@@ -9,8 +10,11 @@
 #include <future>
 #include <latch>
 #include <poll.h>
+#include <pwd.h>
 #include <string>
 #include <sys/wait.h>
+#include <sys/resource.h>
+#include <sys/prctl.h>
 #include <unistd.h>
 #include <vector>
 
@@ -87,7 +91,59 @@ static void observeExplicitExitStop() {
   activity_monitor_stop();
 }
 
+static int failedWorkerCreationScenario() {
+  if (geteuid() == 0) {
+    const auto unprivileged = getpwnam("nobody");
+    if (!unprivileged || setuid(unprivileged->pw_uid) != 0 || prctl(PR_SET_DUMPABLE, 1) != 0)
+      return 10;
+  }
+  rlimit previous{};
+  if (getrlimit(RLIMIT_NPROC, &previous) != 0)
+    return 11;
+  auto restricted = previous;
+  restricted.rlim_cur = 0;
+  ActivityMonitor owner;
+  if (setrlimit(RLIMIT_NPROC, &restricted) != 0)
+    return 12;
+  bool failed = false;
+  try {
+    owner.start();
+  } catch (const std::system_error &error) {
+    failed = error.code().value() == EAGAIN;
+  }
+  if (setrlimit(RLIMIT_NPROC, &previous) != 0 || !failed)
+    return 13;
+  try {
+    owner.stop();
+  } catch (const std::system_error &) {
+    return 14;
+  }
+  owner.start();
+  owner.signifyActivity(true);
+  if (owner.status() != am_active)
+    return 15;
+  owner.stop();
+  if (owner.status() != am_inactive)
+    return 16;
+  {
+    ActivityMonitor abandoned;
+    if (setrlimit(RLIMIT_NPROC, &restricted) != 0)
+      return 17;
+    failed = false;
+    try {
+      abandoned.start();
+    } catch (const std::system_error &error) {
+      failed = error.code().value() == EAGAIN;
+    }
+    if (setrlimit(RLIMIT_NPROC, &previous) != 0 || !failed)
+      return 18;
+  }
+  return 0;
+}
+
 int main(int argc, char **argv) {
+  if (argc == 2 && std::string(argv[1]) == "--activity-failed-start")
+    return failedWorkerCreationScenario();
   if (argc == 5 && std::string(argv[1]) == "--activity-hook") {
     const int eventFd = std::atoi(argv[2]);
     const int releaseFd = std::atoi(argv[3]);
@@ -128,6 +184,29 @@ TEST(ActivityMonitorLifecycle, RejectsSignalsBeforeStart) {
   activity_monitor_stop();
   activity_monitor_signify_activity(7);
   EXPECT_EQ(activity_status(), am_inactive);
+}
+
+TEST(ActivityMonitorLifecycle, FailedWorkerCreationLeavesOwnerStoppableAndRetryable) {
+  const pid_t child = fork();
+  ASSERT_GE(child, 0);
+  if (child == 0) {
+    execl("/proc/self/exe", "activity-monitor-test", "--activity-failed-start", nullptr);
+    _exit(1);
+  }
+  int result = 0;
+  pid_t reaped = 0;
+  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  while (reaped == 0 && std::chrono::steady_clock::now() < deadline) {
+    reaped = waitpid(child, &result, WNOHANG);
+    if (reaped == 0)
+      std::this_thread::sleep_for(1ms);
+  }
+  EXPECT_EQ(reaped, child);
+  if (reaped == 0) {
+    kill(child, SIGKILL);
+    waitpid(child, &result, 0);
+  }
+  EXPECT_EQ(result, 0);
 }
 
 TEST(ActivityMonitorLifecycle, OwnerOutlivesExplicitExitStop) {
