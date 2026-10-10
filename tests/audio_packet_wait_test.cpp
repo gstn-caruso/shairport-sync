@@ -1,7 +1,7 @@
 #include "audio/buffer/audio_packet_buffer.hpp"
 #include <gtest/gtest.h>
 #include <atomic>
-#include <cassert>
+#include <stdexcept>
 #include <condition_variable>
 #include <mutex>
 
@@ -27,11 +27,16 @@ extern "C" int __wrap_pthread_cond_timedwait(pthread_cond_t *condition, pthread_
 }
 static QueuedAudioPacket packet(uint16_t sequence) {
   OwnedAudioFrame frame(av_frame_alloc());
+  if (!frame)
+    throw std::runtime_error("Cannot allocate waiting packet frame");
   frame->nb_samples = 16;
   frame->format = AV_SAMPLE_FMT_S16P;
   frame->sample_rate = 44100;
   av_channel_layout_default(&frame->ch_layout, 2);
-  assert(av_frame_get_buffer(frame.get(), 0) == 0);
+  const auto allocated = av_frame_get_buffer(frame.get(), 0);
+  EXPECT_EQ(allocated, 0);
+  if (allocated != 0)
+    throw std::runtime_error("Cannot allocate waiting packet samples");
   return QueuedAudioPacket::decoded(*AudioFormat::fromSsrc(ALAC_44100_S16_2), sequence,
                                     1000, 0, std::move(frame));
 }
@@ -45,20 +50,15 @@ static void *waitWithExtractedPacket(void *argument) {
   buffer.waitForChange(buffer.revision(), deadline);
   return nullptr;
 }
-static void checkEarlierResetSignal(AudioPacketBuffer &buffer) {
+TEST(AudioPacketWait, ResetSignalArrivingBeforeWaitIsNotLost) {
+  AudioPacketBuffer buffer;
   auto earlier = buffer.revision();
   buffer.reset();
   EXPECT_EQ(buffer.waitForChange(earlier, {0, 0}), 0);
 }
 
-TEST(AudioPacketWait, ResetSignalArrivingBeforeWaitIsNotLost) {
-  AudioPacketBuffer buffer;
-  checkEarlierResetSignal(buffer);
-}
-
 TEST(AudioPacketWait, DeferredCancellationReleasesExtractedFrameAndUnlocksBuffer) {
   AudioPacketBuffer buffer;
-  checkEarlierResetSignal(buffer);
   {
     std::lock_guard lock(observation);
     waiting = false;
@@ -71,9 +71,10 @@ TEST(AudioPacketWait, DeferredCancellationReleasesExtractedFrameAndUnlocksBuffer
     std::unique_lock lock(observation);
     entered.wait(lock, [] { return waiting; });
   }
-  assert(pthread_cancel(thread) == 0);
-  void *completion;
-  assert(pthread_join(thread, &completion) == 0 && completion == PTHREAD_CANCELED);
+  EXPECT_EQ(pthread_cancel(thread), 0);
+  void *completion = nullptr;
+  EXPECT_EQ(pthread_join(thread, &completion), 0);
+  EXPECT_EQ(completion, PTHREAD_CANCELED);
   EXPECT_EQ(framesReleased.load(), released + 1);
   buffer.accept(100, 1, [] { return packet(100); });
   EXPECT_EQ(buffer.occupancy(), 1);
