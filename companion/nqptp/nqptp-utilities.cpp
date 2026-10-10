@@ -1,0 +1,184 @@
+/*
+ * This file is part of the nqptp distribution (https://github.com/mikebrady/nqptp).
+ * Copyright (c) 2021-2022 Mike Brady.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 2.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ *
+ * Commercial licensing is also available.
+ */
+
+#include "nqptp-utilities.h"
+#include "general-utilities.h"
+#include <errno.h>
+#include <fcntl.h>   // fcntl etc.
+#include <ifaddrs.h> // getifaddrs
+#include <netinet/in.h>
+
+#ifdef CONFIG_FOR_LINUX
+#include <linux/if_packet.h> // sockaddr_ll
+#endif
+
+#if defined(CONFIG_FOR_FREEBSD) || defined(CONFIG_FOR_OPENBSD)
+#include <sys/types.h>
+#include <unistd.h>
+#include <net/if_dl.h>
+#include <net/if_types.h>
+#include <sys/socket.h>
+#endif
+
+#include <netdb.h>  // getaddrinfo etc.
+#include <stdio.h>  // snprintf
+#include <stdlib.h> // malloc, free
+#include <string.h> // memset strcpy, etc.
+
+#include "debug.h"
+
+namespace nqptp {
+
+void debug_print_buffer(int level, char *buf, size_t buf_len) {
+  if (debug_level() >= level) {
+    // printf("Received %u bytes in a packet from %s:%d\n", buf_len, inet_ntoa(si_other.sin_addr),
+    // ntohs(si_other.sin_port));
+    char *obf =
+        static_cast<char *>(malloc(buf_len * 4 + 1)); // to be on the safe side -- 4 characters on average for each byte
+    if (obf != NULL) {
+      char *obfp = obf;
+      unsigned int obfc;
+      for (obfc = 0; obfc < buf_len; obfc++) {
+        snprintf(obfp, 3, "%02X", buf[obfc]);
+        obfp += 2;
+        if (obfc != buf_len - 1) {
+          if (obfc % 32 == 31) {
+            snprintf(obfp, 5, " || ");
+            obfp += 4;
+          } else if (obfc % 16 == 15) {
+            snprintf(obfp, 4, " | ");
+            obfp += 3;
+          } else if (obfc % 4 == 3) {
+            snprintf(obfp, 2, " ");
+            obfp += 1;
+          }
+        }
+      };
+      *obfp = 0;
+      switch (buf[0]) {
+
+      case 0x10:
+        debug(level, "SYNC: \"%s\".", obf);
+        break;
+      case 0x18:
+        debug(level, "FLUP: \"%s\".", obf);
+        break;
+      case 0x19:
+        debug(level, "DRSP: \"%s\".", obf);
+        break;
+      case 0x1B:
+        debug(level, "ANNC: \"%s\".", obf);
+        break;
+      case 0x1C:
+        debug(level, "SGNL: \"%s\".", obf);
+        break;
+      default:
+        debug(1, "XXXX  \"%s\".", obf); // output this at level 1
+        break;
+      }
+      free(obf);
+    }
+  }
+}
+
+// pass in an array of bytes and a max_length, or a max length of 0 for unlimited
+// the actual size will be returned
+
+int get_device_id(uint8_t *id, int *int_length) {
+  int max_length = *int_length;
+  int response = -1;
+  struct ifaddrs *ifaddr = NULL;
+  struct ifaddrs *ifa = NULL;
+  int i = 0;
+  uint8_t *t = id;
+
+  // clear the buffer if non zero length passed in
+  for (i = 0; i < max_length; i++) {
+    *t++ = 0;
+  }
+
+  // look for a useful MAC address
+  if (getifaddrs(&ifaddr) != -1) {
+    t = id;
+    int found = 0;
+
+    for (ifa = ifaddr; ((ifa != NULL) && (found == 0)); ifa = ifa->ifa_next) {
+#ifdef AF_PACKET
+      if ((ifa->ifa_addr) && (ifa->ifa_addr->sa_family == AF_PACKET)) {
+        struct sockaddr_ll *s = (struct sockaddr_ll *)ifa->ifa_addr;
+        if ((strcmp(ifa->ifa_name, "lo") != 0)) {
+          found = 1;
+          if ((max_length == 0) || (s->sll_halen < max_length)) {
+            max_length = s->sll_halen;
+            *int_length = max_length;
+          }
+          for (i = 0; i < max_length; i++) {
+            *t++ = s->sll_addr[i];
+          }
+        }
+      }
+#else
+#ifdef AF_LINK
+      struct sockaddr_dl *sdl = (struct sockaddr_dl *)ifa->ifa_addr;
+      if ((sdl) && (sdl->sdl_family == AF_LINK)) {
+        if (sdl->sdl_type == IFT_ETHER) {
+          found = 1;
+          if ((max_length == 0) || (sdl->sdl_alen < max_length)) {
+            max_length = sdl->sdl_alen;
+            *int_length = max_length;
+          }
+          uint8_t *s = (uint8_t *)LLADDR(sdl);
+          for (i = 0; i < max_length; i++) {
+            *t++ = *s++;
+          }
+        }
+      }
+#endif
+#endif
+    }
+    if (found != 0)
+      response = 0;
+    freeifaddrs(ifaddr);
+  }
+  return response;
+}
+
+uint64_t get_self_clock_id() {
+  // make up a clock ID based on an interface's MAC
+  constexpr int clock_id_capacity = 8;
+  int local_clock_id_size = clock_id_capacity; // don't exceed this
+  uint8_t local_clock_id[clock_id_capacity];
+  memset(local_clock_id, 0, local_clock_id_size);
+  if (get_device_id(local_clock_id, &local_clock_id_size) == 0) {
+    // if the length of the MAC address is 6 we need to doctor it a little
+    // See Section 7.5.2.2.2 IEEE EUI-64 clockIdentity values, NOTE 2
+
+    if (local_clock_id_size == 6) { // i.e. an EUI-48 MAC Address
+      local_clock_id[7] = local_clock_id[5];
+      local_clock_id[6] = local_clock_id[4];
+      local_clock_id[5] = local_clock_id[3];
+      local_clock_id[3] = 0xFF;
+      local_clock_id[4] = 0xFE;
+    }
+  }
+  // convert to host byte order
+  return nctoh64(local_clock_id);
+}
+
+}

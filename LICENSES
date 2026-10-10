@@ -19,6 +19,12 @@ Shairport:
 Shairport Sync:
     Copyright (c) 2014–2017 Mike Brady <mikebrady@eircom.net>
 
+Bundled NQPTP companion:
+    Copyright (c) 2021–2022 Mike Brady
+    GNU General Public License version 2
+    See companion/nqptp/LICENSE and companion/nqptp/COPYING for full terms.
+    Installed notices: share/doc/shairport-sync/nqptp/
+
 Permission is hereby granted, free of charge, to any person
 obtaining a copy of this software and associated documentation
 files (the "Software"), to deal in the Software without

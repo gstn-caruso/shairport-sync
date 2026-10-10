@@ -10,7 +10,9 @@ integration and sender-controlled volume. It runs as a **systemd user service**
 and works with PulseAudio or PipeWire's `pipewire-pulse` compatibility server.
 
 The supported stack is Linux, AirPlay 2, PulseAudio, Avahi, NQPTP, OpenSSL and
-FFmpeg. Receiver production code uses C++26; the bundled pairing dependency
+FFmpeg. NQPTP 1.2.8 is maintained here as the separate `shairport-sync-nqptp`
+system service, built and packaged with the receiver. Both applications use
+C++26 and the same release version; the bundled pairing dependency
 remains C. AirPlay 1 and alternative audio or discovery backends are not
 supported.
 
@@ -291,6 +293,7 @@ files, tests and installation.
 | [`src/monitoring`](src/monitoring) | Receiver activity state and monitoring. |
 | [`src/runtime`](src/runtime), [`src/platform/utilities`](src/platform/utilities) | Shared runtime support and platform/protocol utilities. |
 | [`pair_ap`](pair_ap) | Bundled C pairing implementation. |
+| [`companion/nqptp`](companion/nqptp) | Bundled timing companion, runtime ownership and upstream provenance. |
 
 Packets, audio formats, PCM, playback timing, volume policy, RTP clocks and text
 formatting have separate library targets. Other packages contribute to the

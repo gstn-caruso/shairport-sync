@@ -55,7 +55,7 @@ jobs:
       - name: Install C++26 build dependencies
         run: |
           apt-get update
-          apt-get install -y ca-certificates curl git cmake ninja-build gcc-15 g++-15 g++ zstd pkg-config libgtest-dev libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd dpkg-dev file
+          apt-get install -y ca-certificates curl git cmake ninja-build gcc-15 g++-15 g++ zstd pkg-config libgtest-dev libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd dpkg-dev file systemd
       - uses: actions/checkout@v4
       - name: Use the planned package version
         env:
@@ -86,10 +86,14 @@ jobs:
             ASan-UBSan)
               nm -u build/cmake/CMakeFiles/receiver.dir/src/platform/utilities/structured_buffer.cpp.o | grep __asan_init
               nm -u build/cmake/CMakeFiles/receiver.dir/src/protocol/rtsp/rtsp.cpp.o | grep __ubsan_handle
+              nm -u build/cmake/companion/nqptp/CMakeFiles/nqptp-core.dir/runtime.cpp.o | grep __asan_init
+              nm -u build/cmake/companion/nqptp/CMakeFiles/nqptp-core.dir/nqptp-message-handlers.cpp.o | grep __ubsan_handle
               ;;
             TSan)
               nm -u build/cmake/CMakeFiles/receiver.dir/src/platform/utilities/structured_buffer.cpp.o | grep __tsan_init
               nm -u build/cmake/CMakeFiles/receiver.dir/src/protocol/rtsp/rtsp.cpp.o | grep __tsan_init
+              nm -u build/cmake/companion/nqptp/CMakeFiles/nqptp-core.dir/runtime.cpp.o | grep __tsan_init
+              nm -u build/cmake/companion/nqptp/CMakeFiles/nqptp-core.dir/nqptp-message-handlers.cpp.o | grep __tsan_init
               ;;
           esac
       - name: Test
@@ -101,6 +105,8 @@ jobs:
           cmp man/shairport-sync.1 build/cmake/stage/usr/share/man/man1/shairport-sync.1
           cmp scripts/shairport-sync.conf build/cmake/stage/etc/shairport-sync.conf.sample
           test -f build/cmake/stage/usr/lib/systemd/user/shairport-sync.service
+          cmake -DROOT="$PWD/build/cmake/stage" -DPREFIX=/usr -DVERSION="$(cat VERSION)" -P tests/nqptp_package_test.cmake
+          cmake -DROOT="$PWD/build/cmake/stage" -DPREFIX=/usr -P tests/nqptp_unit_test.cmake
       - name: Build Debian package
         if: matrix.build == 'Release'
         run: |
@@ -113,6 +119,7 @@ jobs:
           test "$(dpkg-deb -f build/cmake/packages/*.deb Architecture)" = '${{ matrix.platform.architecture }}'
           build/cmake/package-check/usr/bin/shairport-sync --version | grep -F "$version-AirPlay2-"
           build/cmake/package-check/usr/bin/shairport-sync --check-config --config build/cmake/package-check/etc/shairport-sync.conf.sample
+          cmake -DROOT="$PWD/build/cmake/package-check" -DPREFIX=/usr -DVERSION="$version" -DPACKAGE="$PWD/build/cmake/packages/shairport-sync_${version}_${{ matrix.platform.architecture }}.deb" -P tests/nqptp_package_test.cmake
       - name: Upload Debian package
         if: matrix.build == 'Release'
         uses: actions/upload-artifact@v4
