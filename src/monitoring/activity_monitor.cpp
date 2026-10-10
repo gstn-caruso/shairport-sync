@@ -2,7 +2,7 @@
  * Activity Monitor
  *
  * Contains code to run an activity flag and associated timer
- * A pthread implements a simple state machine with three states,
+ * A cooperative worker implements a simple state machine with three states,
  * "idle", "active" and "timing out".
  *
  *
@@ -31,138 +31,110 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include <errno.h>
-#include <inttypes.h>
-#include <stdlib.h>
-#include <sys/types.h>
-
-#include "config.h"
-
-#include "monitoring/activity_monitor.h"
-#include "monitoring/activity_state.h"
+#include "monitoring/activity_monitor.hpp"
 #include "runtime/common.h"
 
+ActivityMonitor::~ActivityMonitor() { stop(); }
 
-
-int activity_monitor_running = 0;
-
-pthread_t activity_monitor_thread;
-pthread_mutex_t activity_monitor_mutex;
-pthread_cond_t activity_monitor_cv;
-
-void going_active(int block) {
-  // debug(1, "activity_monitor: state transitioning to \"active\" with%s blocking", block ? "" :
-  // "out");
-  if (config.cmd_active_start)
-    command_execute(config.cmd_active_start, "", block);
-
-
-  if (config.disable_standby_mode == disable_standby_auto) {
-    config.keep_dac_busy = 1;
-  }
-}
-
-void going_inactive(int block) {
-  // debug(1, "activity_monitor: state transitioning to \"inactive\" with%s blocking", block ? "" :
-  // "out");
-  if (config.cmd_active_stop)
-    command_execute(config.cmd_active_stop, "", block);
-
-
-  if (config.disable_standby_mode == disable_standby_auto) {
-    config.keep_dac_busy = 0;
-  }
-}
-
-void activity_monitor_signify_activity(int active) {
-  if (!activity_monitor_running)
+void ActivityMonitor::start() {
+  std::lock_guard lifecycle(lifecycleMutex_);
+  std::lock_guard state(stateMutex_);
+  if (running_)
     return;
-  // this could be pthread_cancelled and there is likely to be cancellation points in the
-  // hooked-on procedures
-  pthread_mutex_lock(&activity_monitor_mutex);
-  enum activity_effect effect = activity_state_signify(activity_state_instance(), active,
-                                                       config.active_state_timeout);
-  pthread_mutex_unlock(&activity_monitor_mutex);
-  if (effect == activity_activate)
-    going_active(config.cmd_blocking);
-  else if (effect == activity_deactivate)
-    going_inactive(config.cmd_blocking);
-  // lock the mutex again to send a signal
-  pthread_mutex_lock_and_cleanup_push(&activity_monitor_mutex);
-  pthread_cond_signal(&activity_monitor_cv);
-  pthread_cleanup_pop(1); // release the mutex
+  activity_ = ActivityState{};
+  running_ = true;
+  worker_ = std::thread(&ActivityMonitor::waitForInactivity, this);
 }
 
-void activity_thread_cleanup_handler(__attribute__((unused)) void *arg) {
-  debug(3, "activity_monitor: thread exit.");
-  pthread_cond_destroy(&activity_monitor_cv);
-  pthread_mutex_destroy(&activity_monitor_mutex);
+void ActivityMonitor::stop() {
+  std::lock_guard lifecycle(lifecycleMutex_);
+  {
+    std::lock_guard state(stateMutex_);
+    if (!running_)
+      return;
+    running_ = false;
+    changed_.notify_all();
+  }
+  worker_.join();
+  std::lock_guard effects(effectsMutex_);
+  ActivityState::Effect effect;
+  {
+    std::lock_guard state(stateMutex_);
+    effect = activity_.stop();
+  }
+  applyEffect(effect, config.cmd_blocking);
 }
 
-void *activity_monitor_thread_code(void *arg) {
-  int rc;
-  pthread_cleanup_push(activity_thread_cleanup_handler, arg);
+am_state ActivityMonitor::status() {
+  std::lock_guard state(stateMutex_);
+  return activity_.status();
+}
 
-  uint64_t sec;
-  uint64_t nsec;
-  struct timespec time_for_wait;
+void ActivityMonitor::signifyActivity(bool active) {
+  std::lock_guard effects(effectsMutex_);
+  ActivityState::Effect effect;
+  {
+    std::lock_guard state(stateMutex_);
+    if (!running_)
+      return;
+    effect = activity_.signifyActivity(active, config.active_state_timeout);
+    changed_.notify_all();
+  }
+  applyEffect(effect, config.cmd_blocking);
+}
 
-  pthread_mutex_lock(&activity_monitor_mutex);
-  do {
-    switch (activity_state_advance(activity_state_instance())) {
-    case activity_wait_signal:
-      pthread_cond_wait(&activity_monitor_cv, &activity_monitor_mutex);
+void ActivityMonitor::applyEffect(ActivityState::Effect effect, int blocking) {
+  if (effect == ActivityState::Effect::none)
+    return;
+  const auto command = effect == ActivityState::Effect::activate ? config.cmd_active_start
+                                                               : config.cmd_active_stop;
+  if (command)
+    command_execute(command, "", blocking);
+  std::lock_guard state(stateMutex_);
+  if (config.disable_standby_mode == disable_standby_auto)
+    config.keep_dac_busy = effect == ActivityState::Effect::activate ? 1 : 0;
+}
+
+void ActivityMonitor::waitForInactivity() {
+  std::unique_lock state(stateMutex_);
+  while (running_) {
+    switch (activity_.advance()) {
+    case ActivityState::Wait::signal:
+      changed_.wait(state);
       break;
-    case activity_begin_timeout: {
-      uint64_t time_to_wait_for_wakeup_ns = (uint64_t)(config.active_state_timeout * 1000000000);
-      uint64_t time_of_wakeup_ns = get_realtime_in_ns() + time_to_wait_for_wakeup_ns;
-      sec = time_of_wakeup_ns / 1000000000;
-      nsec = time_of_wakeup_ns % 1000000000;
-      time_for_wait.tv_sec = sec;
-      time_for_wait.tv_nsec = nsec;
+    case ActivityState::Wait::beginTimeout:
+      deadline_ = std::chrono::steady_clock::now() +
+                  std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                      std::chrono::duration<double>(config.active_state_timeout));
       break;
-    }
-    case activity_wait_deadline:
-      rc = pthread_cond_timedwait(&activity_monitor_cv, &activity_monitor_mutex, &time_for_wait);
-      if (rc == ETIMEDOUT &&
-          activity_state_timeout_expired(activity_state_instance()) == activity_deactivate) {
-        pthread_mutex_unlock(&activity_monitor_mutex);
-        going_inactive(0); // don't wait for completion -- it makes no sense
-        pthread_mutex_lock(&activity_monitor_mutex);
+    case ActivityState::Wait::deadline:
+      if (changed_.wait_until(state, deadline_) == std::cv_status::timeout) {
+        state.unlock();
+        {
+          std::lock_guard effects(effectsMutex_);
+          ActivityState::Effect effect = ActivityState::Effect::none;
+          {
+            std::lock_guard check(stateMutex_);
+            if (running_)
+              effect = activity_.timeoutExpired();
+          }
+          applyEffect(effect, 0);
+        }
+        state.lock();
       }
       break;
     }
-  } while (1);
-  pthread_mutex_unlock(&activity_monitor_mutex);
-  pthread_cleanup_pop(0); // should never happen
-  pthread_exit(NULL);
-}
-
-enum am_state activity_status() { return activity_state_status(activity_state_instance()); }
-
-void activity_monitor_start() {
-  int rc = pthread_mutex_init(&activity_monitor_mutex, NULL);
-  if (rc)
-    die("activity_monitor: error %d initialising activity_monitor_mutex.", rc);
-  rc = pthread_cond_init(&activity_monitor_cv, NULL);
-  if (rc)
-    die("activity_monitor: error %d initialising activity_monitor_cv.", rc);
-  activity_state_reset(activity_state_instance());
-  // debug(1,"activity_monitor_start");
-  named_pthread_create(&activity_monitor_thread, NULL, activity_monitor_thread_code, NULL,
-                       "activity_mon");
-  activity_monitor_running = 1;
-}
-
-void activity_monitor_stop() {
-  if (activity_monitor_running) {
-    debug(2, "activity_monitor_stop begin. state: %d.", activity_status());
-    if (activity_state_prepare_stop(activity_state_instance()) == activity_deactivate) {
-      going_inactive(config.cmd_blocking);
-      activity_state_stop(activity_state_instance());
-    }
-    pthread_cancel(activity_monitor_thread);
-    pthread_join(activity_monitor_thread, NULL);
-    debug(2, "activity_monitor_stop complete");
   }
 }
+
+static ActivityMonitor &activityMonitor() {
+  static ActivityMonitor monitor;
+  return monitor;
+}
+
+void activity_monitor_start() { activityMonitor().start(); }
+void activity_monitor_stop() { activityMonitor().stop(); }
+void activity_monitor_signify_activity(int active) {
+  activityMonitor().signifyActivity(active != 0);
+}
+am_state activity_status() { return activityMonitor().status(); }
