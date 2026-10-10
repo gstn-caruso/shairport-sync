@@ -1,3 +1,13 @@
+## [6.1.2](https://github.com/gstn-caruso/shairport-sync/compare/v6.1.1...v6.1.2) (2026-10-10)
+
+### Bug Fixes
+
+* **output:** start playback promptly through an owned PCM queue ([#49](https://github.com/gstn-caruso/shairport-sync/issues/49)) ([972deab](https://github.com/gstn-caruso/shairport-sync/commit/972deab06755afcfb07dc4ff4ad89cb0fb012f74))
+
+### Code Refactoring
+
+* **rtsp:** stop listener through its owned lifecycle ([#48](https://github.com/gstn-caruso/shairport-sync/issues/48)) ([6c57893](https://github.com/gstn-caruso/shairport-sync/commit/6c57893a55f4c67d6500f883dff251b3f7acf15c))
+
 ## [6.1.1](https://github.com/gstn-caruso/shairport-sync/compare/v6.1.0...v6.1.1) (2026-10-10)
 
 ### Bug Fixes
