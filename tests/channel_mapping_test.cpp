@@ -17,6 +17,15 @@ TEST(ChannelMapping, DefaultOrderPreservesStereoChannels) {
   checkMapping({}, 5, 9);
 }
 
+TEST(ChannelMapping, DisabledMappingIgnoresDeviceNames) {
+  auto mapping = ChannelMapping::from({"FL", "FR"}, 2, {false, {}, "FR UNKNOWN"});
+  const std::array<int16_t, 2> input{5, 9};
+  std::array<int16_t, 2> output{};
+  ASSERT_TRUE(mapping.map(input, output));
+  EXPECT_EQ(output, input);
+  EXPECT_FALSE(mapping.isIncomplete());
+}
+
 TEST(ChannelMapping, ExplicitNamesOverrideDeviceOrder) {
   checkMapping({true, {"FR", "FL"}, "FL FR"}, 9, 5);
 }
