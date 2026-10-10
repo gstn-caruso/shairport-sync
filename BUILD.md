@@ -63,12 +63,13 @@ contracts. Policy, clock, audio-format/mapping, PCM/samples and playback-timing
 targets use separate libraries; unrelated receiver changes do not relink their
 test executables. This improves targeted feedback rather than clean-build time.
 
-CI runs native amd64 and arm64 CMake Release, Debug, ASan+UBSan and TSan builds,
+CI runs native amd64 CMake Release, Debug, ASan+UBSan and TSan builds,
 all with the same pinned compiler and library. Every build runs its contracts
 and stages the binary, manual and sample configuration without starting a service.
 The sanitizer jobs check instrumentation in receiver C++ object files. TSan
 detects data races between threads; ASan detects memory misuse and UBSan detects
-undefined behavior. All eight builds must pass before a release can publish.
+undefined behavior. All four builds must pass before a release can publish.
+ARM64 CI and release artifacts are suspended for now.
 Failed tests upload CTest diagnostics, and an empty test selection fails CI.
 
 The compiler installation must include compiler-rt runtimes for sanitizer builds;
@@ -112,14 +113,11 @@ From the repository root, `./user-service-install.sh --dry-run` previews user se
 
 Every CI Release build uploads a `.deb` and checksum as workflow artifacts,
 including changes that do not increase the version. Packages built by CI target
-Ubuntu 26.04 amd64 and arm64 and depend on that distribution's runtime libraries; they are
+Ubuntu 26.04 amd64 and depend on that distribution's runtime libraries; they are
 not universal packages for older Ubuntu or Debian releases. CPack derives the
 library dependencies with `dpkg-shlibdeps`. NQPTP must be installed separately;
 the package does not install or start NQPTP, Avahi or the receiver.
-The arm64 package supports Raspberry Pi hardware running Ubuntu 26.04 arm64.
-It requires a 64-bit OS; Raspberry Pi OS and older Ubuntu releases are separate
-distribution targets. CI builds and executes the arm64 tests and packaged binary
-on a native GitHub ARM runner inside Ubuntu 26.04, without emulation.
+ARM64 packages and native ARM test execution are currently suspended.
 
 Build a package locally with the installed distribution's dependencies:
 
@@ -161,9 +159,9 @@ that meaning in squash-merge titles
 and bodies. `VERSION` is the CMake version source. For a release, automation
 updates it with `CHANGELOG.md`, commits the
 release metadata, creates `v<version>` and publishes a GitHub Release with the
-amd64 and arm64 `.deb` files and a shared `SHA256SUMS`. Both architectures build
-and test the planned version before publication. The publisher requires exactly
-one package for each architecture with matching package name, version and
+the amd64 `.deb` file and `SHA256SUMS`. AMD64 builds
+and tests the planned version before publication. The publisher requires exactly
+one amd64 package with matching package name, version and
 architecture metadata. Release binaries use the package version instead of a
 Git description. Release jobs are serialized; superseded runs skip publication
 so a later validated push covers their commits.
@@ -216,7 +214,7 @@ Download the prepared packages from the failed run and verify them before upload
 ```sh
 gh run download "$failed_run" --name "release-packages-$source_sha" --dir recovery-assets
 (cd recovery-assets && sha256sum --check SHA256SUMS)
-for architecture in amd64 arm64; do
+for architecture in amd64; do
   package="recovery-assets/shairport-sync_${release_version}_${architecture}.deb"
   test "$(dpkg-deb -f "$package" Version)" = "$release_version"
   test "$(dpkg-deb -f "$package" Architecture)" = "$architecture"
@@ -227,9 +225,9 @@ If packaging or checksum generation failed, or the artifact has expired,
 check out the exact release commit with `git checkout --detach "$release_commit"`
 in this recovery clone and rebuild using the package commands above. Keep
 `/usr`, `/etc` and `USE_GIT_VERSION=OFF`, run the tests, and verify the extracted
-binary reports the intended version. Rebuild on both Ubuntu 26.04 amd64 and
-Ubuntu 26.04 arm64 to reproduce the native CI distribution targets. Copy both
-resulting `.deb` files to `recovery-assets` and create their checksums with
+binary reports the intended version. Rebuild on Ubuntu 26.04 amd64
+to reproduce the current native CI distribution target. Copy the
+resulting `.deb` file to `recovery-assets` and create its checksum with
 `(cd recovery-assets && sha256sum *.deb > SHA256SUMS)`, then repeat the checksum
 and package-version checks. This rebuild retains the recorded source and version
 without creating another metadata commit or bump.
