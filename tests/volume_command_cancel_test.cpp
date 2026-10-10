@@ -2,12 +2,12 @@
 #include "audio/output/audio_player_adapter.hpp"
 #include "volume/volume_runtime.hpp"
 #include <gtest/gtest.h>
-#include <cassert>
 #include <cerrno>
 #include <csignal>
 #include <format>
 #include <filesystem>
 #include <cstring>
+#include <functional>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -27,8 +27,30 @@ static void checkCancellation(const char *executable, bool startup) {
   const auto savedBlocking = config.cmd_blocking;
   const auto savedOutput = config.output;
   const auto savedSharedLevel = sharedVolumeLevel.current();
+  struct RestoreConfiguration {
+    std::function<void()> restore;
+    ~RestoreConfiguration() { restore(); }
+  } restore{[&] {
+    config.cmd_set_volume = savedCommand;
+    config.cmd_blocking = savedBlocking;
+    config.output = savedOutput;
+    sharedVolumeLevel.remember(savedSharedLevel);
+  }};
   int ready[2], release[2];
-  assert(pipe(ready) == 0 && pipe(release) == 0);
+  ASSERT_EQ(pipe(ready), 0);
+  const auto releaseCreated = pipe(release);
+  if (releaseCreated != 0) {
+    close(ready[0]);
+    close(ready[1]);
+  }
+  ASSERT_EQ(releaseCreated, 0);
+  struct OwnedPipes {
+    int *ready, *release;
+    ~OwnedPipes() {
+      for (int fd : {ready[0], ready[1], release[0], release[1]})
+        EXPECT_EQ(close(fd), 0);
+    }
+  } pipes{ready, release};
   const auto command = std::format("{} --child {} {}", executable, ready[1], release[0]);
   config.cmd_set_volume = const_cast<char *>(command.c_str());
   config.cmd_blocking = 1;
@@ -38,34 +60,54 @@ static void checkCancellation(const char *executable, bool startup) {
   sharedVolumeLevel.remember(0);
   SessionState session{};
   session.airplay_stream_type = realtime_stream;
-  assert(pthread_mutex_init(&session.flush_mutex, nullptr) == 0);
+  ASSERT_EQ(pthread_mutex_init(&session.flush_mutex, nullptr), 0);
+  struct OwnedMutex {
+    pthread_mutex_t &mutex;
+    ~OwnedMutex() { EXPECT_EQ(pthread_mutex_destroy(&mutex), 0); }
+  } mutex{session.flush_mutex};
   if (startup) {
-    assert(pthread_create(&session.rtp_realtime_audio_thread, nullptr, idleReceiver, nullptr) == 0);
-    assert(pthread_create(&session.rtp_ap2_control_thread, nullptr, idleReceiver, nullptr) == 0);
+    ASSERT_EQ(pthread_create(&session.rtp_realtime_audio_thread, nullptr, idleReceiver, nullptr), 0);
+    const auto controlStarted = pthread_create(&session.rtp_ap2_control_thread, nullptr, idleReceiver, nullptr);
+    if (controlStarted != 0) {
+      pthread_cancel(session.rtp_realtime_audio_thread);
+      pthread_join(session.rtp_realtime_audio_thread, nullptr);
+    }
+    ASSERT_EQ(controlStarted, 0);
   }
   pthread_t worker;
-  assert(pthread_create(&worker, nullptr, startup ? player_thread_func : setVolume, &session) == 0);
-  pid_t child;
-  assert(read(ready[0], &child, sizeof child) == sizeof child);
-  assert(pthread_cancel(worker) == 0);
-  timespec deadline;
-  assert(clock_gettime(CLOCK_REALTIME, &deadline) == 0);
+  const auto started = pthread_create(&worker, nullptr, startup ? player_thread_func : setVolume, &session);
+  if (started != 0 && startup) {
+    pthread_cancel(session.rtp_realtime_audio_thread);
+    pthread_cancel(session.rtp_ap2_control_thread);
+    pthread_join(session.rtp_realtime_audio_thread, nullptr);
+    pthread_join(session.rtp_ap2_control_thread, nullptr);
+  }
+  ASSERT_EQ(started, 0);
+  pid_t child = -1;
+  EXPECT_EQ(read(ready[0], &child, sizeof child), sizeof child);
+  EXPECT_EQ(pthread_cancel(worker), 0);
+  timespec deadline{};
+  EXPECT_EQ(clock_gettime(CLOCK_REALTIME, &deadline), 0);
   ++deadline.tv_sec;
   void *completion = nullptr;
   const int joined = pthread_timedjoin_np(worker, &completion, &deadline);
-  assert(kill(child, SIGKILL) == 0);
-  if (joined != 0) assert(pthread_join(worker, &completion) == 0);
-  const auto reaped = waitpid(child, nullptr, 0);
-  assert(reaped == child || (reaped == -1 && errno == ECHILD));
-  for (int fd : {ready[0], ready[1], release[0], release[1]}) assert(close(fd) == 0);
+  EXPECT_GT(child, 0);
+  if (child > 0)
+    EXPECT_EQ(kill(child, SIGKILL), 0);
+  if (joined != 0)
+    EXPECT_EQ(pthread_join(worker, &completion), 0);
+  if (child > 0) {
+    const auto reaped = waitpid(child, nullptr, 0);
+    const auto reapError = errno;
+    if (reaped == -1)
+      EXPECT_EQ(reapError, ECHILD);
+    else
+      EXPECT_EQ(reaped, child);
+  }
   config.cmd_set_volume = nullptr;
-  assert(pthread_mutex_destroy(&session.flush_mutex) == 0);
-  assert(joined == 0 && completion == PTHREAD_CANCELED);
-  assert(session.volumeControl.pcmSnapshot().gainFixed16 == 65536);
-  config.cmd_set_volume = savedCommand;
-  config.cmd_blocking = savedBlocking;
-  config.output = savedOutput;
-  sharedVolumeLevel.remember(savedSharedLevel);
+  EXPECT_EQ(joined, 0);
+  EXPECT_EQ(completion, PTHREAD_CANCELED);
+  EXPECT_EQ(session.volumeControl.pcmSnapshot().gainFixed16, 65536);
 }
 
 TEST(VolumeCommandCancellation, StartupCancellationLeavesAppliedGainAndReapsCommand) {
