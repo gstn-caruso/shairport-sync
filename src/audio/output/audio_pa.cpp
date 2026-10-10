@@ -30,6 +30,7 @@
 #include "audio/output/audio.h"
 #include "audio/output/pcm_output_queue.hpp"
 #include "runtime/common.h"
+#include <algorithm>
 #include <errno.h>
 #include <pthread.h>
 #include <pulse/pulseaudio.h>
@@ -689,7 +690,6 @@ void stream_state_cb(__attribute__((unused)) pa_stream *s, void *local_mainloop)
 
 void stream_write_cb(pa_stream *local_stream, size_t requested_bytes,
                      __attribute__((unused)) void *userdata) {
-  // debug(1, "pa stream_write_cb");
   check_pa_stream_status(local_stream, "audio_pa stream_write_cb.");
   size_t bytes_to_transfer = requested_bytes;
   uint8_t *buffer = NULL;
@@ -697,27 +697,26 @@ void stream_write_cb(pa_stream *local_stream, size_t requested_bytes,
   while ((bytes_to_transfer > 0) && (output_queue.occupiedBytes() > 0) && (ret == 0)) {
     if (pa_stream_is_suspended(local_stream))
       debug(1, "local_stream is suspended");
-    size_t bytes_we_can_transfer = bytes_to_transfer;
-    if (output_queue.occupiedBytes() == 0) {
-      pa_stream_cork(local_stream, 1, stream_success_cb, mainloop);
-      debug(1, "stream_write_cb: corked");
-    }
-    if (output_queue.occupiedBytes() < bytes_we_can_transfer) {
-      // debug(1, "Underflow? We have %d bytes but we are asked for %d bytes", audio_occupancy,
-      //       bytes_we_can_transfer);
-      bytes_we_can_transfer = output_queue.occupiedBytes();
-    }
-
-    // bytes we can transfer will never be greater than the bytes available
-
+    size_t bytes_we_can_transfer = std::min(bytes_to_transfer, output_queue.occupiedBytes());
     ret = pa_stream_begin_write(local_stream, (void **)&buffer, &bytes_we_can_transfer);
-    if ((ret == 0) && (buffer != NULL)) {
-      bytes_we_can_transfer = output_queue.copyTo({reinterpret_cast<std::byte *>(buffer), bytes_we_can_transfer});
-      ret = pa_stream_write(local_stream, buffer, bytes_we_can_transfer, NULL, 0LL,
-                            PA_SEEK_RELATIVE);
-      output_queue.consume(bytes_we_can_transfer);
-      bytes_to_transfer -= bytes_we_can_transfer;
+    if (ret != 0) break;
+    if (buffer == NULL || bytes_we_can_transfer == 0) {
+      pa_stream_cancel_write(local_stream);
+      break;
     }
+    bytes_we_can_transfer = output_queue.copyTo({reinterpret_cast<std::byte *>(buffer), bytes_we_can_transfer});
+    if (bytes_we_can_transfer == 0) {
+      pa_stream_cancel_write(local_stream);
+      break;
+    }
+    ret = pa_stream_write(local_stream, buffer, bytes_we_can_transfer, NULL, 0LL,
+                          PA_SEEK_RELATIVE);
+    if (ret != 0) {
+      pa_stream_cancel_write(local_stream);
+      break;
+    }
+    output_queue.consume(bytes_we_can_transfer);
+    bytes_to_transfer -= bytes_we_can_transfer;
   }
   if (ret != 0)
     debug(1, "error writing to pa buffer");

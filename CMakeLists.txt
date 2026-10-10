@@ -134,7 +134,7 @@ if(BUILD_TESTING)
   foreach(function pa_threaded_mainloop_lock pa_threaded_mainloop_unlock pa_threaded_mainloop_free
       pa_stream_new pa_stream_set_state_callback pa_stream_set_write_callback
       pa_stream_connect_playback pa_stream_get_state pa_stream_is_corked pa_stream_is_suspended
-      pa_stream_cork pa_stream_flush pa_stream_disconnect pa_stream_unref pa_stream_begin_write pa_stream_write pa_stream_writable_size)
+      pa_stream_cork pa_stream_flush pa_stream_disconnect pa_stream_unref pa_stream_begin_write pa_stream_write pa_stream_writable_size pa_stream_cancel_write)
     target_link_options(pa-output-test PRIVATE "-Wl,--wrap=${function}")
   endforeach()
   gtest_discover_tests(pa-output-test PROPERTIES TIMEOUT 5)
