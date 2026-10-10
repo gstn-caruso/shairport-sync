@@ -76,6 +76,17 @@ TEST(VolumePolicy, HardwareRangeWithoutSetterEmitsNoGainDecision) {
   EXPECT_TRUE(plan.unmute);
 }
 
+TEST(VolumePolicy, HardwareSetterWithoutRangeUsesSoftwareGain) {
+  VolumeSettings settings;
+  settings.profile = VolumeProfile::flat;
+  OutputVolumeCapabilities output{{}, true};
+  auto plan = VolumePolicy::plan(-15, settings, output);
+  EXPECT_FALSE(plan.hardwareAttenuation);
+  EXPECT_EQ(plan.softwareAttenuation, -4815);
+  EXPECT_EQ(plan.gainFixed16, int(65536 * std::pow(10, -4815.0 / 2000)));
+  EXPECT_TRUE(plan.unmute);
+}
+
 TEST(VolumePolicy, ProfilesPreserveAttenuationAndFixedGain) {
   VolumeSettings settings;
   settings.rangeDb = 60;
