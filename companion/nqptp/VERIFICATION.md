@@ -68,3 +68,20 @@ The IPv6 conflict case initially failed: this host's `/etc/hosts` resolves
 `localhost` only to IPv4. Runtime now binds both numerical loopback addresses
 explicitly, skipping only an unavailable IPv6 protocol. The repeated companion
 selection passed 19/19 cases, including both family conflicts.
+
+## Receiver integration
+
+Baseline: selecting `^NqptpIntegration\.` with `--no-tests=error` failed because
+there was no successful companion/receiver integration check. Green: three
+integration cases passed in 0.67 seconds using actual companion UDP sockets,
+the real shared-memory object, and the receiver's existing
+`ptp_shm_interface_open` / `ptp_get_clock_info` reader.
+Announce/Sync/Follow_Up and T/B/E/P produce the expected receiver statuses;
+the first sample's `sample_time + offset` equals its injected master timestamp.
+Wrong source port, wrong PTP version, inconsistent declared length and an
+oversized truncated datagram produce no published clock.
+After companion restart the old receiver mapping retains its old sample;
+closing and reopening the receiver mapping observes the new object and resumes
+timing. All endpoints use distinct loopback addresses, unprivileged ports and
+unique object names. These checks do not establish AirPlay playback or multiroom
+synchronization.
