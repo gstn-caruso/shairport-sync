@@ -36,6 +36,8 @@ printf 'general = { name = ; };\n' > "$test_dir/invalid.conf"
 check_status 1 --check-config --config "$test_dir/invalid.conf"
 printf 'general = { audio_backend_buffer_desired_length_in_seconds = -1.0; };\n' > "$test_dir/invalid.conf"
 check_status 1 --check-config --config "$test_dir/invalid.conf"
+printf 'general = { output_channel_mapping = ("FL", "FR", "FL", "FR", "FL", "FR", "FL", "FR", "FL"); };\n' > "$test_dir/invalid.conf"
+check_status 1 --check-config --config "$test_dir/invalid.conf"
 for option in --help -V -c --configfile --name=Legacy --port=7100 --daemon --kill --verbose --statistics --logOutputLevel; do
   check_status 2 "$option"
 done

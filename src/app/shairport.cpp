@@ -1031,6 +1031,9 @@ if (config_lookup(config.cfg, "general.alac_decoder") != NULL)
                sstr);
         }
       } else {
+        if (config_setting_length(output_channel_mapping_setting) >
+            static_cast<int>(std::size(config.output_channel_map)))
+          die("general.output_channel_mapping supports at most eight channels");
         int i = 0;
         for (i = 0; i < config_setting_length(output_channel_mapping_setting); i++) {
           // is a list or array, so okay
