@@ -22,6 +22,8 @@
 #include <stdio.h>  // snprintf
 #include <stdlib.h> // drand48
 #include <unistd.h> // usleep
+#include <string>
+#include <string_view>
 
 #include "debug.h"
 #include "general-utilities.h"
@@ -30,6 +32,41 @@
 #include "nqptp-utilities.h"
 
 namespace nqptp {
+
+const char *control_interface_name = NQPTP_INTERFACE_NAME;
+
+static bool valid_control_message(const char *buf, ssize_t length) {
+  if (!buf || length <= 0 || length > 4096 ||
+      (buf[length - 1] != '\0' && buf[length - 1] != '\n'))
+    return false;
+  std::string_view text(buf, length - 1);
+  if (text.find('\0') != std::string_view::npos)
+    return false;
+  const auto separator = text.find(' ');
+  if (separator == std::string_view::npos || text.substr(0, separator) != control_interface_name)
+    return false;
+  text.remove_prefix(separator + 1);
+  if (text == "B" || text == "E" || text == "P" || text == "T")
+    return true;
+  if (!text.starts_with("T "))
+    return false;
+  text.remove_prefix(2);
+  while (!text.empty()) {
+    const auto end = text.find(' ');
+    const auto peer = text.substr(0, end);
+    if (peer.empty() || peer.size() >= sizeof(clock_source_private_data::ip))
+      return false;
+    const std::string address(peer);
+    in6_addr parsed{};
+    if (inet_pton(AF_INET, address.c_str(), &parsed) != 1 &&
+        inet_pton(AF_INET6, address.c_str(), &parsed) != 1)
+      return false;
+    if (end == std::string_view::npos)
+      return true;
+    text.remove_prefix(end + 1);
+  }
+  return false;
+}
 
 char hexcharbuffer[16384];
 int reset_clock_smoothing = 0;
@@ -52,6 +89,8 @@ char *hex_string(void *buf, size_t buf_len) {
 void handle_control_port_messages(char *buf, ssize_t recv_len,
                                   clock_source_private_data *clock_private_info,
                                   uint64_t reception_time) {
+  if (!valid_control_message(buf, recv_len))
+    return;
   if (recv_len != -1) {
     if ((buf != NULL) && (recv_len > 0)) {
       buf[recv_len - 1] = 0; // we know it's not empty, so make sure there's a null in it.
@@ -196,8 +235,10 @@ void handle_announce(char *buf, ssize_t recv_len, clock_source_private_data *clo
                      __attribute__((unused)) uint64_t reception_time) {
   // debug_print_buffer(1, buf, (size_t) recv_len);
   // make way for the new time
-  if ((size_t)recv_len >= sizeof(struct ptp_announce_message)) {
-    struct ptp_announce_message *msg = (struct ptp_announce_message *)buf;
+  if (buf && recv_len >= static_cast<ssize_t>(sizeof(ptp_announce_message))) {
+    ptp_announce_message packet;
+    memcpy(&packet, buf, sizeof(packet));
+    const ptp_announce_message *msg = &packet;
 
     uint64_t packet_clock_id = nctohl(&msg->header.clockIdentity[0]);
     uint64_t packet_clock_id_low = nctohl(&msg->header.clockIdentity[4]);
@@ -263,9 +304,11 @@ void handle_sync(char *buf, ssize_t recv_len, clock_source_private_data *clock_p
   if (clock_private_info->clock_id == 0) {
     debug(2, "Sync received before announcement -- discarded.");
   } else {
-    if ((recv_len >= 0) && ((size_t)recv_len >= sizeof(struct ptp_sync_message))) {
+    if (buf && recv_len >= static_cast<ssize_t>(sizeof(ptp_sync_message))) {
       // debug_print_buffer(1, buf, recv_len);
-      struct ptp_sync_message *msg = (struct ptp_sync_message *)buf;
+      ptp_sync_message packet;
+      memcpy(&packet, buf, sizeof(packet));
+      const ptp_sync_message *msg = &packet;
 
       // clang-format off
 
@@ -295,13 +338,17 @@ void handle_sync(char *buf, ssize_t recv_len, clock_source_private_data *clock_p
 
 void handle_follow_up(char *buf, ssize_t recv_len, clock_source_private_data *clock_private_info,
                       uint64_t reception_time) {
+  if (!buf || recv_len < static_cast<ssize_t>(sizeof(ptp_follow_up_message)))
+    return;
   if (clock_private_info->clock_id == 0) {
     debug(2, "Follow_Up received before announcement -- discarded.");
   } else {
     clock_private_info->announcements_without_followups = 0;
     if ((recv_len >= 0) && ((size_t)recv_len >= sizeof(struct ptp_follow_up_message))) {
       // debug_print_buffer(1, buf, recv_len);
-      struct ptp_follow_up_message *msg = (struct ptp_follow_up_message *)buf;
+      ptp_follow_up_message packet;
+      memcpy(&packet, buf, sizeof(packet));
+      const ptp_follow_up_message *msg = &packet;
       uint16_t seconds_hi = nctohs(&msg->follow_up.preciseOriginTimestamp[0]);
       uint32_t seconds_low = nctohl(&msg->follow_up.preciseOriginTimestamp[2]);
       uint32_t nanoseconds = nctohl(&msg->follow_up.preciseOriginTimestamp[6]);
@@ -515,17 +562,7 @@ void handle_follow_up(char *buf, ssize_t recv_len, clock_source_private_data *cl
 
       // now do some quick calculations on the possible "Universal Time"
       // debug_print_buffer(1, "", buf, recv_len);
-      uint8_t *tlv = reinterpret_cast<uint8_t *>(buf) + sizeof(ptp_follow_up_message);
-      uint8_t *lastGmPhaseChange = tlv + 16;
-      uint64_t lpt = nctoh64(lastGmPhaseChange + 4);
-      uint64_t last_tlv_clock = nctoh64((uint8_t *)buf + 86);
-      uint64_t huh = offset - lpt;
       debug_print_buffer(2, buf, (size_t)recv_len);
-      debug(2,
-            "%" PRIx64 ", %" PRIx64 ", %s, Origin: %016" PRIx64 ", LPT: %016" PRIx64
-            ", Offset: %016" PRIx64 ", Universal Offset: %016" PRIx64 ", packet length: %u.",
-            clock_private_info->clock_id, last_tlv_clock, hex_string(lastGmPhaseChange, 12),
-            preciseOriginTimestamp, lpt, offset, huh, recv_len);
       // debug(1,"Clock: %" PRIx64 ", UT: %016" PRIx64 ", correctedPOT: %016" PRIx64 ", part of
       // lastGMPhaseChange: %016" PRIx64 ".", packet_clock_id, correctedPOT - lpt, correctedPOT,
       // lpt);

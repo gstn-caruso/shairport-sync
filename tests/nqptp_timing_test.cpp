@@ -167,3 +167,47 @@ TEST_F(NqptpTiming, FollowUpBeforeAnnouncementDoesNotPublish) {
   follow(1000000000, 10000000000);
   expectPublished(0, 0, 0, 0);
 }
+
+#ifndef NQPTP_REFERENCE
+TEST_F(NqptpTiming, MalformedControlPreservesAnEstablishedTimingGroup) {
+  start();
+  follow(1000000000, 10000000000);
+  for (std::string command : {"/nqptp X", "/other T 127.0.0.3", "/nqptp B extra",
+                             "/nqptp T invalid", "/nqptp T 127.0.0.3 invalid",
+                             "/nqptp T ", "/nqptp"}) {
+    command.push_back('\0');
+    nqptp::handle_control_port_messages(command.data(), command.size(),
+                                        nqptp::clocks_private, 1100000000);
+    EXPECT_STREQ(nqptp::clocks_private[0].ip, "127.0.0.2");
+    EXPECT_EQ(nqptp::clocks_private[0].clock_id, 42);
+  }
+  std::string unterminated = "/nqptp T 127.0.0.3";
+  nqptp::handle_control_port_messages(unterminated.data(), unterminated.size(),
+                                      nqptp::clocks_private, 1100000000);
+  EXPECT_STREQ(nqptp::clocks_private[0].ip, "127.0.0.2");
+  expectPublished(42, 1000000000, 9000000000, 1000000000);
+}
+
+TEST_F(NqptpTiming, TruncatedPacketsDoNotMutateClockState) {
+  start();
+  nqptp::clocks_private[0].announcements_without_followups = 3;
+  std::array<char, sizeof(nqptp::ptp_follow_up_message)> bytes{};
+  for (ssize_t length = 0; length < static_cast<ssize_t>(bytes.size()); ++length) {
+    nqptp::handle_follow_up(bytes.data(), length, &nqptp::clocks_private[0], 1000000000);
+    EXPECT_EQ(nqptp::clocks_private[0].announcements_without_followups, 3);
+  }
+  nqptp::handle_announce(bytes.data(), -1, &nqptp::clocks_private[0], 1000000000);
+  EXPECT_EQ(nqptp::clocks_private[0].clock_id, 42);
+  expectPublished(0, 0, 0, 0);
+}
+
+TEST_F(NqptpTiming, MinimalFollowUpWithoutOptionalTlvPublishesSafely) {
+  start();
+  nqptp::ptp_follow_up_message packet{};
+  uint32_t seconds = htonl(10);
+  std::memcpy(packet.follow_up.preciseOriginTimestamp + 2, &seconds, sizeof(seconds));
+  nqptp::handle_follow_up(reinterpret_cast<char *>(&packet), sizeof(packet),
+                          &nqptp::clocks_private[0], 1000000000);
+  expectPublished(42, 1000000000, 9000000000, 1000000000);
+}
+#endif

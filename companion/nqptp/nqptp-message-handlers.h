@@ -26,6 +26,8 @@
 
 namespace nqptp {
 
+extern const char *control_interface_name;
+
 void handle_announce(char *buf, ssize_t recv_len, clock_source_private_data *clock_private_info,
                      uint64_t reception_time);
 

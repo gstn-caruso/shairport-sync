@@ -39,3 +39,14 @@ First-peer selection, peer replacement, signed Follow_Up correction,
 unchanged Sync semantics, pause, end, brief resume, expired resume and clearing
 the timing group have matching shared-memory results. No runtime network or
 privileged operation was used for these cases.
+
+## Datagram boundaries
+
+Red: `MalformedControlPreservesAnEstablishedTimingGroup` and
+`TruncatedPacketsDoNotMutateClockState` failed against the imported implementation
+(`build/boundary-red.log`). Unknown commands erased peer state; short Follow_Up
+packets changed counters; negative Announce length bypassed an unsigned guard.
+Green: all nine timing cases pass after validating control commands before
+mutation and checking signed lengths before reading packets. Minimal Follow_Up
+packets no longer trigger unconditional reads of optional TLV diagnostics.
+Timing calculations remain covered by the six upstream oracle cases.
