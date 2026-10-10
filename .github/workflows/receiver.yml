@@ -112,6 +112,7 @@ jobs:
           test "$(dpkg-deb -f build/cmake/packages/*.deb Version)" = "$version"
           test "$(dpkg-deb -f build/cmake/packages/*.deb Architecture)" = '${{ matrix.platform.architecture }}'
           build/cmake/package-check/usr/bin/shairport-sync --version | grep -F "$version-AirPlay2-"
+          build/cmake/package-check/usr/bin/shairport-sync --check-config --config build/cmake/package-check/etc/shairport-sync.conf.sample
       - name: Upload Debian package
         if: matrix.build == 'Release'
         uses: actions/upload-artifact@v4
