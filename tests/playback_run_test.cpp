@@ -1,7 +1,6 @@
 #include "playback/playback_run.hpp"
 #include "cancellation_wait.hpp"
 #include <gtest/gtest.h>
-#include <cassert>
 #include <cerrno>
 #include <unistd.h>
 #include <condition_variable>
@@ -22,7 +21,7 @@ static void *waitForStop(void *argument) {
 static int failCreation(pthread_t *, PlaybackRun::Routine, void *) { return EAGAIN; }
 static void finish(void *argument) {
   auto &cleanup = *static_cast<StopCleanup *>(argument);
-  assert(!cleanup.run.isActive());
+  EXPECT_FALSE(cleanup.run.isActive());
   std::unique_lock lock(cleanup.ordering);
   cleanup.cleanupEntered = true;
   cleanup.changed.notify_all();

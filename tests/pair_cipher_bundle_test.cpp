@@ -1,7 +1,6 @@
 #include "playback/player.h"
 #include <gtest/gtest.h>
 #include <array>
-#include <cassert>
 #include <cstdlib>
 #include <type_traits>
 
@@ -45,8 +44,10 @@ TEST(PairCipherBundle, ReleasesOwnedBuffersAndDescriptionBeforeCipher) {
   bundle.encrypted_read_buffer = {static_cast<uint8_t *>(std::malloc(16)), 8, 16};
   bundle.description = static_cast<char *>(std::malloc(12));
   bundle.cipher_ctx = static_cast<pair_cipher_context *>(std::malloc(1));
-  assert(bundle.plaintext_read_buffer.data && bundle.encrypted_read_buffer.data &&
-         bundle.description && bundle.cipher_ctx);
+  EXPECT_NE(bundle.plaintext_read_buffer.data, nullptr);
+  EXPECT_NE(bundle.encrypted_read_buffer.data, nullptr);
+  EXPECT_NE(bundle.description, nullptr);
+  EXPECT_NE(bundle.cipher_ctx, nullptr);
   bundle.is_encrypted = 1;
   watchedResources = {bundle.plaintext_read_buffer.data, bundle.encrypted_read_buffer.data,
                       bundle.description, bundle.cipher_ctx};
@@ -77,8 +78,10 @@ TEST(PairCipherBundle, ReleaseIsSafeAfterOwnershipIsEmpty) {
   bundle.encrypted_read_buffer = {static_cast<uint8_t *>(std::malloc(16)), 8, 16};
   bundle.description = static_cast<char *>(std::malloc(12));
   bundle.cipher_ctx = static_cast<pair_cipher_context *>(std::malloc(1));
-  assert(bundle.plaintext_read_buffer.data && bundle.encrypted_read_buffer.data &&
-         bundle.description && bundle.cipher_ctx);
+  EXPECT_NE(bundle.plaintext_read_buffer.data, nullptr);
+  EXPECT_NE(bundle.encrypted_read_buffer.data, nullptr);
+  EXPECT_NE(bundle.description, nullptr);
+  EXPECT_NE(bundle.cipher_ctx, nullptr);
   bundle.is_encrypted = 1;
   watchedResources = {bundle.plaintext_read_buffer.data, bundle.encrypted_read_buffer.data,
                       bundle.description, bundle.cipher_ctx};
