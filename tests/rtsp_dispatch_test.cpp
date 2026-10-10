@@ -4,122 +4,145 @@
 #include "protocol/rtsp/rtsp_message.hpp"
 #include "platform/utilities/rtsp_message_utilities.h"
 #include <gtest/gtest.h>
-#include <assert.h>
-#include <libavcodec/avcodec.h>
-#include <stdio.h>
-#include <string.h>
 
+namespace {
+class RtspDispatch : public testing::Test {
+protected:
+  rtsp_conn_info connection{};
+  RtspMessage request;
+  RtspMessage response;
 
-static void check_shared_methods(rtsp_conn_info *conn) {
-  rtsp_message *request = msg_init();
-  rtsp_message *response = msg_init();
-  request->request("SET_PARAMETER");
-  request->addHeader("Content-Type", "text/parameters");
-  request->replaceBody("volume: -15.000000\r\nprogress: 0/44100/88200\r\n");
-  rtsp_dispatch_request(conn, request, response);
-  assert(response->responseCode() == 200);
-  assert(suggested_volume(conn) == -15.0);
-  msg_free(&request);
-  msg_free(&response);
-  request = msg_init();
-  response = msg_init();
-  request->request("GET_PARAMETER");
-  request->replaceBody("volume\r\n");
-  rtsp_dispatch_request(conn, request, response);
-  assert(response->responseCode() == 200);
-  assert(strstr(response->bodyData(), "-15.000000") != NULL);
-  msg_free(&request);
-  msg_free(&response);
-  const char *methods[] = {"RECORD", "TEARDOWN", "GET", "POST", "FLUSH"};
-  const int expected[] = {200, 200, 501, 501, 451};
-  for (size_t index = 0; index < sizeof(methods) / sizeof(methods[0]); index++) {
-    request = msg_init();
-    response = msg_init();
-    request->request(methods[index]);
-    request->request(methods[index], "/unsupported");
-    rtsp_dispatch_request(conn, request, response);
-    assert(response->responseCode() == expected[index]);
-    msg_free(&request);
-    msg_free(&response);
-  }
+  void SetUp() override { connection.thread = pthread_self(); }
+  void dispatch() { rtsp_dispatch_request(&connection, &request, &response); }
+};
+
+TEST_F(RtspDispatch, SettingVolumeAndProgressRemembersTheRequestedLevel) {
+  request.request("SET_PARAMETER");
+  request.addHeader("Content-Type", "text/parameters");
+  request.replaceBody("volume: -15.000000\r\nprogress: 0/44100/88200\r\n");
+
+  dispatch();
+
+  EXPECT_EQ(response.responseCode(), 200);
+  EXPECT_DOUBLE_EQ(suggested_volume(&connection), -15.0);
 }
 
-static rtsp_message *checkAirplay2Methods(rtsp_conn_info *conn) {
-  check_shared_methods(conn);
-  rtsp_message *req = msg_init();
-  rtsp_message *resp = msg_init();
-  req->request("OPTIONS");
-  rtsp_dispatch_request(conn, req, resp);
-  assert(resp->responseCode() == 200);
-  const char *methods = resp->headerValue("Public");
-  assert(methods != NULL);
-  assert(strstr(methods, "ANNOUNCE") == NULL);
-  assert(strstr(methods, "FLUSHBUFFERED") != NULL);
-  assert(strstr(methods, "GET_PARAMETER") != NULL);
-  msg_free(&resp);
-  const char *unsupported[] = {"ANNOUNCE", "PAUSE", "UNSUPPORTED"};
-  for (size_t index = 0; index < sizeof(unsupported) / sizeof(unsupported[0]); index++) {
-    resp = msg_init();
-    req->request(unsupported[index]);
-    rtsp_dispatch_request(conn, req, resp);
-    assert(resp->responseCode() == 501);
-    msg_free(&resp);
-  }
-  return req;
+TEST_F(RtspDispatch, GettingVolumeReturnsTheSessionLevelWithSixDecimalPlaces) {
+  connection.volumeControl.rememberLevel(-15.0);
+  request.request("GET_PARAMETER");
+  request.replaceBody("volume\r\n");
+
+  dispatch();
+
+  EXPECT_EQ(response.responseCode(), 200);
+  EXPECT_EQ(response.bodyText(), "\r\nvolume: -15.000000\r\n");
 }
 
-static void checkRejectedNtpSetup(rtsp_conn_info *conn) {
-  auto *req = checkAirplay2Methods(conn);
+TEST_F(RtspDispatch, GettingVolumeReturnsTheLevelSetByThePreviousRequest) {
+  request.request("SET_PARAMETER");
+  request.addHeader("Content-Type", "text/parameters");
+  request.replaceBody("volume: -15.000000\r\nprogress: 0/44100/88200\r\n");
+  dispatch();
+  ASSERT_EQ(response.responseCode(), 200);
+  request = RtspMessage{};
+  response = RtspMessage{};
+  request.request("GET_PARAMETER");
+  request.replaceBody("volume\r\n");
+
+  dispatch();
+
+  EXPECT_EQ(response.responseCode(), 200);
+  EXPECT_EQ(response.bodyText(), "\r\nvolume: -15.000000\r\n");
+}
+
+struct MethodResponse {
+  const char *method;
+  int status;
+};
+
+void PrintTo(const MethodResponse &method, std::ostream *output) {
+  *output << method.method << " -> " << method.status;
+}
+
+class RtspMethodResponse : public RtspDispatch,
+                           public testing::WithParamInterface<MethodResponse> {};
+
+TEST_P(RtspMethodResponse, RespondsWithoutPriorRequests) {
+  request.request(GetParam().method, "/unsupported");
+
+  dispatch();
+
+  EXPECT_EQ(response.responseCode(), GetParam().status);
+}
+
+INSTANTIATE_TEST_SUITE_P(Methods, RtspMethodResponse, testing::Values(
+  MethodResponse{"RECORD", 200}, MethodResponse{"TEARDOWN", 200},
+  MethodResponse{"GET", 501}, MethodResponse{"POST", 501}, MethodResponse{"FLUSH", 451},
+  MethodResponse{"ANNOUNCE", 501}, MethodResponse{"PAUSE", 501},
+  MethodResponse{"UNSUPPORTED", 501}
+), [](const auto &info) { return info.param.method; });
+
+TEST_F(RtspDispatch, OptionsAdvertisesAirplay2MethodsWithoutLegacyAnnounce) {
+  request.request("OPTIONS");
+
+  dispatch();
+
+  EXPECT_EQ(response.responseCode(), 200);
+  const char *methods = response.headerValue("Public");
+  ASSERT_NE(methods, nullptr);
+  const std::string_view advertised(methods);
+  EXPECT_EQ(advertised.find("ANNOUNCE"), std::string_view::npos);
+  EXPECT_NE(advertised.find("FLUSHBUFFERED"), std::string_view::npos);
+  EXPECT_NE(advertised.find("GET_PARAMETER"), std::string_view::npos);
+}
+
+TEST_F(RtspDispatch, SetupRejectsNtpTiming) {
+  request.request("SETUP");
   plist_t setup = plist_new_dict();
   plist_dict_set_item(setup, "timingProtocol", plist_new_string("NTP"));
-  replaceBodyWithPlist(*req, setup);
+  replaceBodyWithPlist(request, setup);
   plist_free(setup);
-  req->request("SETUP");
-  auto *resp = msg_init();
-  rtsp_dispatch_request(conn, req, resp);
-  assert(resp->responseCode() == 400);
-  msg_free(&resp);
-  msg_free(&req);
+
+  dispatch();
+
+  EXPECT_EQ(response.responseCode(), 400);
 }
 
-TEST(RtspDispatch, SharedMethodsPreserveVolumeProgressAndExpectedResponseCodes) {
-  rtsp_conn_info conn{};
-  conn.thread = pthread_self();
-  check_shared_methods(&conn);
+TEST_F(RtspDispatch, MetadataRejectsAnIncompleteContainer) {
+  request.request("SET_PARAMETER");
+  request.addHeader("Content-Type", "application/x-dmap-tagged");
+  const char metadata[] = {'m', 'l', 'i', 't', 0, 0, 0, 20};
+  request.replaceBody({metadata, sizeof(metadata)});
+
+  dispatch();
+
+  EXPECT_EQ(response.responseCode(), 400);
 }
 
-TEST(RtspDispatch, Airplay2OptionsAdvertiseSupportedMethodsAndRejectLegacyMethods) {
-  rtsp_conn_info conn{};
-  conn.thread = pthread_self();
-  auto *req = checkAirplay2Methods(&conn);
-  msg_free(&req);
+TEST_F(RtspDispatch, MetadataAcceptsACompleteContainer) {
+  request.request("SET_PARAMETER");
+  request.addHeader("Content-Type", "application/x-dmap-tagged");
+  const char metadata[] = {'m', 'l', 'i', 't', 0, 0, 0, 8, 'm', 'i', 'n', 'm', 0, 0, 0, 0};
+  request.replaceBody({metadata, sizeof(metadata)});
+
+  dispatch();
+
+  EXPECT_EQ(response.responseCode(), 200);
 }
 
-TEST(RtspDispatch, NtpSetupIsRejectedAfterSharedAndUnsupportedMethodHistory) {
-  rtsp_conn_info conn{};
-  conn.thread = pthread_self();
-  checkRejectedNtpSetup(&conn);
-}
+TEST_F(RtspDispatch, CompleteMetadataIsAcceptedAfterAnIncompleteRequest) {
+  request.request("SET_PARAMETER");
+  request.addHeader("Content-Type", "application/x-dmap-tagged");
+  const char incomplete[] = {'m', 'l', 'i', 't', 0, 0, 0, 20};
+  request.replaceBody({incomplete, sizeof(incomplete)});
+  dispatch();
+  ASSERT_EQ(response.responseCode(), 400);
+  const char complete[] = {'m', 'l', 'i', 't', 0, 0, 0, 8, 'm', 'i', 'n', 'm', 0, 0, 0, 0};
+  request.replaceBody({complete, sizeof(complete)});
+  response = RtspMessage{};
 
-TEST(RtspDispatch, MetadataRejectsIncompletePayloadAndAcceptsCompleteReplacement) {
-  rtsp_conn_info conn{};
-  conn.thread = pthread_self();
-  checkRejectedNtpSetup(&conn);
-  auto *req = msg_init();
-  req->request("SET_PARAMETER");
-  req->addHeader("Content-Type", "application/x-dmap-tagged");
-  char invalid_metadata[] = {'m', 'l', 'i', 't', 0, 0, 0, 20};
-  req->replaceBody(std::string_view(invalid_metadata, sizeof(invalid_metadata)));
-  auto *resp = msg_init();
-  rtsp_dispatch_request(&conn, req, resp);
-  assert(resp->responseCode() == 400);
-  msg_free(&resp);
-  char valid_metadata[] = {'m', 'l', 'i', 't', 0, 0, 0, 8, 'm', 'i', 'n', 'm', 0, 0, 0, 0};
-  req->replaceBody(std::string_view(valid_metadata, sizeof(valid_metadata)));
-  resp = msg_init();
-  rtsp_dispatch_request(&conn, req, resp);
-  assert(resp->responseCode() == 200);
-  msg_free(&resp);
-  msg_free(&req);
-  puts("Only AirPlay 2 methods advertised.");
+  dispatch();
+
+  EXPECT_EQ(response.responseCode(), 200);
+}
 }
