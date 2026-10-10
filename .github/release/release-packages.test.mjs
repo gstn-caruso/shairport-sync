@@ -84,7 +84,11 @@ test('the dry-run verification hook emits the semantic-release version without p
   }
 });
 
-test('semantic-release dry-run invokes the planner hook with the calculated bump', async () => {
+for (const [message, plannedVersion] of [
+  ['feat: provide ARM64 packages', '5.7.0'],
+  ['docs: explain receiver setup', null]
+]) {
+test(`semantic-release dry-run plans ${plannedVersion ?? 'no release'} for ${message}`, async () => {
   const directory = fixture();
   try {
     const remote = join(directory, 'remote.git');
@@ -97,7 +101,7 @@ test('semantic-release dry-run invokes the planner hook with the calculated bump
     git('config', 'user.name', 'Release Test');
     git('commit', '--allow-empty', '-m', 'chore: baseline');
     git('tag', 'v5.6.0');
-    git('commit', '--allow-empty', '-m', 'feat: provide ARM64 packages');
+    git('commit', '--allow-empty', '-m', message);
     git('push', 'origin', 'master', '--tags');
     const output = join(directory, 'output');
     const integration = `
@@ -107,17 +111,22 @@ test('semantic-release dry-run invokes the planner hook with the calculated bump
         ...plan, repositoryUrl: ${JSON.stringify(pathToFileURL(remote).href)}, dryRun: true, ci: false,
         plugins: plan.plugins.filter(([name]) => ['@semantic-release/commit-analyzer', '@semantic-release/release-notes-generator', '@semantic-release/exec'].includes(name))
       }, {env: {PATH: process.env.PATH, GITHUB_OUTPUT: process.env.GITHUB_OUTPUT}});
-      if (result.nextRelease.version !== '5.7.0') process.exit(1);
+      if (${plannedVersion === null ? 'result !== false' : `result.nextRelease.version !== '${plannedVersion}'`}) process.exit(1);
     `;
     execFileSync(process.execPath, ['--input-type=module', '-e', integration], {
       cwd,
       env: {...process.env, GITHUB_OUTPUT: output, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/25/merge', GITHUB_HEAD_REF: 'feat/arm64-debian-releases'},
       stdio: 'pipe'
     });
-    assert.equal(readFileSync(output, 'utf8'), `version=${version}\n`);
+    if (plannedVersion === null) {
+      assert.equal(existsSync(output), false);
+    } else {
+      assert.equal(readFileSync(output, 'utf8'), `version=${plannedVersion}\n`);
+    }
     assert.equal(existsSync(join(cwd, 'VERSION')), false);
     assert.throws(() => git('rev-parse', '--verify', 'refs/tags/v5.7.0'));
   } finally {
     rmSync(directory, {recursive: true, force: true});
   }
 });
+}

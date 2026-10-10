@@ -4,12 +4,12 @@ export default {
   plugins: [
     ['@semantic-release/commit-analyzer', {
       preset: 'conventionalcommits',
-      // Every merge needs a release, even when upstream would cancel a commit/revert pair.
-      parserOpts: {revertPattern: /(?!)/},
       releaseRules: [
         {breaking: true, release: 'major'},
         {type: 'feat', release: 'minor'},
-        {release: 'patch'}
+        {type: 'fix', release: 'patch'},
+        {type: 'perf', release: 'patch'},
+        {revert: true, release: false}
       ]
     }],
     ['@semantic-release/release-notes-generator', {

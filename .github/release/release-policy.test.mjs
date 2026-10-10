@@ -13,11 +13,11 @@ for (const [message, expected] of [
   ['feat(audio): add a receiver', 'minor'],
   ['fix(audio): prevent a race', 'patch'],
   ['perf(audio): avoid copying', 'patch'],
-  ...['docs', 'test', 'refactor', 'style', 'chore', 'build', 'ci'].map(type => [`${type}: maintain project`, 'patch']),
+  ...['docs', 'test', 'refactor', 'style', 'chore', 'build', 'ci'].map(type => [`${type}: maintain project`, null]),
   ['fix!: remove an option', 'major'],
   ['docs: change contract\n\nBREAKING CHANGE: old configuration is rejected', 'major'],
-  ['Update README', 'patch'],
-  ['Revert "fix: correct timing"\n\nThis reverts commit abcdef1234567890.', 'patch']
+  ['Update README', null],
+  ['Revert "fix: correct timing"\n\nThis reverts commit abcdef1234567890.', null]
 ]) {
   test(`${message.split('\n')[0]} selects ${expected ?? 'no release'}`, async () => {
     assert.equal(await analyze([message]), expected);
@@ -28,14 +28,14 @@ test('an empty range does not release', async () => {
   assert.equal(await analyze([]), null);
 });
 
-test('a fully reverted nonempty range still releases a patch', async () => {
+test('a fully reverted range does not release', async () => {
   assert.equal(await analyzeCommits(policy, {
     commits: [
       {hash: '1234567890abcdef', message: 'Revert "fix: correct timing"\n\nThis reverts commit abcdef1234567890.'},
       {hash: 'abcdef1234567890', message: 'fix: correct timing'}
     ],
     logger: {log() {}}
-  }), 'patch');
+  }), null);
 });
 
 test('the greatest required bump wins regardless of commit order', async () => {
