@@ -14,3 +14,6 @@ foreach(language C CXX)
   endif()
   set(CMAKE_${language}_COMPILER "${compiler_path}" CACHE FILEPATH "")
 endforeach()
+get_filename_component(clang_binary_directory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+find_program(CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS NAMES clang-scan-deps
+  PATHS "${clang_binary_directory}" NO_DEFAULT_PATH REQUIRED)

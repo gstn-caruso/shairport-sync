@@ -34,3 +34,13 @@ test('an unsupported native architecture fails before installing toolchains', ()
     env: {...process.env, GITHUB_OUTPUT: '/dev/null'}, stdio: 'pipe'
   }), /Unsupported native toolchain architecture/);
 });
+
+test('installed LLVM tooling includes the module dependency scanner', () => {
+  const install = action.runs.steps.find(step => step.name === 'Install official LLVM binaries')?.run;
+  assert.ok(install);
+  const extracted = execFileSync('bash', ['-eu', '-c',
+    'curl() { :; }\nsha256sum() { cat > /dev/null; }\nmkdir() { :; }\ntar() { printf "%s\\n" "$@"; }\n' + install
+  ], {env: {...process.env, LLVM_ARCH: 'X64', LLVM_SHA256: 'fixture'}, encoding: 'utf8'});
+  assert.ok(extracted.split('\n').includes('LLVM-23.1.3-Linux-X64/bin/clang-scan-deps'),
+    'the compiler installation must also extract its matching module dependency scanner');
+});
