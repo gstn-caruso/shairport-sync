@@ -45,6 +45,15 @@ TEST(VolumePolicy, OutsideHardwareMaximumWithRangeUsesSoftwareHeadroom) {
   EXPECT_FALSE(plan.rangeIgnored);
 }
 
+TEST(VolumePolicy, OversizedSoftwareRangeRetainsAvailableRange) {
+  VolumeSettings settings;
+  settings.rangeDb = 100;
+  auto plan = VolumePolicy::plan(-30, settings, {});
+  EXPECT_TRUE(plan.rangeIgnored);
+  EXPECT_EQ(plan.softwareAttenuation, -9630);
+  EXPECT_EQ(VolumePolicy::plan(0, settings, {}).softwareAttenuation, 0);
+}
+
 TEST(VolumePolicy, ProfilesPreserveAttenuationAndFixedGain) {
   VolumeSettings settings;
   settings.rangeDb = 60;
