@@ -1,1 +1,6 @@
 target_sources(receiver PRIVATE audio.cpp audio_pa.cpp)
+add_library(receiver-output-queue STATIC pcm_output_queue.cpp)
+target_sources(receiver-output-queue PUBLIC FILE_SET CXX_MODULES FILES pcm_output_queue.cppm)
+set_target_properties(receiver-output-queue PROPERTIES CXX_SCAN_FOR_MODULES ON)
+set_source_files_properties(audio_pa.cpp TARGET_DIRECTORY receiver PROPERTIES CXX_SCAN_FOR_MODULES ON)
+target_link_libraries(receiver PUBLIC receiver-output-queue)
