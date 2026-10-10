@@ -2,7 +2,7 @@
   "name": "shairport-sync-release",
   "private": true,
   "type": "module",
-  "scripts": {"test": "node --test", "release": "semantic-release --extends ./.github/release/release.config.mjs"},
+  "scripts": {"test": "node --test"},
   "devDependencies": {
     "semantic-release": "25.0.9",
     "@semantic-release/commit-analyzer": "13.0.1",

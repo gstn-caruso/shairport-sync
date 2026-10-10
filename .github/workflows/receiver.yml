@@ -1,17 +1,19 @@
 name: AirPlay 2 Linux PulseAudio
 on:
   push:
-    branches: [master]
+    branches: [master, main]
   pull_request:
   workflow_dispatch:
+permissions:
+  contents: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   reference:
     runs-on: ubuntu-latest
     container: ubuntu:26.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -22,10 +24,10 @@ jobs:
       - name: Install C++26 build dependencies
         run: |
           apt-get update
-          apt-get install -y ca-certificates curl git cmake ninja-build gcc-15 g++-15 g++ zstd pkg-config libgtest-dev libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd
+          apt-get install -y ca-certificates curl git cmake ninja-build gcc-15 g++-15 g++ zstd pkg-config libgtest-dev libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd dpkg-dev
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-toolchain
-      - name: CMake build, contracts and staged install
+      - name: Configure
         env:
           BUILD: ${{ matrix.build }}
         run: |
@@ -35,8 +37,13 @@ jobs:
             ASan-UBSan) build_type=Debug; sanitizer_flags='-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer' ;;
             TSan) build_type=Debug; sanitizer_flags='-fsanitize=thread -fno-omit-frame-pointer' ;;
           esac
-          cmake -S . -B build/cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/clang-toolchain.cmake -DCMAKE_BUILD_TYPE="$build_type" -DCMAKE_INSTALL_SYSCONFDIR=/etc -DCMAKE_C_FLAGS="$sanitizer_flags" -DCMAKE_CXX_FLAGS="$sanitizer_flags"
-          cmake --build build/cmake --parallel 2
+          cmake -S . -B build/cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/clang-toolchain.cmake -DCMAKE_BUILD_TYPE="$build_type" -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_SYSCONFDIR=/etc -DUSE_GIT_VERSION=OFF -DCMAKE_C_FLAGS="$sanitizer_flags" -DCMAKE_CXX_FLAGS="$sanitizer_flags"
+      - name: Build
+        run: cmake --build build/cmake --parallel 2
+      - name: Verify sanitizer instrumentation
+        env:
+          BUILD: ${{ matrix.build }}
+        run: |
           case "$BUILD" in
             ASan-UBSan)
               nm -u build/cmake/CMakeFiles/receiver.dir/src/platform/utilities/structured_buffer.cpp.o | grep __asan_init
@@ -47,10 +54,103 @@ jobs:
               nm -u build/cmake/CMakeFiles/receiver.dir/src/protocol/rtsp/rtsp.cpp.o | grep __tsan_init
               ;;
           esac
-          ctest --test-dir build/cmake --output-on-failure
+      - name: Test
+        run: ctest --test-dir build/cmake --no-tests=error --output-on-failure
+      - name: Verify staged install
+        run: |
           DESTDIR="$PWD/build/cmake/stage" cmake --install build/cmake
-          test -f build/cmake/stage/usr/local/bin/shairport-sync
-          test -f build/cmake/stage/usr/local/share/man/man1/shairport-sync.1
-          test -f build/cmake/stage/etc/shairport-sync.conf.sample
-          cmp man/shairport-sync.1 build/cmake/stage/usr/local/share/man/man1/shairport-sync.1
+          test -f build/cmake/stage/usr/bin/shairport-sync
+          cmp man/shairport-sync.1 build/cmake/stage/usr/share/man/man1/shairport-sync.1
           cmp scripts/shairport-sync.conf build/cmake/stage/etc/shairport-sync.conf.sample
+          test -f build/cmake/stage/usr/lib/systemd/user/shairport-sync.service
+      - name: Build Debian package
+        if: matrix.build == 'Release'
+        run: |
+          cpack --config build/cmake/CPackConfig.cmake -B build/cmake/packages
+          dpkg-deb --info build/cmake/packages/*.deb
+          dpkg-deb --contents build/cmake/packages/*.deb
+          dpkg-deb -x build/cmake/packages/*.deb build/cmake/package-check
+          version=$(cat VERSION)
+          test "$(dpkg-deb -f build/cmake/packages/*.deb Version)" = "$version"
+          build/cmake/package-check/usr/bin/shairport-sync --version | grep -F "$version-AirPlay2-"
+      - name: Upload Debian package
+        if: matrix.build == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-ubuntu-26.04-amd64-${{ github.sha }}
+          path: build/cmake/packages/*
+          if-no-files-found: error
+      - name: Upload failed test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-${{ matrix.build }}-${{ github.sha }}
+          path: build/cmake/Testing/Temporary/
+          if-no-files-found: ignore
+  release-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: .github/release/package-lock.json
+      - run: npm ci --prefix .github/release
+      - run: npm test --prefix .github/release
+  release:
+    if: github.event_name == 'push'
+    needs: [reference, release-policy]
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    concurrency:
+      group: shairport-sync-release
+      cancel-in-progress: false
+    env:
+      ASDF_DATA_DIR: /opt/asdf
+    steps:
+      - name: Install C++26 build dependencies
+        run: |
+          apt-get update
+          apt-get install -y ca-certificates curl git cmake ninja-build gcc-15 g++-15 g++ zstd pkg-config libgtest-dev libpopt-dev libconfig-dev libpulse-dev libavahi-client-dev libssl-dev libplist-dev libplist-utils libsodium-dev libgcrypt20-dev uuid-dev libavutil-dev libavcodec-dev libavformat-dev libswresample-dev xxd dpkg-dev
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check release freshness
+        id: freshness
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch origin "$GITHUB_REF_NAME"
+          if [ "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA" ]; then
+            git checkout -B "$GITHUB_REF_NAME" "$GITHUB_SHA"
+            echo 'current=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'A later push superseded this release; its validation will cover the commit range.'
+            echo 'current=false' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: ./.github/actions/setup-toolchain
+        if: steps.freshness.outputs.current == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.freshness.outputs.current == 'true'
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: .github/release/package-lock.json
+      - name: Install locked release tooling
+        if: steps.freshness.outputs.current == 'true'
+        run: npm ci --prefix .github/release
+      - name: Release version, changelog and Debian package
+        if: steps.freshness.outputs.current == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/release/node_modules/.bin/semantic-release --extends ./.github/release/release.config.mjs
+      - name: Upload failed release test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-ctest-${{ github.sha }}
+          path: build/release/Testing/Temporary/
+          if-no-files-found: ignore

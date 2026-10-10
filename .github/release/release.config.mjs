@@ -12,11 +12,14 @@ cmake -S . -B build/release -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/clang-toolchai
 cmake --build build/release --parallel 2
 ctest --test-dir build/release --no-tests=error --output-on-failure
 cpack --config build/release/CPackConfig.cmake -B build/release/packages
-sha256sum build/release/packages/*.deb > build/release/packages/SHA256SUMS`
+test "$(dpkg-deb -f build/release/packages/*.deb Version)" = '<%= nextRelease.version %>'
+dpkg-deb -x build/release/packages/*.deb build/release/package-check
+build/release/package-check/usr/bin/shairport-sync --version | grep -F '<%= nextRelease.version %>-AirPlay2-'
+(cd build/release/packages && sha256sum *.deb > SHA256SUMS)`
     }],
     ['@semantic-release/git', {
       assets: ['VERSION', 'CHANGELOG.md'],
-      message: 'chore(release): ${nextRelease.version} [skip ci]\\n\\n${nextRelease.notes}'
+      message: 'chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}'
     }],
     ['@semantic-release/github', {
       assets: ['build/release/packages/*.deb', 'build/release/packages/SHA256SUMS'],
