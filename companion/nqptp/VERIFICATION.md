@@ -115,3 +115,41 @@ case passed for IPv4 `127.1` and scoped IPv6 `fe80::1%lo`, then failed against
 the bundled guard (`build/numeric-host-red.log`). The guard now uses the same
 numeric-only address parser as upstream before mutation. All peer syntax and
 timing characterization cases pass; no DNS lookup is introduced.
+
+## Four configurations and CI
+
+Expectation: the existing receiver suite and companion tests run with the same
+compiler in Release, Debug, ASan+UBSan and TSan; companion object files carry
+sanitizer instrumentation; install/package checks run without activation.
+Baseline: the existing workflow had no assertions for companion object
+instrumentation, service/provenance installation or Debian runtime dependencies.
+The workflow now checks those contracts in addition to its existing matrix.
+
+| Configuration | Full suite | Final companion selection after syntax/attribute changes |
+| --- | --- | --- |
+| Release | 354/354, 15.22 s | 23/23 |
+| Debug | 353/353, 15.24 s | 23/23 |
+| ASan+UBSan | 353/353, 27.76 s | 23/23 |
+| TSan | 353/353, 44.00 s | 23/23 |
+
+The extra final case characterizes upstream numeric host syntax. Focused
+rechecks cover every companion test after that correction; unchanged receiver
+tests were not repeated in the other three configurations. Leak detection
+remained enabled, UBSan was nonrecovering, and TSan ran without infrastructure
+startup failures. Three GNU unused-parameter annotations were replaced by
+standard `[[maybe_unused]]` in a separate structural commit with 23/23 cases
+green before and after.
+
+`nm -u` verified `__asan_init` in the companion runtime object and UBSan handlers
+in the packet-handler object; both corresponding TSan objects contain
+`__tsan_init`. All four current staged installations passed the companion
+package contract and `systemd-analyze verify`. The refreshed Release Debian
+package passed the same checks on extracted files and control metadata.
+
+Local logs are under `build/`: `reference-tests.log`, `release-final-tests.log`,
+`debug-tests.log`, `asan-tests.log`, `tsan-tests.log`, the three
+`*-final-companion-tests.log` files, and `package-final-build.log`.
+Reproduce native checks with the commands in BUILD.md and select
+`ctest --test-dir <build> -R '^Nqptp|^companion-' --no-tests=error --output-on-failure`
+for the final companion cases. Remote CI, independent review, PR and release
+publication are delivery steps still pending this local implementation report.

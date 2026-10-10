@@ -69,9 +69,11 @@ targets use separate libraries; unrelated receiver changes do not relink their
 test executables. This improves targeted feedback rather than clean-build time.
 
 CI runs native amd64 CMake Release, Debug, ASan+UBSan and TSan builds,
-all with the same pinned compiler and library. Every build runs its contracts
-and stages the binary, manual and sample configuration without starting a service.
-The sanitizer jobs check instrumentation in receiver C++ object files. TSan
+all with the same pinned compiler and library. Every build runs its contracts,
+including companion timing, lifecycle and real socket/receiver-reader tests,
+and stages both binaries, units, licenses, manual and sample configuration
+without starting a service. The sanitizer jobs check instrumentation in receiver
+and companion runtime/packet-handler C++ object files. TSan
 detects data races between threads; ASan detects memory misuse and UBSan detects
 undefined behavior. All four builds must pass before a release can publish.
 ARM64 CI and release artifacts are suspended for now.
