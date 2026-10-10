@@ -236,7 +236,7 @@ void handle_control_port_messages(char *buf, ssize_t recv_len,
 }
 
 void handle_announce(char *buf, ssize_t recv_len, clock_source_private_data *clock_private_info,
-                     __attribute__((unused)) uint64_t reception_time) {
+                     [[maybe_unused]] uint64_t reception_time) {
   // debug_print_buffer(1, buf, (size_t) recv_len);
   // make way for the new time
   if (buf && recv_len >= static_cast<ssize_t>(sizeof(ptp_announce_message))) {
@@ -293,7 +293,7 @@ void handle_announce(char *buf, ssize_t recv_len, clock_source_private_data *clo
 }
 
 void handle_sync(char *buf, ssize_t recv_len, clock_source_private_data *clock_private_info,
-                 __attribute__((unused)) uint64_t reception_time) {
+                 [[maybe_unused]] uint64_t reception_time) {
   /*
     // diagnostic -- decide whether to delay the processing of the follow_up to simulate a noisy
     network if (drand48() < 0.015) {

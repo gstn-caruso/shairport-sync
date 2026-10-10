@@ -125,7 +125,7 @@ void send_awakening_announcement_sequence(const uint64_t clock_id, const char *c
   free(msg);
 }
 
-uint64_t broadcasting_task(uint64_t call_time, __attribute__((unused)) void *private_data) {
+uint64_t broadcasting_task(uint64_t call_time, [[maybe_unused]] void *private_data) {
   clock_source_private_data *clocks_private = (clock_source_private_data *)private_data;
   int i;
   for (i = 0; i < MAX_CLOCKS; i++) {
