@@ -36,6 +36,16 @@
 
 ActivityMonitor::~ActivityMonitor() { stop(); }
 
+ActivityMonitor::EffectTurn::EffectTurn(std::atomic_flag &occupied) : occupied_(occupied) {
+  while (occupied_.test_and_set(std::memory_order_acquire))
+    occupied_.wait(true, std::memory_order_relaxed);
+}
+
+ActivityMonitor::EffectTurn::~EffectTurn() {
+  occupied_.clear(std::memory_order_release);
+  occupied_.notify_all();
+}
+
 void ActivityMonitor::start() {
   std::lock_guard lifecycle(lifecycleMutex_);
   std::lock_guard state(stateMutex_);
@@ -56,7 +66,7 @@ void ActivityMonitor::stop() {
     changed_.notify_all();
   }
   worker_.join();
-  std::lock_guard effects(effectsMutex_);
+  EffectTurn effects(effectOccupied_);
   ActivityState::Effect effect;
   {
     std::lock_guard state(stateMutex_);
@@ -71,7 +81,8 @@ am_state ActivityMonitor::status() {
 }
 
 void ActivityMonitor::signifyActivity(bool active) {
-  std::lock_guard effects(effectsMutex_);
+  EffectTurn effects(effectOccupied_);
+  pthread_testcancel();
   ActivityState::Effect effect;
   {
     std::lock_guard state(stateMutex_);
@@ -111,7 +122,7 @@ void ActivityMonitor::waitForInactivity() {
       if (changed_.wait_until(state, deadline_) == std::cv_status::timeout) {
         state.unlock();
         {
-          std::lock_guard effects(effectsMutex_);
+          EffectTurn effects(effectOccupied_);
           ActivityState::Effect effect = ActivityState::Effect::none;
           {
             std::lock_guard check(stateMutex_);

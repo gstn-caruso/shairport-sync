@@ -240,6 +240,23 @@ static void *signifyFromCancellableCaller(void *) {
   return nullptr;
 }
 
+TEST(ActivityMonitorLifecycle, QueuedCallerDeliversCancellationAfterAdmittedHookFinishes) {
+  HookTranscript hooks;
+  auto activation = std::async(std::launch::async, [] { activity_monitor_signify_activity(1); });
+  ASSERT_EQ(hooks.next().transition, 'A');
+  pthread_t queued;
+  ASSERT_EQ(pthread_create(&queued, nullptr, signifyFromCancellableCaller, nullptr), 0);
+  ASSERT_EQ(pthread_cancel(queued), 0);
+  hooks.release();
+  ASSERT_EQ(activation.wait_for(500ms), std::future_status::ready);
+  void *result = nullptr;
+  ASSERT_EQ(pthread_join(queued, &result), 0);
+  EXPECT_EQ(result, PTHREAD_CANCELED);
+  activity_monitor_stop();
+  EXPECT_EQ(hooks.next().transition, 'D');
+  EXPECT_EQ(hooks.next(50).transition, '\0');
+}
+
 TEST(ActivityMonitorLifecycle, CancelledHookCallerReleasesAdmissionAndOwnerRemainsRestartable) {
   HookTranscript hooks;
   pthread_t caller;
