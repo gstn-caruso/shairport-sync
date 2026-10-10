@@ -41,6 +41,22 @@ for latency in -1 1 4409 338399; do
   printf 'latencies = { default = %s; };\n' "$latency" > "$test_dir/latency.conf"
   check_status 1 --check-config --config "$test_dir/latency.conf"
 done
+for port in 0 65535 7100L 7100.75; do
+  printf 'general = { port = %s; };\n' "$port" > "$test_dir/integer.conf"
+  check_status 0 --check-config --config "$test_dir/integer.conf"
+done
+for port in 65536 2147483648L -2147483649L 4294967297L 1.0e30; do
+  printf 'general = { port = %s; };\n' "$port" > "$test_dir/integer.conf"
+  check_status 1 --check-config --config "$test_dir/integer.conf"
+done
+for setting in general.udp_port_base general.udp_port_range general.drift general.resync_threshold general.log_verbosity diagnostics.log_verbosity general.volume_range_db latencies.default sessioncontrol.session_timeout general.audio_backend_buffer_desired_length general.audio_backend_latency_offset; do
+  printf '%s = { %s = 4294967297L; };\n' "${setting%%.*}" "${setting#*.}" > "$test_dir/integer.conf"
+  check_status 1 --check-config --config "$test_dir/integer.conf"
+done
+printf 'general = { airplay_device_id = 4294967297L; };\n' > "$test_dir/integer.conf"
+check_status 0 --check-config --config "$test_dir/integer.conf"
+printf 'general = { airplay_device_id = 1.0e30; };\n' > "$test_dir/integer.conf"
+check_status 1 --check-config --config "$test_dir/integer.conf"
 check_status 1 --check-config --config "$test_dir/missing.conf"
 check_status 1 --config "$test_dir/missing.conf"
 check_status 1 --check-config --config "$test_dir"

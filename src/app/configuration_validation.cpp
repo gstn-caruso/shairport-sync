@@ -1,6 +1,20 @@
 #include "app/configuration_validation.hpp"
 #include <array>
+#include <cmath>
+#include <limits>
 #include <string_view>
+
+template <typename Integer>
+static bool isRepresentableInteger(const config_setting_t &setting) {
+  const int type = config_setting_type(&setting);
+  const long double value = type == CONFIG_TYPE_FLOAT
+      ? std::trunc(static_cast<long double>(config_setting_get_float(&setting)))
+      : type == CONFIG_TYPE_INT64
+          ? static_cast<long double>(config_setting_get_int64(&setting))
+          : static_cast<long double>(config_setting_get_int(&setting));
+  return std::isfinite(value) && value >= std::numeric_limits<Integer>::lowest() &&
+         value <= std::numeric_limits<Integer>::max();
+}
 
 std::expected<void, std::string> validateConfigurationTypes(const config_t &settings) {
   for (const char *group : {"general", "pulseaudio", "sessioncontrol", "diagnostics", "latencies"}) {
@@ -84,6 +98,23 @@ std::expected<void, std::string> validateConfigurationTypes(const config_t &sett
   for (const char *path : numericSettings) {
     if (const auto *value = config_lookup(&settings, path); value && !numeric(config_setting_type(value)))
       return std::unexpected(std::string(path) + " must be numeric");
+  }
+  constexpr std::array integerSettings{
+    "general.port", "general.udp_port_base", "general.udp_port_range",
+    "general.drift", "general.resync_threshold", "general.log_verbosity",
+    "diagnostics.log_verbosity", "general.volume_range_db", "latencies.default",
+    "sessioncontrol.session_timeout", "general.audio_backend_buffer_desired_length",
+    "general.audio_backend_latency_offset"
+  };
+  for (const char *path : integerSettings) {
+    if (const auto *value = config_lookup(&settings, path);
+        value && !isRepresentableInteger<int>(*value))
+      return std::unexpected(std::string(path) + " cannot be represented as an integer");
+  }
+  for (const char *path : {"general.airplay_device_id", "general.airplay_device_id_offset"}) {
+    if (const auto *value = config_lookup(&settings, path);
+        value && !isRepresentableInteger<long long>(*value))
+      return std::unexpected(std::string(path) + " cannot be represented as a 64-bit integer");
   }
   if (const auto *value = config_lookup(&settings, "general.audio_backend_silent_lead_in_time");
       value && !numeric(config_setting_type(value)) && config_setting_type(value) != CONFIG_TYPE_STRING)
