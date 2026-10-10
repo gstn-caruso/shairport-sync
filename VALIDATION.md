@@ -3,6 +3,50 @@
 Build and run the suite with the commands in [BUILD.md](BUILD.md).
 CI runs Release, Debug, ASan+UBSan and TSan builds and checks staged installation.
 
+## Cooperative RTSP listener slice
+
+Expectation: an idle listener wakes promptly on stop, joins through normal
+return, drains sessions before releasing listening sockets, and never blocks
+in accept after readiness disappears. The pinned Release baseline passed
+369/369 entries (8.33s). The first new test failed to compile because the owned
+listener API did not exist (`build/stage4-listener-red.log`); the original
+daemon boundary also used `pthread_cancel` plus join and a 60-second select.
+
+Nine new cases cover observed idle poll/wake, real TCP acceptance with
+blocking close-on-exec client descriptors, stop before wait, repeated stop,
+stop racing accept with descriptor release, stale readiness before accept,
+actual RTSP-loop stop, failed bind cleanup, and real `EAGAIN` thread creation
+followed by safe stop and process destruction, and active-listener process
+exit. Integration and resource-limit
+cases execute in fresh subprocesses. The thread-failure child restores its
+resource limit and leaves parent credentials unchanged, including when run as
+root. The nine cases also pass together in the executable.
+
+Release passes 378/378 entries (8.49s); targeted Debug ASan+UBSan and TSan each
+pass 9/9 (0.77s and 0.90s). The listener production object contains the corresponding sanitizer
+instrumentation. Reproduce with the pinned toolchain:
+
+```sh
+cmake --build build/cooperative-activity --parallel 2
+ctest --test-dir build/cooperative-activity --output-on-failure -j2
+cmake --build build/migration-asan --target rtsp-listener-test --parallel 2
+ctest --test-dir build/migration-asan -R '^RtspListener\.' --no-tests=error --output-on-failure
+cmake --build build/migration-tsan --target rtsp-listener-test --parallel 2
+ctest --test-dir build/migration-tsan -R '^RtspListener\.' --no-tests=error --output-on-failure
+```
+
+Ignored evidence logs use `build/stage4-listener-*`. The RTSP-loop integration
+uses real sockets with Bonjour/mDNS and process-exit requests wrapped at their
+external boundaries. It does not run the complete live daemon or a network
+sender. Existing daemon failed-startup/signal checks remain green; no service
+was installed or restarted, and no device playback, pairing, or network
+teardown claim is made. Session shutdown still cancels and joins its existing
+conversation/playback workers. Source inspection verifies the order: the
+worker callback calls `sessions.shutdown()` before returning to the owner's
+socket release. The integration case has no active child session; full Release
+retains the session shutdown/replacement cases. Those workers remain Stage 4 work. Hosted CI
+and independent review remain required before merge.
+
 ## Current redesign result
 
 There are 230 named C++ cases and seven C/shell checks, for 237 CTest entries.

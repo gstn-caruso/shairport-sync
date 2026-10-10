@@ -94,7 +94,6 @@ pid_t pid;
 
 #define strnull(s) ((s) ? (s) : "(null)")
 
-pthread_t rtsp_listener_thread;
 
 
 char configuration_file_path[4096 + 1];
@@ -1099,12 +1098,6 @@ if (config_lookup(config.cfg, "general.alac_decoder") != NULL)
 
 
 
-void exit_rtsp_listener() {
-  debug(3, "exit_rtsp_listener begins");
-  pthread_cancel(rtsp_listener_thread);
-  pthread_join(rtsp_listener_thread, NULL); // not sure you need this
-  debug(2, "exit_rtsp_listener ends");
-}
 
 void exit_function() {
   debug(2, "Stopping the activity monitor.");
@@ -1843,10 +1836,9 @@ int ReceiverApplication::run(const ReceiverSettings &settings) {
 
   activity_monitor_start();
   debug(4, "create an RTSP listener");
-  // note: the Avahi Threaded Poll thread will be named after whatever name you use here too, so
-  // you'll see two threads named "listener" or whatever...
-  named_pthread_create(&rtsp_listener_thread, NULL, &rtsp_listen_loop, NULL, "listener");
-  atexit(exit_rtsp_listener);
+  int listenerError = rtsp_listener_start();
+  if (listenerError)
+    die("Cannot create RTSP listener: %s", strerror(listenerError));
 
   // wait forever...
   while (1) {
