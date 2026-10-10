@@ -6,6 +6,10 @@ on 2026-10-10. Existing characterization is evidence of particular outcomes,
 not proof of complete AirPlay interoperability. Pending checks below are gates
 for the affected migration slices.
 
+See [migration progress](receiver-migration-progress.md) for subsequent
+deliveries and their verification; the observations below describe the original
+baseline.
+
 ## Verification baseline
 
 Expectation: a freshly configured and rebuilt Release receiver still passes all
