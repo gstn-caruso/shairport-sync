@@ -28,7 +28,7 @@ TEST_F(RtspDispatch, SettingVolumeAndProgressRemembersTheRequestedLevel) {
 }
 
 TEST_F(RtspDispatch, GettingVolumeReturnsTheSessionLevelWithSixDecimalPlaces) {
-  connection.volumeControl.rememberLevel(-15.0);
+  connection.volumeControl.rememberLevel(AirPlayVolume{-15.0});
   request.request("GET_PARAMETER");
   request.replaceBody("volume\r\n");
 

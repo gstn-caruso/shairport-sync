@@ -62,13 +62,13 @@ TEST(VolumeTransaction, ConcurrentSetterMuteCannotBeOverwrittenByStartup) {
   config.output = &backend;
   config.volume_control_profile = VCP_flat;
   config.volume_range_db = 20;
-  sharedVolumeLevel.remember(0);
+  sharedVolumeLevel.remember(AirPlayVolume{0});
   std::thread startup([&] { player_volume(-15, &state.session); });
   {
     std::unique_lock lock(state.ordering);
     state.changed.wait(lock, [&] { return state.startupPaused; });
   }
-  state.session.volumeControl.rememberLevel(-144);
+  state.session.volumeControl.rememberLevel(AirPlayVolume{-144});
   std::thread setParameter([&] {
     setter = true;
     player_volume(-144, &state.session);
@@ -86,7 +86,7 @@ TEST(VolumeTransaction, ConcurrentSetterMuteCannotBeOverwrittenByStartup) {
   setParameter.join();
   EXPECT_TRUE(state.hardwareMuted);
   EXPECT_EQ(suggested_volume(&state.session), -144);
-  EXPECT_EQ(sharedVolumeLevel.current(), -144);
+  EXPECT_EQ(sharedVolumeLevel.current(), AirPlayVolume{-144});
   config.output = savedOutput;
   config.volume_control_profile = savedProfile;
   config.volume_range_db = savedRange;

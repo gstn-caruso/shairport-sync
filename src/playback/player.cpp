@@ -509,7 +509,7 @@ static std::optional<QueuedAudioPacket> buffer_get_frame(rtsp_conn_info *conn,
 }
 
 double suggested_volume(rtsp_conn_info *conn) {
-  return conn ? conn->volumeControl.suggestedLevel(sharedVolumeLevel) : sharedVolumeLevel.current();
+  return (conn ? conn->volumeControl.suggestedLevel(sharedVolumeLevel) : sharedVolumeLevel.current()).value();
 }
 
 void player_thread_cleanup_handler(void *arg) {
@@ -592,7 +592,7 @@ static PlaybackMode playbackModeFor(playback_mode_type mode) {
 
 static PcmVolumeSnapshot beginPcmFrame(rtsp_conn_info *conn) {
   const auto volume = conn->volumeControl.pcmSnapshot();
-  conn->pcmEncoder.beginFrame(volume.gainFixed16, config.playback_mode == ST_mono);
+  conn->pcmEncoder.beginFrame(volume.gainFixed16.value(), config.playback_mode == ST_mono);
   return volume;
 }
 
@@ -1024,7 +1024,7 @@ void applySessionVolumeEffects(double level, SessionState &session,
 }
 
 void player_volume_without_notification(double level, rtsp_conn_info *conn) {
-  applySessionVolumeEffects(level, *conn, [&] { sharedVolumeLevel.remember(level); });
+  applySessionVolumeEffects(level, *conn, [&] { sharedVolumeLevel.remember(AirPlayVolume{level}); });
 }
 
 void player_volume(double level, rtsp_conn_info *conn) {

@@ -238,7 +238,7 @@ static void checkPlayback(PlaybackScenario scenario) {
   config.volume_control_profile = VCP_flat;
   config.volume_range_db = 12;
   config.audio_backend_silent_lead_in_time_auto = 1;
-  sharedVolumeLevel.remember(0);
+  sharedVolumeLevel.remember(AirPlayVolume{0});
   pthread_t player;
   const auto playerStarted = pthread_create(&player, nullptr, player_thread_func, &session);
   if (playerStarted != 0) {
@@ -258,7 +258,7 @@ static void checkPlayback(PlaybackScenario scenario) {
   }
   player_volume(-15, &session);
   if (mute) player_volume(-144, &session);
-  const int gain = session.volumeControl.pcmSnapshot().gainFixed16;
+  const int gain = session.volumeControl.pcmSnapshot().gainFixed16.value();
   EXPECT_GT(gain, 0);
   EXPECT_LT(gain, 65536);
   const auto publishPacket = [&] {

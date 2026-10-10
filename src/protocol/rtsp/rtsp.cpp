@@ -2573,11 +2573,11 @@ void handle_set_parameter_parameter(rtsp_conn_info *conn, RtspMessage *req,
       float volume = atof(cp + strlen("volume: "));
       debug(3, "Connection %d: request to set AirPlay Volume to: %f.", conn->connection_number,
             volume);
-      conn->volumeControl.rememberLevel(volume);
+      conn->volumeControl.rememberLevel(AirPlayVolume{volume});
       if (const auto ticket = principalSession.ticketFor(conn->connection_number)) {
         command_set_volume(volume);
         applySessionVolumeEffects(volume, *conn, [&] {
-          principalSession.commitIfSelected(*ticket, [&] { sharedVolumeLevel.remember(volume); });
+          principalSession.commitIfSelected(*ticket, [&] { sharedVolumeLevel.remember(AirPlayVolume{volume}); });
         });
       }
     } else if (strncmp(cp, "progress: ", strlen("progress: ")) ==

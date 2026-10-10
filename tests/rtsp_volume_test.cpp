@@ -12,7 +12,7 @@ namespace {
 class RtspVolume : public testing::Test {
 protected:
   SessionState session;
-  double previousSharedLevel = sharedVolumeLevel.current();
+  AirPlayVolume previousSharedLevel = sharedVolumeLevel.current();
   static constexpr std::array infoFields{
     &shairport_cfg::airplay_psi, &shairport_cfg::airplay_fex, &shairport_cfg::airplay_device_id,
     &shairport_cfg::airplay_pi, &shairport_cfg::service_name, &shairport_cfg::model,
@@ -23,7 +23,7 @@ protected:
 
   void SetUp() override {
     session.thread = pthread_self();
-    sharedVolumeLevel.remember(-24);
+    sharedVolumeLevel.remember(AirPlayVolume{-24});
     for (size_t index = 0; index < infoFields.size(); ++index) {
       previousInfoStrings[index] = config.*infoFields[index];
       config.*infoFields[index] = infoString;
@@ -57,13 +57,13 @@ TEST_F(RtspVolume, UnrememberedSessionReportsDefaultSharedVolume) {
 }
 
 TEST_F(RtspVolume, UnrememberedSessionReportsSubsequentSharedVolume) {
-  sharedVolumeLevel.remember(-10.25);
+  sharedVolumeLevel.remember(AirPlayVolume{-10.25});
   EXPECT_EQ(getVolume(), "\r\nvolume: -10.250000\r\n");
 }
 
 TEST_F(RtspVolume, RememberedWireVolumeOverridesLaterSharedChanges) {
   setVolume("-15.1234567");
-  sharedVolumeLevel.remember(-5);
+  sharedVolumeLevel.remember(AirPlayVolume{-5});
   EXPECT_DOUBLE_EQ(suggested_volume(&session), -15.123456954956055);
   EXPECT_EQ(getVolume(), "\r\nvolume: -15.123457\r\n");
 }

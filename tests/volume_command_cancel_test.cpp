@@ -57,7 +57,7 @@ static void checkCancellation(const char *executable, bool startup) {
   audio_output backend{};
   backend.get_configuration = chooseOutput;
   config.output = &backend;
-  sharedVolumeLevel.remember(0);
+  sharedVolumeLevel.remember(AirPlayVolume{0});
   SessionState session{};
   session.airplay_stream_type = realtime_stream;
   ASSERT_EQ(pthread_mutex_init(&session.flush_mutex, nullptr), 0);
@@ -107,7 +107,7 @@ static void checkCancellation(const char *executable, bool startup) {
   config.cmd_set_volume = nullptr;
   EXPECT_EQ(joined, 0);
   EXPECT_EQ(completion, PTHREAD_CANCELED);
-  EXPECT_EQ(session.volumeControl.pcmSnapshot().gainFixed16, 65536);
+  EXPECT_EQ(session.volumeControl.pcmSnapshot().gainFixed16, FixedGain16{65536});
 }
 
 TEST(VolumeCommandCancellation, StartupCancellationLeavesAppliedGainAndReapsCommand) {
