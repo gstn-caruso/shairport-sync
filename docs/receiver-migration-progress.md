@@ -50,11 +50,12 @@ override selects `/usr/bin/shairport-sync --config` with that configuration.
 The service remained active with no restart or startup error, connected to
 the existing PulseAudio-on-PipeWire environment, and advertised through
 Avahi. NQPTP was already running. The user subsequently reported that the
-installed v6 works correctly. Keep that installed release unchanged while
+installed v6 works correctly and confirmed stereo playback. Keep that installed release unchanged while
 development continues unless another installation is requested.
 
-This user report validates operation in that setup; it does not establish the
-full format, pairing, Home integration, reconnect, or multiroom test matrix.
+This user report validates stereo operation in that setup; the sender device
+and app were not specified. It does not establish the surround, pairing,
+Home integration, reconnect, or multiroom test matrix.
 
 ## Work still open
 
