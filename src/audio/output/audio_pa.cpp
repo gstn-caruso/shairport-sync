@@ -477,7 +477,7 @@ static int configure(int32_t requested_encoded_format, char **resulting_channel_
   return response;
 }
 
-static int init(__attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
+void load_pulseaudio_settings() {
   // debug(1, "pa_init");
   // set up default values first
   config.audio_backend_buffer_desired_length = 0.35;
@@ -525,7 +525,9 @@ static int init(__attribute__((unused)) int argc, __attribute__((unused)) char *
     }
   }
 
-  // finish collecting settings
+}
+
+static int init(__attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
 
   stream = NULL;    // no stream
   audio_lmb = NULL; // no buffer

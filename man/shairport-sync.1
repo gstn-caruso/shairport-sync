@@ -3,7 +3,12 @@
 shairport-sync \- AirPlay 2 receiver for Linux with PulseAudio
 .SH SYNOPSIS
 .B shairport-sync
-.RI [ options ]
+.RI [ --config " PATH" ]
+.br
+.B shairport-sync --version
+.br
+.B shairport-sync --check-config
+.RI [ --config " PATH" ]
 .SH DESCRIPTION
 Receives realtime and buffered AirPlay 2 audio. PulseAudio, Avahi, OpenSSL,
 FFmpeg and compatible NQPTP are required. Missing or incompatible NQPTP causes
@@ -11,31 +16,29 @@ startup to fail before listening or advertising. No AirPlay 1 fallback is provid
 PipeWire can be used through its PulseAudio-compatible server.
 .SH OPTIONS
 .TP
-.BR \-h , " --help"
-Show command-line help.
-.TP
-.BR \-V , " --version"
+.B --version
 Show version and build features.
 .TP
-.BR \-c " FILE"
-Read configuration from FILE.
+.BI --config " PATH"
+Read configuration from PATH. Explicit missing or unreadable files fail.
 .TP
-.BR \-a " NAME"
-Set the advertised receiver name.
-.TP
-.BR \-p " PORT"
-Set RTSP port (default 7000).
-.TP
-.BR \-v
-Increase diagnostic verbosity. May be repeated.
+.B --check-config
+Validate effective settings without starting network or audio services.
+Version reporting and configuration checking work without running PulseAudio,
+Avahi or NQPTP. Invalid arguments exit 2; configuration or startup errors exit 1.
 .SH CONFIGURATION
 See shairport-sync.conf.sample for PulseAudio server and sink, volume,
 channel mapping, network interface, UDP ports and synchronisation settings.
 Removed backend, service selection, DSP and metadata-export settings are errors.
+Without --config, use shairport-sync.conf in the installation configuration
+directory (/etc in Debian packages). An absent default file uses built-in
+defaults. Legacy setting flags are removed. Restart after configuration changes.
 .SH SERVICE
 Run as a systemd user service belonging to the PulseAudio session owner.
 NQPTP and Avahi run separately. No system account or alternate init installer
 is provided.
+The process stays in the foreground. Systemd owns restart and supervision.
+Logs go to stderr for the journal. SIGTERM and SIGINT request shutdown.
 .SH LIMITATIONS
 AirPlay 1, alternate backends, DBus, MPRIS, MQTT, DSP and metadata export are
 removed. Protocol metadata, encrypted pairing and Home endpoints are retained.

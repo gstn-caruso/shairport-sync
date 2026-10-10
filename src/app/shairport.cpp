@@ -33,7 +33,12 @@
 #include <libgen.h>
 #include <memory.h>
 #include <net/if.h>
-#include <popt.h>
+#include "app/startup_options.hpp"
+#include "app/configuration_loader.hpp"
+#include "app/receiver_application.hpp"
+#include <vector>
+#include <stdexcept>
+
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -91,15 +96,9 @@ pid_t pid;
 pthread_t rtsp_listener_thread;
 
 
-int killOption = 0;
-int daemonisewith = 0;
-int daemonisewithout = 0;
-int log_to_syslog_selected = 0;
-int display_config_selected = 0;
-int log_to_syslog_select_is_first_command_line_argument = 0;
-
 char configuration_file_path[4096 + 1];
 char *config_file_real_path = NULL;
+static bool configuration_initialized = false;
 
 char first_backend_name[256];
 
@@ -165,193 +164,8 @@ static void reject_removed_settings(config_t *settings) {
   }
 }
 
-void usage(char *progname) {
-
-  if (has_fltp_capable_aac_decoder() == 0) {
-    printf("\nIMPORTANT NOTE: Shairport Sync can not run on this system.\n");
-    printf("A Floating Planar (\"fltp\") AAC decoder is required, ");
-    printf("but the system's ffmpeg library does not seem to include one.\n");
-    printf("See: "
-           "https://github.com/mikebrady/shairport-sync/blob/development/"
-           "TROUBLESHOOTING.md#aac-decoder-issues-airplay-2-only\n\n");
-
-  } else {
-    // clang-format off
-    printf("Please use the configuration file for settings where possible.\n");
-    printf("Many more settings are available in the configuration file.\n");
-    printf("\n");
-    printf("Usage: %s [options...]\n", progname);
-    printf("  or:  %s [options...] -- [audio output-specific options]\n", progname);
-    printf("\n");
-    printf("Options:\n");
-    printf("    -h, --help              Show this help.\n");
-    printf("    -V, --version           Show version information -- the version string.\n");
-    printf("    -X, --displayConfig     Output OS information, version string, command line, configuration file and active settings to the log.\n");
-    printf("    --statistics            Print some interesting statistics. More will be printed if -v / -vv / -vvv are also chosen.\n");
-    printf("    -v, --verbose           Print debug information; -v some; -vv more; -vvv lots -- generally too much.\n");
-    printf("    -c, --configfile=FILE   Read configuration settings from FILE. Default is %s.\n", configuration_file_path);
-    printf("    -a, --name=NAME         Set service name. Default is the hostname with first letter capitalised.\n");
-    printf("    --password=PASSWORD     Require PASSWORD to connect. Default is no password.\n");
-    printf("    -p, --port=PORT         Set RTSP listening port. Default 7000.\n");
-    printf("                            The default is to set it automatically.\n");
-    printf("    -S, --stuffing=MODE     Set how to adjust current latency to match desired latency, where:\n");
-    printf("                            \"vernier\" recodes a packet of frames to a new packet containing more or fewer frames. Recommended for low powered devices;\n");
-    printf("                            \"basic\" inserts or deletes audio frames from packet frames with low processor overhead; and\n");
-    printf("    -B, --on-start=PROGRAM  Run PROGRAM when playback is about to begin.\n");
-    printf("    -E, --on-stop=PROGRAM   Run PROGRAM when playback has ended.\n");
-    printf("                            For -B and -E options, specify the full path to the program and arguments, e.g. \"/usr/bin/logger\".\n");
-    printf("                            Executable scripts work, but the file must be marked executable have the appropriate shebang (#!/bin/sh) on the first line.\n");
-    printf("    -w, --wait-cmd          Wait until the -B or -E programs finish before continuing.\n");
-    printf("    -r, --resync=THRESHOLD  [Deprecated] resync if error exceeds this number of frames. Set to 0 to stop resyncing.\n");
-    printf("    -t, --timeout=SECONDS   Go back to idle mode from play mode after a break in communications of this many seconds (default 60). Set to 0 never to exit play mode.\n");
-    printf("    --tolerance=TOLERANCE   [Deprecated] Allow a synchronization error of TOLERANCE frames (default 88) before trying to correct it.\n");
-    printf("    --logOutputLevel        Log the output level setting -- a debugging option, useful for determining the optimum maximum volume.\n");
-
-    printf("    --log-to-syslog         Send debug and statistics information through syslog\n");
-    printf("                            If used, this should be the first command line argument.\n");
-    printf("    -u, --use-stderr        [Deprecated] This setting is not needed -- stderr is now used by default and syslog is selected using --log-to-syslog.\n");
-    printf("\n");
-    mdns_ls_backends();
-    printf("\n");
-    audio_ls_outputs();
-    // clang-format on
-
-  }
-}
-
-int parse_options(int argc, char **argv) {
-  char *cli_service_type_string = NULL;
-  char *cli_backend_string = NULL;
-  char *raw_service_name = NULL; /* Used to pick up the service name before possibly expanding it */
-  char *stuffing = NULL;         /* used for picking up the stuffing option */
-  signed char c; /* used for argument parsing */
-  // int i = 0;                     /* used for tracking options */
-  int resync_threshold_in_frames = 0;
-  int tolerance_in_frames = 0;
-  poptContext optCon; /* context for parsing command-line options */
-  struct poptOption optionsTable[] = {
-      {"verbose", 'v', POPT_ARG_NONE, NULL, 'v', NULL, NULL},
-      {"kill", 'k', POPT_ARG_NONE, &killOption, 0, NULL, NULL},
-      {"daemon", 'd', POPT_ARG_NONE, &daemonisewith, 0, NULL, NULL},
-      {"justDaemoniseNoPIDFile", 'j', POPT_ARG_NONE, &daemonisewithout, 0, NULL, NULL},
-      {"configfile", 'c', POPT_ARG_STRING, &config.configfile, 0, NULL, NULL},
-      {"statistics", 0, POPT_ARG_NONE, &config.statistics_requested, 0, NULL, NULL},
-      {"logOutputLevel", 0, POPT_ARG_NONE, &config.logOutputLevel, 0, NULL, NULL},
-      {"version", 'V', POPT_ARG_NONE, NULL, 0, NULL, NULL},
-      {"displayConfig", 'X', POPT_ARG_NONE, &display_config_selected, 0, NULL, NULL},
-      {"port", 'p', POPT_ARG_INT, &config.port, 0, NULL, NULL},
-      {"name", 'a', POPT_ARG_STRING, &raw_service_name, 0, NULL, NULL},
-      {"output", 'o', POPT_ARG_STRING, &cli_backend_string, 0, NULL, NULL},
-      {"on-start", 'B', POPT_ARG_STRING, &config.cmd_start, 0, NULL, NULL},
-      {"on-stop", 'E', POPT_ARG_STRING, &config.cmd_stop, 0, NULL, NULL},
-      {"wait-cmd", 'w', POPT_ARG_NONE, &config.cmd_blocking, 0, NULL, NULL},
-      {"mdns", 'm', POPT_ARG_STRING, &cli_backend_string, 0, NULL, NULL},
-      {"latency", 'L', POPT_ARG_INT, &config.userSuppliedLatency, 0, NULL, NULL},
-      {"stuffing", 'S', POPT_ARG_STRING, &stuffing, 'S', NULL, NULL},
-      {"resync", 'r', POPT_ARG_INT, &resync_threshold_in_frames, 'r', NULL, NULL},
-      {"timeout", 't', POPT_ARG_INT, &config.timeout, 't', NULL, NULL},
-      {"password", 0, POPT_ARG_STRING, &config.password, 0, NULL, NULL},
-      {"service-type", 0, POPT_ARG_STRING, &cli_service_type_string, 0, NULL, NULL},
-      {"tolerance", 'z', POPT_ARG_INT, &tolerance_in_frames, 'z', NULL, NULL},
-      {"use-stderr", 'u', POPT_ARG_NONE, NULL, 'u', NULL, NULL},
-      {"log-to-syslog", 0, POPT_ARG_NONE, &log_to_syslog_selected, 0, NULL, NULL},
-      POPT_AUTOHELP{NULL, 0, 0, NULL, 0, NULL, NULL}};
-
-  // we have to parse the command line arguments to look for a config file
-  int optind;
-  optind = argc;
-  int j;
-  for (j = 0; j < argc; j++)
-    if (strcmp(argv[j], "--") == 0)
-      optind = j;
-
-  optCon = poptGetContext(NULL, optind, (const char **)argv, optionsTable, 0);
-  if (optCon == NULL)
-    die("Can not get a secondary popt context.");
-  poptSetOtherOptionHelp(optCon, "[OPTIONS]* ");
-
-  /* Now do options processing just to get a debug log destination and level */
-  while ((c = poptGetNextOpt(optCon)) >= 0) {
-    switch (c) {
-    case 'v':
-      increase_debug_level();
-      break;
-    case 'u':
-      inform("Warning: the option -u is no longer needed and is deprecated. Debug and statistics "
-             "output to STDERR is now the default.");
-      break;
-    case 'D':
-      inform("Warning: the option -D or --disconnectFromOutput is deprecated.");
-      break;
-    case 'R':
-      inform("Warning: the option -R or --reconnectToOutput is deprecated.");
-      break;
-    case 'A':
-      inform("Warning: the option -A or --AirPlayLatency is deprecated and ignored. This setting "
-             "is now "
-             "automatically received from the AirPlay device.");
-      break;
-    case 'i':
-      inform("Warning: the option -i or --iTunesLatency is deprecated and ignored. This setting is "
-             "now "
-             "automatically received from iTunes");
-      break;
-    case 'f':
-      inform(
-          "Warning: the option --forkedDaapdLatency is deprecated and ignored. This setting is now "
-          "automatically received from forkedDaapd");
-      break;
-    case 'r':
-      config.resync_threshold = (resync_threshold_in_frames * 1.0) / 44100;
-      inform("Warning: the option -r or --resync is deprecated and ignored!\nPlease use the "
-             "\"resync_threshold_in_seconds\" setting in the config file instead.");
-      break;
-    case 'z':
-      config.tolerance = (tolerance_in_frames * 1.0) / 44100;
-      inform("Warning: the option --tolerance is deprecated and ignored\nPlease use the "
-             "\"drift_tolerance_in_seconds\" setting in the config file instead.");
-      break;
-    }
-  }
-  if (c < -1) {
-    debug(1, "Oops");
-    die("%s: %s", poptBadOption(optCon, POPT_BADOPTION_NOALIAS), poptStrerror(c));
-  }
-
-  if (cli_backend_string != NULL)
-    die("backend selection is a removed option; PulseAudio and Avahi are required.");
-  if (daemonisewith || daemonisewithout || killOption)
-    die("daemon management is a removed option; use the systemd user service.");
-  if (stuffing != NULL && strcasecmp(stuffing, "soxr") == 0)
-    die("soxr is a removed option; use basic, vernier or auto interpolation.");
-  poptFreeContext(optCon);
-  free(raw_service_name);
-  raw_service_name = NULL;
-  free(stuffing);
-  stuffing = NULL;
-  free(cli_service_type_string);
-  cli_service_type_string = NULL;
-  free(config.cmd_start);
-  config.cmd_start = NULL;
-  free(config.cmd_stop);
-  config.cmd_stop = NULL;
-  free(config.password);
-  config.password = NULL;
-  if (config.timeout != 0) {
-    if (config.timeout < 60) {
-      inform("Note: the timeout value if invalid -- it must be 0 (i.e. no timeout) or at least 60. "
-             "Set to the default value of 60 seconds instead.");
-      config.timeout = 60;
-    }
-  }
-
-  if (log_to_syslog_selected) {
-    inform("the diagnostic \"log-to-syslog\" command_line_option is obsolete and is ignored. All logging is to STDERR, which is directed to the system log when Shairport Sync is running as a service.");
-
-  }
-
-
-
+void load_receiver_configuration() {
+  char *raw_service_name = nullptr;
   config.audio_backend_silent_lead_in_time_auto =
       1; // start outputting silence as soon as packets start arriving
   config.default_airplay_volume = -24.0;
@@ -415,9 +229,12 @@ int parse_options(int argc, char **argv) {
       temporary_airplay_id >> 16; // we only use the first 6 bytes but have imported 8.
 
   config_init(&config_file_stuff);
+  configuration_initialized = true;
 
   config_file_real_path = realpath(config.configfile, NULL);
   if (config_file_real_path == NULL) {
+    if (errno != ENOENT)
+      die("Unable to read configuration %s: %s", config.configfile, strerror(errno));
     debug(2, "can't resolve the configuration file \"%s\".", config.configfile);
   } else {
     debug(1, "looking for configuration file at full path \"%s\"", config_file_real_path);
@@ -584,6 +401,15 @@ int parse_options(int argc, char **argv) {
           die("Invalid diagnostics statistics option choice \"%s\". It should be \"yes\" or "
               "\"no\"",
               str);
+      }
+
+      if (config_lookup_string(config.cfg, "diagnostics.log_output_level", &str)) {
+        if (strcasecmp(str, "yes") == 0)
+          config.logOutputLevel = 1;
+        else if (strcasecmp(str, "no") == 0)
+          config.logOutputLevel = 0;
+        else
+          die("Invalid diagnostics.log_output_level: expected yes or no");
       }
 
       /* Get the disable_resend_requests setting. */
@@ -886,72 +712,6 @@ if (config_lookup(config.cfg, "general.alac_decoder") != NULL)
     }
   }
 
-  // now, do the command line options again, but this time do them fully -- it's a unix convention
-  // that command line
-  // arguments have precedence over configuration file settings.
-  if (config.configfile != configuration_file_path) {
-    free(config.configfile);
-    config.configfile = configuration_file_path;
-  }
-  optind = argc;
-  for (j = 0; j < argc; j++)
-    if (strcmp(argv[j], "--") == 0)
-      optind = j;
-
-  optCon = poptGetContext(NULL, optind, (const char **)argv, optionsTable, 0);
-  if (optCon == NULL)
-    die("Can not get a popt context.");
-  poptSetOtherOptionHelp(optCon, "[OPTIONS]* ");
-
-  /* Now do options processing, get portname */
-  int tdebuglev = 0;
-  while ((c = poptGetNextOpt(optCon)) >= 0) {
-    switch (c) {
-    case 'v':
-      tdebuglev++;
-      break;
-    case 't':
-      if (config.timeout == 0) {
-        config.dont_check_timeout = 1;
-        config.allow_session_interruption = 1;
-      } else {
-        config.dont_check_timeout = 0;
-        config.allow_session_interruption = 0;
-      }
-      break;
-    case 'S':
-      if (strcmp(stuffing, "basic") == 0)
-        config.packet_stuffing = ST_basic;
-      else if (strcmp(stuffing, "vernier") == 0)
-        config.packet_stuffing = ST_vernier;
-      else if (strcmp(stuffing, "auto") == 0)
-        config.packet_stuffing = ST_auto;
-      else if (strcmp(stuffing, "soxr") == 0)
-        die("The soxr option not available because this version of shairport-sync was built "
-            "without libsoxr "
-            "support. Change the -S option setting.");
-      else
-        die("Illegal stuffing option \"%s\" -- must be \"auto\", \"vernier\", \"basic\" or "
-            "\"soxr\"",
-            stuffing);
-      break;
-    }
-  }
-  if (c < -1) {
-    die("%s: %s", poptBadOption(optCon, POPT_BADOPTION_NOALIAS), poptStrerror(c));
-  }
-
-  if (cli_service_type_string != NULL)
-    die("--service-type is a removed option; only AirPlay 2 is supported.");
-
-  poptFreeContext(optCon);
-
-
-  // here, we are finally finished reading the options
-
-  // finish the Airplay 2 options
-
-
   char shared_memory_interface_name[256] = "";
   snprintf(shared_memory_interface_name, sizeof(shared_memory_interface_name), "/%s-%" PRIx64 "",
            config.appName, temporary_airplay_id);
@@ -1067,44 +827,267 @@ if (config_lookup(config.cfg, "general.alac_decoder") != NULL)
   config.airplay_pi = generate_device_uuid(config.airplay_device_id);
   config.airplay_pgid = generate_random_uuid();
 
-  /* Check if we are called with -d or --daemon or -j or justDaemoniseNoPIDFile options*/
-  if ((daemonisewith != 0) || (daemonisewithout != 0)) {
-    fprintf(stderr,
-            "%s was built without libdaemon, so does not support daemonisation using the "
-            "-d, --daemon, -j or --justDaemoniseNoPIDFile options\n",
-            config.appName);
-    exit(EXIT_FAILURE);
-  }
-
-
-
   /* if the regtype hasn't been set, do it now */
   if (config.regtype == NULL)
     config.regtype = strdup("_raop._tcp");
   if (config.regtype2 == NULL)
     config.regtype2 = strdup("_airplay._tcp");
 
-  if (tdebuglev != 0)
-    set_debug_level(tdebuglev);
-
   // now set the initial volume to the default volume
   sharedVolumeLevel.remember(config.default_airplay_volume);
-
-  ptp_send_control_message_string("T");
-  if (ptp_shm_interface_open() != 0) {
-    die("NQPTP is required for AirPlay 2 and must be running with readable, complete shared memory: %s.", strerror(errno));
-  }
-  int ptp_clock_version = ptp_get_clock_version();
-  if (ptp_clock_version == 0)
-    die("NQPTP shared memory is not initialised or its clock data is inconsistent.");
-  if (ptp_clock_version != NQPTP_SHM_STRUCTURES_VERSION)
-    die("NQPTP shared memory version %d is incompatible; version %d is required.",
-        ptp_clock_version, NQPTP_SHM_STRUCTURES_VERSION);
 
   config.service_name = service_name(raw_service_name);
 
 
-  return optind + 1;
+
+  if (config.port == 0) config.port = 7000;
+  load_pulseaudio_settings();
+#if LIBAVUTIL_VERSION_MAJOR >= 57
+
+  // default multichannel on
+  {
+    AVChannelLayout default_layout =
+        AV_CHANNEL_LAYOUT_7POINT1; // big fat macro to initialise the default layout
+    config.eight_channel_layout = default_layout.u.mask;
+  }
+  {
+    AVChannelLayout default_layout =
+        AV_CHANNEL_LAYOUT_5POINT1; // big fat macro to initialise the default layout
+    config.six_channel_layout = default_layout.u.mask;
+  }
+
+  if ((config.cfg != NULL) &&
+      (config_lookup_string(config.cfg, "general.eight_channel_mode", &str))) {
+    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
+      config.eight_channel_layout = 0; // 0 on initialisation
+    } else if ((strcasecmp(str, "on") == 0) || (strcasecmp(str, "yes") == 0)) {
+      // AVChannelLayout default_layout =
+      //     AV_CHANNEL_LAYOUT_7POINT1; // big fat macro to initialise the default layout
+      // config.eight_channel_layout = default_layout.u.mask;
+    } else {
+      AVChannelLayout channel_layout;
+      if (av_channel_layout_from_string(&channel_layout, str) == 0) {
+        if (channel_layout.nb_channels == 8) {
+          config.eight_channel_layout = channel_layout.u.mask;
+        } else {
+          warn("the eight_channel_mode setting \"%s\" is a %u-channel layout. If a channel layout "
+               "is "
+               "given, it must be an 8-channel layout. eight_channel_mode is set to \"off\".",
+               str, channel_layout.nb_channels);
+        }
+        av_channel_layout_uninit(&channel_layout);
+      } else {
+        warn("the eight_channel_mode setting \"%s\" is not recognised -- it should be \"off\" or "
+             "\"on\" or an eight-channel FFmpeg channel layout, e.g. \"7.1\". "
+             "eight_channel_mode is set to \"off\".",
+             str);
+      }
+    }
+  }
+
+  if ((config.cfg != NULL) &&
+      (config_lookup_string(config.cfg, "general.six_channel_mode", &str))) {
+    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
+      config.six_channel_layout = 0; // 0 on initialisation
+    } else if ((strcasecmp(str, "on") == 0) || (strcasecmp(str, "yes") == 0)) {
+      // AVChannelLayout default_layout =
+      //     AV_CHANNEL_LAYOUT_5POINT1; // big fat macro to initialise the default layout
+      // config.six_channel_layout = default_layout.u.mask;
+    } else {
+      AVChannelLayout channel_layout;
+      if (av_channel_layout_from_string(&channel_layout, str) == 0) {
+        if (channel_layout.nb_channels == 6) {
+          config.six_channel_layout = channel_layout.u.mask;
+        } else {
+          warn("the six_channel_mode setting \"%s\" is a %u-channel layout. If a channel layout is "
+               "given, it must be a 6-channel layout. six_channel_mode is set to \"off\".",
+               str, channel_layout.nb_channels);
+        }
+        av_channel_layout_uninit(&channel_layout);
+      } else {
+        warn("the six_channel_mode setting \"%s\" is not recognised -- it should be \"off\" or "
+             "\"on\" or a six-channel FFmpeg channel layout, e.g. \"5.1\". "
+             "six_channel_mode is set to \"off\".",
+             str);
+      }
+    }
+  }
+
+  if ((config.cfg != NULL) &&
+      (config_lookup_non_empty_string(config.cfg, "general.mixdown", &str))) {
+    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
+      config.mixdown_enable = 0; // 0 on initialisation
+      debug(1, "mixdown disabled.");
+    } else if (strcasecmp(str, "auto") == 0) {
+      config.mixdown_enable = 1;
+      config.mixdown_channel_layout = 0; // 0 means auto
+      debug(1, "mixdown target: auto.");
+    } else {
+      AVChannelLayout channel_layout;
+      if (av_channel_layout_from_string(&channel_layout, str) == 0) {
+        config.mixdown_enable = 1;
+        config.mixdown_channel_layout = channel_layout.u.mask;
+        av_channel_layout_uninit(&channel_layout);
+        debug(1, "mixdown target: \"%s\".", str);
+      } else {
+        warn("the mixdown setting \"%s\" is not recognised -- it should be \"off\" or \"auto\" or "
+             "an "
+             "FFmpeg channel layout, e.g. \"stereo\". the mixdown is set to \"auto\".",
+             str);
+        config.mixdown_enable = 1;
+        config.mixdown_channel_layout = 0; // 0 means auto
+      }
+    }
+  }
+#else
+
+  // default on
+  config.eight_channel_layout = AV_CH_LAYOUT_7POINT1;
+  config.six_channel_layout = AV_CH_LAYOUT_5POINT1;
+
+  const char *str;
+
+  if ((config.cfg != NULL) &&
+      (config_lookup_non_empty_string(config.cfg, "general.eight_channel_mode", &str))) {
+    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
+      config.eight_channel_layout = 0; // 0 on initialisation
+    } else if ((strcasecmp(str, "on") == 0) || (strcasecmp(str, "yes") == 0)) {
+      // config.eight_channel_layout = AV_CH_LAYOUT_7POINT1;
+    } else if (av_get_channel_layout(str) != 0) {
+      if (av_get_channel_layout_nb_channels(av_get_channel_layout(str)) == 8) {
+        config.eight_channel_layout = av_get_channel_layout(str);
+      } else {
+        warn("the eight_channel_mode setting \"%s\" is a %u channel layout. If a channel layout is "
+             "given, it must be an 8-channel layout. eight_channel_mode is set to \"off\".",
+             str, av_get_channel_layout_nb_channels(av_get_channel_layout(str)));
+      }
+    } else {
+      warn("the eight_channel_mode setting \"%s\" is not recognised -- it should be \"off\" or "
+           "\"on\" or an 8-channel FFmpeg channel layout, e.g. \"7.1\". "
+           "eight_channel_mode is set to \"off\".",
+           str);
+    }
+  }
+
+  if ((config.cfg != NULL) &&
+      (config_lookup_non_empty_string(config.cfg, "general.six_channel_mode", &str))) {
+    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
+      config.six_channel_layout = 0; // 0 on initialisation
+    } else if ((strcasecmp(str, "on") == 0) || (strcasecmp(str, "yes") == 0)) {
+      // config.six_channel_layout = AV_CH_LAYOUT_5POINT1;
+    } else if (av_get_channel_layout(str) != 0) {
+      if (av_get_channel_layout_nb_channels(av_get_channel_layout(str)) == 6) {
+        config.six_channel_layout = av_get_channel_layout(str);
+      } else {
+        warn("the six_channel_mode setting \"%s\" is a %u channel layout. If a channel layout is "
+             "given, it must be a 6-channel layout. six_channel_mode is set to \"off\".",
+             str, av_get_channel_layout_nb_channels(av_get_channel_layout(str)));
+      }
+    } else {
+      warn("the six_channel_mode setting \"%s\" is not recognised -- it should be \"off\" or "
+           "\"on\" or a 6-channel FFmpeg channel layout, e.g. \"5.1\". "
+           "six_channel_mode is set to \"off\".",
+           str);
+    }
+  }
+
+  if ((config.cfg != NULL) &&
+      (config_lookup_non_empty_string(config.cfg, "general.mixdown", &str))) {
+    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
+      config.mixdown_enable = 0; // 0 on initialisation
+    } else if (strcasecmp(str, "auto") == 0) {
+      config.mixdown_enable = 1;
+      config.mixdown_channel_layout = 0; // 0 means auto
+    } else if (av_get_channel_layout(str) != 0) {
+      config.mixdown_enable = 1;
+      config.mixdown_channel_layout = av_get_channel_layout(str);
+    } else {
+      warn("the mixdown setting \"%s\" is not recognised -- it should be \"off\" or \"auto\" or an "
+           "FFmpeg channel layout, e.g. \"stereo\". the mixdown is set to \"auto\".",
+           str);
+      config.mixdown_enable = 1;
+      config.mixdown_channel_layout = 0; // 0 means auto
+    }
+  }
+#endif
+
+  if (config.cfg != NULL) {
+    config_setting_t *output_channel_mapping_setting =
+        config_lookup(config.cfg, "general.output_channel_mapping");
+    if (output_channel_mapping_setting != NULL) {
+      const char *sstr = config_setting_get_string(output_channel_mapping_setting);
+      if (sstr != NULL) { // definitely a string
+        if (strcasecmp(sstr, "auto") == 0) {
+          config.output_channel_mapping_enable = 1; // this is the default anyway
+          config.output_channel_map_size = 0;       // use the device's channel map
+          debug(1, "device output channel map chosen");
+        } else if ((strcasecmp(sstr, "off") == 0) || (strcasecmp(sstr, "no") == 0)) {
+          config.output_channel_mapping_enable = 0; // no mapping
+        } else {
+          warn("the output_channel_mapping setting \"%s\" is not recognised -- it should be "
+               "\"auto\", \"off\" or a "
+               "bracketed comma-separated list of short channel names, e.g. (\"FL\", \"FR\", "
+               "\"LFE\");",
+               sstr);
+        }
+      } else {
+        int i = 0;
+        for (i = 0; i < config_setting_length(output_channel_mapping_setting); i++) {
+          // is a list or array, so okay
+          const char *channel_id =
+              config_setting_get_string_elem(output_channel_mapping_setting, i);
+          if (channel_id != NULL) { // definitely a string
+            int found = 0;
+            if (strcmp(channel_id, "--") == 0) {
+              found = 1;
+            } else {
+#if LIBAVUTIL_VERSION_MAJOR >= 57
+              const int buffer_size = 32;
+              char buffer[buffer_size];
+              enum AVChannel channel_index;
+              for (channel_index = AV_CHAN_NONE;
+                   ((channel_index < AV_CHAN_BOTTOM_FRONT_RIGHT) && (found == 0));
+                   channel_index = static_cast<AVChannel>(channel_index + 1)) {
+                found = av_channel_name(buffer, buffer_size, channel_index);
+                if (found > 0) {
+                  found = ((av_channel_name(buffer, buffer_size, channel_index) > 0) &&
+                           (strcmp(channel_id, buffer) == 0));
+                } else {
+                  found = 0;
+                }
+              }
+#else
+              uint64_t channel_index;
+              for (channel_index = 0; ((channel_index < 64) && (found == 0)); channel_index++) {
+                found = ((av_get_channel_name(1 << channel_index) != NULL) &&
+                         (strcmp(channel_id, av_get_channel_name(1 << channel_index)) == 0));
+              }
+#endif
+            }
+            if (found != 0) {
+              config.output_channel_map[i] = strdup(channel_id);
+              debug(2, "output channel %d is \"%s\".", i, config.output_channel_map[i]);
+            } else {
+
+              warn("during channel mapping, \"%s\" was not recognised as a channel name -- as a "
+                   "result, output channel %d will be silent.",
+                   channel_id, i);
+              config.output_channel_map[i] = strdup("--");
+            }
+            config.output_channel_map_size++;
+          }
+        }
+        if (config.output_channel_map_size == 0)
+          warn("the output_channel_mapping setting was empty. No output channel mapping will be "
+               "done.");
+        else
+          config.output_channel_mapping_enable = 1;
+      }
+    }
+  }
+
+
+
 }
 
 
@@ -1165,8 +1148,13 @@ void exit_function() {
         free(config.firmware_version);
       ptp_shm_interface_close(); // close it if it's open
 
-    if (config.cfg)
-      config_destroy(config.cfg);
+    if (configuration_initialized)
+      config_destroy(&config_file_stuff);
+    if (config.configfile != configuration_file_path)
+      free(config.configfile);
+    free(config.airplay_fex);
+    for (const char *channel : config.output_channel_map)
+      free(const_cast<char *>(channel));
     if (config_file_real_path)
       free(config_file_real_path);
     if (config.appName)
@@ -1432,34 +1420,25 @@ const char *av_channel_layout_name(uint64_t channel_layout) {
 */
 
 
-int shairport_receiver_main(int argc, char **argv) {
-  exit_init(); // initialise the exit handler to give us a clean safe exit on request
+static void reject_configuration(int) {
+  throw std::runtime_error("Invalid receiver configuration");
+}
+
+std::expected<ReceiverSettings, std::string> ConfigurationLoader::load(const StartupOptions &options) {
+  try {
   // initialise debug messages stuff -- level 0, no elapsed time, relative time, file and line
   // debug_init(int level, int show_elapsed_time, int show_relative_time, int show_file_and_line)
-  debug_init(0, 0, 1, 1, exit_request);
+  debug_init(0, 0, 1, 1, reject_configuration);
   memset(&config, 0, sizeof(config)); // also clears all strings, BTW
-  /* Check if we are called with -V or --version parameter */
-  if (argc >= 2 && ((strcmp(argv[1], "-V") == 0) || (strcmp(argv[1], "--version") == 0))) {
-    print_version();
-    exit(EXIT_SUCCESS);
+  config.appName = strdup("shairport-sync");
+  snprintf(configuration_file_path, sizeof(configuration_file_path), "%s/shairport-sync.conf", SYSCONFDIR);
+  config.configfile = options.configurationPath() ? strdup(options.configurationPath()->c_str()) : configuration_file_path;
+  if (options.configurationPath() && access(config.configfile, R_OK) != 0) {
+    fprintf(stderr, "Unable to read configuration %s: %s\n", config.configfile, strerror(errno));
+    free(config.configfile);
+    free(config.appName);
+    return std::unexpected("Unable to read explicitly requested configuration");
   }
-
-  // this is a bit weird, but necessary -- basename() may modify the argument passed in
-  char *basec = strdup(argv[0]);
-  char *bname = basename(basec);
-  config.appName = strdup(bname);
-  if (config.appName == NULL)
-    die("can not allocate memory for the app name!");
-  free(basec);
-
-  strcpy(configuration_file_path, SYSCONFDIR);
-  // strcat(configuration_file_path, "/shairport-sync"); // thinking about adding a special
-  // shairport-sync directory
-  strcat(configuration_file_path, "/");
-  strcat(configuration_file_path, config.appName);
-  strcat(configuration_file_path, ".conf");
-  config.configfile = configuration_file_path;
-
 #if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(53, 10, 0)
   avcodec_init();
 #endif
@@ -1471,22 +1450,6 @@ int shairport_receiver_main(int argc, char **argv) {
   else
     av_log_set_level(AV_LOG_VERBOSE);
 
-  /* Check if we are called with -h or --help parameter */
-  if (argc >= 2 && ((strcmp(argv[1], "-h") == 0) || (strcmp(argv[1], "--help") == 0))) {
-    usage(argv[0]);
-    exit(EXIT_SUCCESS);
-  }
-
-/*
-  // Check if we are called with -log-to-syslog
-  if (argc >= 2 && (strcmp(argv[1], "--log-to-syslog") == 0)) {
-    log_to_syslog_select_is_first_command_line_argument = 1;
-    log_to_syslog();
-  } else {
-    log_to_stderr();
-  }
-*/
-
   pid = getpid();
   config.log_fd = -1;
 
@@ -1496,7 +1459,8 @@ int shairport_receiver_main(int argc, char **argv) {
   atexit(exit_function);
 
   // get a device id -- the first non-local MAC address
-  get_device_id((uint8_t *)&config.hw_addr, 6);
+  if (options.operation() == StartupOptions::Operation::receive)
+    get_device_id((uint8_t *)&config.hw_addr, 6);
 
   // get the endianness
   union {
@@ -1571,28 +1535,27 @@ int shairport_receiver_main(int argc, char **argv) {
 
   r64init(0);
 
-  // parse arguments into config -- needed to locate pid_dir
-  int audio_arg = parse_options(argc, argv);
-
-  if (display_config_selected != 0) {
-    display_config(argc, argv);
-    if (argc == 2) {
-      inform(">> Goodbye!");
-      exit(EXIT_SUCCESS);
-    }
+  load_receiver_configuration();
+  return ReceiverSettings(config);
+  } catch (const std::runtime_error &failure) {
+    return std::unexpected(failure.what());
   }
+}
 
-  /* Check if we are called with -k or --kill option */
-  if (killOption != 0) {
-    warn("%s was built without libdaemon, so it does not support the -k or --kill option.",
-         config.appName);
-    return 1;
+int ReceiverApplication::run(const ReceiverSettings &settings) {
+  config = settings.values_;
+  exit_init();
+  debug_init(debug_level(), get_show_elapsed_time(), get_show_relative_timel(), get_show_file_and_line(), exit_request);
+  ptp_send_control_message_string("T");
+  if (ptp_shm_interface_open() != 0) {
+    die("NQPTP is required for AirPlay 2 and must be running with readable, complete shared memory: %s.", strerror(errno));
   }
-
-
-
-    if (config.port == 0) config.port = 7000;
-
+  int ptp_clock_version = ptp_get_clock_version();
+  if (ptp_clock_version == 0)
+    die("NQPTP shared memory is not initialised or its clock data is inconsistent.");
+  if (ptp_clock_version != NQPTP_SHM_STRUCTURES_VERSION)
+    die("NQPTP shared memory version %d is incompatible; version %d is required.",
+        ptp_clock_version, NQPTP_SHM_STRUCTURES_VERSION);
 
 
     if (has_fltp_capable_aac_decoder() == 0) {
@@ -1650,22 +1613,6 @@ int shairport_receiver_main(int argc, char **argv) {
     debug(1, "Can't print the version information!");
   }
 
-  // print command line
-
-  if (argc != 0) {
-    char result[1024];
-    char *obfp = result;
-    int i;
-    for (i = 0; i < argc - 1; i++) {
-      snprintf(obfp, strlen(argv[i]) + 2, "%s ", argv[i]);
-      obfp += strlen(argv[i]) + 1;
-    }
-    snprintf(obfp, strlen(argv[i]) + 1, "%s", argv[i]);
-    obfp += strlen(argv[i]);
-    *obfp = 0;
-    debug(1, "Command Line: \"%s\".", result);
-  }
-
   if (sodium_init() < 0) {
     debug(1, "Can't initialise libsodium!");
   } else {
@@ -1706,257 +1653,10 @@ int shairport_receiver_main(int argc, char **argv) {
         config.output_name == NULL ? "<unspecified>" : config.output_name);
   }
   debug(1, "audio backend is \"%s\".", config.output_name);
-  config.output->init(argc - audio_arg, argv + audio_arg);
+  config.output->init(0, nullptr);
 
   if (debug_level() <= 1) // keep FFmpeg stuff quiet unless verbosity is 2 or more
     av_log_set_level(AV_LOG_QUIET);
-
-#if LIBAVUTIL_VERSION_MAJOR >= 57
-
-  // default multichannel on
-  {
-    AVChannelLayout default_layout =
-        AV_CHANNEL_LAYOUT_7POINT1; // big fat macro to initialise the default layout
-    config.eight_channel_layout = default_layout.u.mask;
-  }
-  {
-    AVChannelLayout default_layout =
-        AV_CHANNEL_LAYOUT_5POINT1; // big fat macro to initialise the default layout
-    config.six_channel_layout = default_layout.u.mask;
-  }
-
-  const char *str;
-
-  if ((config.cfg != NULL) &&
-      (config_lookup_string(config.cfg, "general.eight_channel_mode", &str))) {
-    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
-      config.eight_channel_layout = 0; // 0 on initialisation
-    } else if ((strcasecmp(str, "on") == 0) || (strcasecmp(str, "yes") == 0)) {
-      // AVChannelLayout default_layout =
-      //     AV_CHANNEL_LAYOUT_7POINT1; // big fat macro to initialise the default layout
-      // config.eight_channel_layout = default_layout.u.mask;
-    } else {
-      AVChannelLayout channel_layout;
-      if (av_channel_layout_from_string(&channel_layout, str) == 0) {
-        if (channel_layout.nb_channels == 8) {
-          config.eight_channel_layout = channel_layout.u.mask;
-        } else {
-          warn("the eight_channel_mode setting \"%s\" is a %u-channel layout. If a channel layout "
-               "is "
-               "given, it must be an 8-channel layout. eight_channel_mode is set to \"off\".",
-               str, channel_layout.nb_channels);
-        }
-        av_channel_layout_uninit(&channel_layout);
-      } else {
-        warn("the eight_channel_mode setting \"%s\" is not recognised -- it should be \"off\" or "
-             "\"on\" or an eight-channel FFmpeg channel layout, e.g. \"7.1\". "
-             "eight_channel_mode is set to \"off\".",
-             str);
-      }
-    }
-  }
-
-  if ((config.cfg != NULL) &&
-      (config_lookup_string(config.cfg, "general.six_channel_mode", &str))) {
-    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
-      config.six_channel_layout = 0; // 0 on initialisation
-    } else if ((strcasecmp(str, "on") == 0) || (strcasecmp(str, "yes") == 0)) {
-      // AVChannelLayout default_layout =
-      //     AV_CHANNEL_LAYOUT_5POINT1; // big fat macro to initialise the default layout
-      // config.six_channel_layout = default_layout.u.mask;
-    } else {
-      AVChannelLayout channel_layout;
-      if (av_channel_layout_from_string(&channel_layout, str) == 0) {
-        if (channel_layout.nb_channels == 6) {
-          config.six_channel_layout = channel_layout.u.mask;
-        } else {
-          warn("the six_channel_mode setting \"%s\" is a %u-channel layout. If a channel layout is "
-               "given, it must be a 6-channel layout. six_channel_mode is set to \"off\".",
-               str, channel_layout.nb_channels);
-        }
-        av_channel_layout_uninit(&channel_layout);
-      } else {
-        warn("the six_channel_mode setting \"%s\" is not recognised -- it should be \"off\" or "
-             "\"on\" or a six-channel FFmpeg channel layout, e.g. \"5.1\". "
-             "six_channel_mode is set to \"off\".",
-             str);
-      }
-    }
-  }
-
-  if ((config.cfg != NULL) &&
-      (config_lookup_non_empty_string(config.cfg, "general.mixdown", &str))) {
-    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
-      config.mixdown_enable = 0; // 0 on initialisation
-      debug(1, "mixdown disabled.");
-    } else if (strcasecmp(str, "auto") == 0) {
-      config.mixdown_enable = 1;
-      config.mixdown_channel_layout = 0; // 0 means auto
-      debug(1, "mixdown target: auto.");
-    } else {
-      AVChannelLayout channel_layout;
-      if (av_channel_layout_from_string(&channel_layout, str) == 0) {
-        config.mixdown_enable = 1;
-        config.mixdown_channel_layout = channel_layout.u.mask;
-        av_channel_layout_uninit(&channel_layout);
-        debug(1, "mixdown target: \"%s\".", str);
-      } else {
-        warn("the mixdown setting \"%s\" is not recognised -- it should be \"off\" or \"auto\" or "
-             "an "
-             "FFmpeg channel layout, e.g. \"stereo\". the mixdown is set to \"auto\".",
-             str);
-        config.mixdown_enable = 1;
-        config.mixdown_channel_layout = 0; // 0 means auto
-      }
-    }
-  }
-#else
-
-  // default on
-  config.eight_channel_layout = AV_CH_LAYOUT_7POINT1;
-  config.six_channel_layout = AV_CH_LAYOUT_5POINT1;
-
-  const char *str;
-
-  if ((config.cfg != NULL) &&
-      (config_lookup_non_empty_string(config.cfg, "general.eight_channel_mode", &str))) {
-    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
-      config.eight_channel_layout = 0; // 0 on initialisation
-    } else if ((strcasecmp(str, "on") == 0) || (strcasecmp(str, "yes") == 0)) {
-      // config.eight_channel_layout = AV_CH_LAYOUT_7POINT1;
-    } else if (av_get_channel_layout(str) != 0) {
-      if (av_get_channel_layout_nb_channels(av_get_channel_layout(str)) == 8) {
-        config.eight_channel_layout = av_get_channel_layout(str);
-      } else {
-        warn("the eight_channel_mode setting \"%s\" is a %u channel layout. If a channel layout is "
-             "given, it must be an 8-channel layout. eight_channel_mode is set to \"off\".",
-             str, av_get_channel_layout_nb_channels(av_get_channel_layout(str)));
-      }
-    } else {
-      warn("the eight_channel_mode setting \"%s\" is not recognised -- it should be \"off\" or "
-           "\"on\" or an 8-channel FFmpeg channel layout, e.g. \"7.1\". "
-           "eight_channel_mode is set to \"off\".",
-           str);
-    }
-  }
-
-  if ((config.cfg != NULL) &&
-      (config_lookup_non_empty_string(config.cfg, "general.six_channel_mode", &str))) {
-    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
-      config.six_channel_layout = 0; // 0 on initialisation
-    } else if ((strcasecmp(str, "on") == 0) || (strcasecmp(str, "yes") == 0)) {
-      // config.six_channel_layout = AV_CH_LAYOUT_5POINT1;
-    } else if (av_get_channel_layout(str) != 0) {
-      if (av_get_channel_layout_nb_channels(av_get_channel_layout(str)) == 6) {
-        config.six_channel_layout = av_get_channel_layout(str);
-      } else {
-        warn("the six_channel_mode setting \"%s\" is a %u channel layout. If a channel layout is "
-             "given, it must be a 6-channel layout. six_channel_mode is set to \"off\".",
-             str, av_get_channel_layout_nb_channels(av_get_channel_layout(str)));
-      }
-    } else {
-      warn("the six_channel_mode setting \"%s\" is not recognised -- it should be \"off\" or "
-           "\"on\" or a 6-channel FFmpeg channel layout, e.g. \"5.1\". "
-           "six_channel_mode is set to \"off\".",
-           str);
-    }
-  }
-
-  if ((config.cfg != NULL) &&
-      (config_lookup_non_empty_string(config.cfg, "general.mixdown", &str))) {
-    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
-      config.mixdown_enable = 0; // 0 on initialisation
-    } else if (strcasecmp(str, "auto") == 0) {
-      config.mixdown_enable = 1;
-      config.mixdown_channel_layout = 0; // 0 means auto
-    } else if (av_get_channel_layout(str) != 0) {
-      config.mixdown_enable = 1;
-      config.mixdown_channel_layout = av_get_channel_layout(str);
-    } else {
-      warn("the mixdown setting \"%s\" is not recognised -- it should be \"off\" or \"auto\" or an "
-           "FFmpeg channel layout, e.g. \"stereo\". the mixdown is set to \"auto\".",
-           str);
-      config.mixdown_enable = 1;
-      config.mixdown_channel_layout = 0; // 0 means auto
-    }
-  }
-#endif
-
-  if (config.cfg != NULL) {
-    config_setting_t *output_channel_mapping_setting =
-        config_lookup(config.cfg, "general.output_channel_mapping");
-    if (output_channel_mapping_setting != NULL) {
-      const char *sstr = config_setting_get_string(output_channel_mapping_setting);
-      if (sstr != NULL) { // definitely a string
-        if (strcasecmp(sstr, "auto") == 0) {
-          config.output_channel_mapping_enable = 1; // this is the default anyway
-          config.output_channel_map_size = 0;       // use the device's channel map
-          debug(1, "device output channel map chosen");
-        } else if ((strcasecmp(sstr, "off") == 0) || (strcasecmp(sstr, "no") == 0)) {
-          config.output_channel_mapping_enable = 0; // no mapping
-        } else {
-          warn("the output_channel_mapping setting \"%s\" is not recognised -- it should be "
-               "\"auto\", \"off\" or a "
-               "bracketed comma-separated list of short channel names, e.g. (\"FL\", \"FR\", "
-               "\"LFE\");",
-               sstr);
-        }
-      } else {
-        int i = 0;
-        for (i = 0; i < config_setting_length(output_channel_mapping_setting); i++) {
-          // is a list or array, so okay
-          const char *channel_id =
-              config_setting_get_string_elem(output_channel_mapping_setting, i);
-          if (channel_id != NULL) { // definitely a string
-            int found = 0;
-            if (strcmp(channel_id, "--") == 0) {
-              found = 1;
-            } else {
-#if LIBAVUTIL_VERSION_MAJOR >= 57
-              const int buffer_size = 32;
-              char buffer[buffer_size];
-              enum AVChannel channel_index;
-              for (channel_index = AV_CHAN_NONE;
-                   ((channel_index < AV_CHAN_BOTTOM_FRONT_RIGHT) && (found == 0));
-                   channel_index = static_cast<AVChannel>(channel_index + 1)) {
-                found = av_channel_name(buffer, buffer_size, channel_index);
-                if (found > 0) {
-                  found = ((av_channel_name(buffer, buffer_size, channel_index) > 0) &&
-                           (strcmp(channel_id, buffer) == 0));
-                } else {
-                  found = 0;
-                }
-              }
-#else
-              uint64_t channel_index;
-              for (channel_index = 0; ((channel_index < 64) && (found == 0)); channel_index++) {
-                found = ((av_get_channel_name(1 << channel_index) != NULL) &&
-                         (strcmp(channel_id, av_get_channel_name(1 << channel_index)) == 0));
-              }
-#endif
-            }
-            if (found != 0) {
-              config.output_channel_map[i] = strdup(channel_id);
-              debug(2, "output channel %d is \"%s\".", i, config.output_channel_map[i]);
-            } else {
-
-              warn("during channel mapping, \"%s\" was not recognised as a channel name -- as a "
-                   "result, output channel %d will be silent.",
-                   channel_id, i);
-              config.output_channel_map[i] = strdup("--");
-            }
-            config.output_channel_map_size++;
-          }
-        }
-        if (config.output_channel_map_size == 0)
-          warn("the output_channel_mapping setting was empty. No output channel mapping will be "
-               "done.");
-        else
-          config.output_channel_mapping_enable = 1;
-      }
-    }
-  }
-
 
   switch (config.endianness) {
   case SS_LITTLE_ENDIAN:
@@ -2147,4 +1847,28 @@ int shairport_receiver_main(int argc, char **argv) {
     usleep(1000000);
   }
   return 0;
+}
+
+int shairport_receiver_main(int argc, char **argv) {
+  std::vector<std::string_view> arguments(argv + 1, argv + argc);
+  const auto options = StartupOptions::parse(arguments);
+  if (!options) {
+    fprintf(stderr, "%s\n", options.error().c_str());
+    return 2;
+  }
+  if (options->operation() == StartupOptions::Operation::version) {
+    print_version();
+    return 0;
+  }
+
+
+  const auto settings = ConfigurationLoader::load(*options);
+  if (!settings) {
+    fprintf(stderr, "%s\n", settings.error().c_str());
+    return 1;
+  }
+  if (options->operation() == StartupOptions::Operation::checkConfiguration)
+    return 0;
+  ReceiverApplication application;
+  return application.run(*settings);
 }
