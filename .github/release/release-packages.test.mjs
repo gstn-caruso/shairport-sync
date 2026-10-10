@@ -19,7 +19,7 @@ const packageFor = (cwd, architecture, packageVersion = version, filenameArchite
   const root = join(cwd, `fixture-${filenameArchitecture}`);
   mkdirSync(join(root, 'DEBIAN'), {recursive: true});
   writeFileSync(join(root, 'DEBIAN/control'), `Package: shairport-sync\nVersion: ${packageVersion}\nArchitecture: ${architecture}\nMaintainer: Test <test@example.com>\nDescription: Release fixture\n`);
-  execFileSync('dpkg-deb', ['--build', root, join(cwd, 'build/release/packages', `shairport-sync_${packageVersion}_${filenameArchitecture}.deb`)], {stdio: 'pipe'});
+  execFileSync('dpkg-deb', ['--build', root, join(cwd, 'build/release/packages', `shairport-sync_${version}_${filenameArchitecture}.deb`)], {stdio: 'pipe'});
 };
 const silentOutput = () => new Writable({write(chunk, encoding, callback) { callback(); }});
 const context = cwd => ({cwd, env: {...process.env, RELEASE_VERSION: version}, nextRelease: {version}, logger: {log() {}}, stdout: silentOutput(), stderr: silentOutput()});
@@ -40,15 +40,25 @@ test('publication prepares the same version from exactly two native packages', a
   }
 });
 
-for (const failure of ['missing ARM64', 'wrong version', 'wrong architecture', 'unexpected extra package', 'changed plan']) {
+for (const [failure, arrange] of [
+  ['missing ARM64', () => {}],
+  ['wrong version', cwd => packageFor(cwd, 'arm64', '5.6.0')],
+  ['wrong architecture', cwd => packageFor(cwd, 'amd64', version, 'arm64')],
+  ['unexpected extra package', cwd => {
+    packageFor(cwd, 'arm64');
+    packageFor(cwd, 'all');
+  }],
+  ['changed plan', (cwd, invocation) => {
+    packageFor(cwd, 'arm64');
+    invocation.env.RELEASE_VERSION = '5.8.0';
+  }]
+]) {
   test(`publication rejects ${failure} before updating VERSION`, async () => {
     const cwd = fixture();
     try {
       packageFor(cwd, 'amd64');
-      if (failure !== 'missing ARM64') packageFor(cwd, failure === 'wrong architecture' ? 'amd64' : 'arm64', failure === 'wrong version' ? '5.6.0' : version, 'arm64');
-      if (failure === 'unexpected extra package') packageFor(cwd, 'all');
       const invocation = context(cwd);
-      if (failure === 'changed plan') invocation.env.RELEASE_VERSION = '5.8.0';
+      arrange(cwd, invocation);
       await assert.rejects(prepare(execution, invocation));
       assert.equal(existsSync(join(cwd, 'VERSION')), false);
     } finally {
