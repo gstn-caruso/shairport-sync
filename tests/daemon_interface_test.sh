@@ -2,6 +2,7 @@
 set -eu
 source_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 binary=$1
+default_path=$2
 test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT HUP INT TERM
 cc -shared -fPIC "$source_dir/tests/daemon_services_fixture.c" -o "$test_dir/services.so"
@@ -22,6 +23,13 @@ check_status() {
 }
 check_status 0 --version
 test -s "$test_dir/output"
+DAEMON_TEST_DEFAULT_PATH=$default_path check_status 0 --check-config
+DAEMON_TEST_DEFAULT_PATH=$default_path DAEMON_TEST_DEFAULT_UNREADABLE=1 check_status 1 --check-config
+ln -s "$(realpath "$binary")" "$test_dir/renamed-receiver"
+original_binary=$binary
+binary=$test_dir/renamed-receiver
+DAEMON_TEST_DEFAULT_PATH=$default_path check_status 0 --check-config
+binary=$original_binary
 printf 'general = { name = "Daemon fixture"; port = 7100; };\n' > "$test_dir/valid.conf"
 check_status 0 --check-config --config "$test_dir/valid.conf"
 check_status 0 --config "$test_dir/valid.conf" --check-config
@@ -29,6 +37,10 @@ check_status 1 --check-config --config "$test_dir/missing.conf"
 check_status 1 --config "$test_dir/missing.conf"
 check_status 1 --check-config --config "$test_dir"
 printf 'general = { port = -1; };\n' > "$test_dir/invalid.conf"
+check_status 1 --check-config --config "$test_dir/invalid.conf"
+printf 'general = { port = "wrong type"; };\n' > "$test_dir/invalid.conf"
+check_status 1 --check-config --config "$test_dir/invalid.conf"
+printf 'pulseaudio = { output_rate = true; };\n' > "$test_dir/invalid.conf"
 check_status 1 --check-config --config "$test_dir/invalid.conf"
 printf 'diagnostics = { log_output_level = "invalid"; };\n' > "$test_dir/invalid.conf"
 check_status 1 --check-config --config "$test_dir/invalid.conf"

@@ -35,6 +35,7 @@
 #include <net/if.h>
 #include "app/startup_options.hpp"
 #include "app/configuration_loader.hpp"
+#include "app/configuration_validation.hpp"
 #include "app/receiver_application.hpp"
 #include <vector>
 #include <stdexcept>
@@ -245,6 +246,8 @@ void load_receiver_configuration() {
       // make config.cfg point to it
       config.cfg = &config_file_stuff;
       reject_removed_settings(config.cfg);
+      if (const auto valid = validateConfigurationTypes(*config.cfg); !valid)
+        die("%s", valid.error().c_str());
 
       /* See if a specific service type has been requested */
       if (config_lookup_non_empty_string(config.cfg, "general.service_type", &str)) {
