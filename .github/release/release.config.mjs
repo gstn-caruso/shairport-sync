@@ -7,15 +7,18 @@ export default {
     ['@semantic-release/changelog', {changelogFile: 'CHANGELOG.md'}],
     ['@semantic-release/exec', {
       prepareCmd: `set -eu
-printf '%s\\n' '<%= nextRelease.version %>' > VERSION
-cmake -S . -B build/release -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/clang-toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_SYSCONFDIR=/etc -DUSE_GIT_VERSION=OFF
-cmake --build build/release --parallel 2
-ctest --test-dir build/release --no-tests=error --output-on-failure
-cpack --config build/release/CPackConfig.cmake -B build/release/packages
-test "$(dpkg-deb -f build/release/packages/*.deb Version)" = '<%= nextRelease.version %>'
-dpkg-deb -x build/release/packages/*.deb build/release/package-check
-build/release/package-check/usr/bin/shairport-sync --version | grep -F '<%= nextRelease.version %>-AirPlay2-'
-(cd build/release/packages && sha256sum *.deb > SHA256SUMS)`
+test "$RELEASE_VERSION" = '<%= nextRelease.version %>'
+set -- build/release/packages/*.deb
+test "$#" -eq 2
+for architecture in amd64 arm64; do
+  package="build/release/packages/shairport-sync_<%= nextRelease.version %>_$architecture.deb"
+  test -f "$package"
+  test "$(dpkg-deb -f "$package" Package)" = shairport-sync
+  test "$(dpkg-deb -f "$package" Version)" = '<%= nextRelease.version %>'
+  test "$(dpkg-deb -f "$package" Architecture)" = "$architecture"
+done
+(cd build/release/packages && sha256sum *.deb > SHA256SUMS)
+printf '%s\\n' '<%= nextRelease.version %>' > VERSION`
     }],
     ['@semantic-release/git', {
       assets: ['VERSION', 'CHANGELOG.md'],
