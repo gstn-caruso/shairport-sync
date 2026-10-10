@@ -2,17 +2,22 @@
 #include <algorithm>
 #include <sstream>
 
+std::vector<std::string> ChannelMapping::Specification::requestedNames() const {
+  auto requested = enabled ? names : std::vector<std::string>{};
+  if (enabled && requested.empty()) {
+    std::istringstream device(deviceNames);
+    for (std::string name; device >> name;)
+      requested.push_back(std::move(name));
+  }
+  return requested;
+}
+
 ChannelMapping ChannelMapping::from(std::vector<std::string> sourceNames, unsigned outputChannels,
                                     const Specification &specification) {
   ChannelMapping mapping;
   mapping.sourceChannels_ = sourceNames.size();
   mapping.selections_.resize(outputChannels);
-  auto names = specification.enabled ? specification.names : std::vector<std::string>{};
-  if (specification.enabled && names.empty()) {
-    std::istringstream device(specification.deviceNames);
-    for (std::string name; device >> name;)
-      names.push_back(std::move(name));
-  }
+  const auto names = specification.requestedNames();
   std::vector<bool> used(sourceNames.size());
   std::vector<bool> assigned(outputChannels);
   for (size_t index = 0; index < outputChannels && index < names.size(); ++index) {
