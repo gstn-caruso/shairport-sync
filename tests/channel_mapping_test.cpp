@@ -58,6 +58,15 @@ TEST(ChannelMapping, DeviceNamesSupplyOrderWhenExplicitNamesAreEmpty) {
   checkMapping({true, {}, "FR FL"}, 9, 5);
 }
 
+TEST(ChannelMapping, NamesBeyondOutputCapacityDoNotMarkIncomplete) {
+  auto mapping = ChannelMapping::from({"FL", "FR"}, 1, {true, {"FR", "UNKNOWN"}, ""});
+  const std::array<int16_t, 2> input{5, 9};
+  std::array<int16_t, 1> output{};
+  ASSERT_TRUE(mapping.map(input, output));
+  EXPECT_EQ(output[0], 9);
+  EXPECT_FALSE(mapping.isIncomplete());
+}
+
 TEST(ChannelMapping, UnknownNameUsesRemainingUnassignedSourceChannel) {
   checkMapping({true, {"UNKNOWN", "FL"}, ""}, 9, 5);
 }
