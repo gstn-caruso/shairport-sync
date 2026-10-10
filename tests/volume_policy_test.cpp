@@ -54,6 +54,19 @@ TEST(VolumePolicy, OversizedSoftwareRangeRetainsAvailableRange) {
   EXPECT_EQ(VolumePolicy::plan(0, settings, {}).softwareAttenuation, 0);
 }
 
+TEST(VolumePolicy, OversizedMixedRangeReportsIgnoredRequest) {
+  VolumeSettings settings;
+  settings.rangeDb = 200;
+  settings.profile = VolumeProfile::flat;
+  OutputVolumeCapabilities hardware{{VolumeRange{-4000, 0}}, true};
+  auto plan = VolumePolicy::plan(-15, settings, hardware);
+  EXPECT_TRUE(plan.rangeIgnored);
+  EXPECT_EQ(plan.scaledAttenuation, 6815);
+  EXPECT_EQ(plan.hardwareAttenuation, -4000);
+  EXPECT_EQ(plan.softwareAttenuation, -2815);
+  EXPECT_EQ(plan.gainFixed16, int(65536 * std::pow(10, -2815.0 / 2000)));
+}
+
 TEST(VolumePolicy, ProfilesPreserveAttenuationAndFixedGain) {
   VolumeSettings settings;
   settings.rangeDb = 60;
