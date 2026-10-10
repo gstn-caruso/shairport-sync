@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 4.2)
-project(shairport-sync VERSION 5.5.1 LANGUAGES C CXX)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" receiver_version LIMIT_COUNT 1)
+project(shairport-sync VERSION "${receiver_version}" LANGUAGES C CXX)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
   message(FATAL_ERROR "Linux is the only supported platform")
@@ -48,13 +49,15 @@ endif()
 find_program(PLISTUTIL plistutil REQUIRED)
 find_program(XXD xxd REQUIRED)
 find_package(Git QUIET)
-if(Git_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+option(USE_GIT_VERSION "Include Git revision information in development binaries" ON)
+if(USE_GIT_VERSION AND Git_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
   set(CONFIG_USE_GIT_VERSION_STRING 1)
   add_custom_target(git-version ALL
     COMMAND "${CMAKE_COMMAND}" "-DGIT=${GIT_EXECUTABLE}" "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
       "-DOUTPUT=${CMAKE_BINARY_DIR}/cmake-gitversion.h" -P "${CMAKE_SOURCE_DIR}/cmake/git-version.cmake"
     BYPRODUCTS "${CMAKE_BINARY_DIR}/cmake-gitversion.h")
 endif()
+
 configure_file(cmake/config.h.in config.h)
 add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/plists/get_info_response.cpp" "${CMAKE_BINARY_DIR}/plists/get_info_response.h"
   COMMAND sh "${CMAKE_SOURCE_DIR}/xml_plist_codegen.sh" "${CMAKE_SOURCE_DIR}/plists/get_info_response.xml" "${CMAKE_BINARY_DIR}/plists"
@@ -296,3 +299,5 @@ if(BUILD_TESTING)
   add_test(NAME removed-options COMMAND sh "${CMAKE_SOURCE_DIR}/tests/removed_options_test.sh" "$<TARGET_FILE:shairport-sync>")
   add_test(NAME configure-contract COMMAND sh "${CMAKE_SOURCE_DIR}/tests/cmake_configure_test.sh" "${CMAKE_BINARY_DIR}" "${CMAKE_C_COMPILER}" "${CMAKE_CXX_COMPILER}" "$<TARGET_FILE:receiver-linkage-test>")
 endif()
+
+include(cmake/debian-package.cmake)
