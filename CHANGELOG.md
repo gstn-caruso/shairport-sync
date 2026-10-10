@@ -1,3 +1,10 @@
+## [5.7.1](https://github.com/gstn-caruso/shairport-sync/compare/v5.7.0...v5.7.1) (2026-10-10)
+
+### Code Refactoring
+
+* **audio-format:** delegate channel mapping decisions ([#27](https://github.com/gstn-caruso/shairport-sync/issues/27)) ([8b495a7](https://github.com/gstn-caruso/shairport-sync/commit/8b495a755c757f904964d826944f56b2f3277548))
+* **volume:** delegate attenuation range decisions ([#26](https://github.com/gstn-caruso/shairport-sync/issues/26)) ([fd1ca7b](https://github.com/gstn-caruso/shairport-sync/commit/fd1ca7bd333de7c000b0ea8629fc354600062408))
+
 ## [5.7.0](https://github.com/gstn-caruso/shairport-sync/compare/v5.6.0...v5.7.0) (2026-10-10)
 
 ### Features
