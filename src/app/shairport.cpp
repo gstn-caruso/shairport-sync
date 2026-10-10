@@ -1542,6 +1542,12 @@ std::expected<ReceiverSettings, std::string> ConfigurationLoader::load(const Sta
   r64init(0);
 
   load_receiver_configuration();
+  if (config.userSuppliedLatency != 0 &&
+      (config.userSuppliedLatency < 4410 ||
+       config.userSuppliedLatency > BUFFER_FRAMES * 352 - 22050))
+    die("An out-of-range fixed latency has been specified. It must be between 4410 and %d (at "
+        "44100 frames per second).",
+        BUFFER_FRAMES * 352 - 22050);
   return ReceiverSettings(config);
   } catch (const std::runtime_error &failure) {
     return std::unexpected(failure.what());
@@ -1690,12 +1696,6 @@ int ReceiverApplication::run(const ReceiverSettings &settings) {
            "latency automatically from the source.");
     inform("Use the audio_backend_latency_offset_in_seconds setting "
            "instead to compensate for timing issues.");
-    if ((config.userSuppliedLatency != 0) &&
-        ((config.userSuppliedLatency < 4410) ||
-         (config.userSuppliedLatency > BUFFER_FRAMES * 352 - 22050)))
-      die("An out-of-range fixed latency has been specified. It must be between 4410 and %d (at "
-          "44100 frames per second).",
-          BUFFER_FRAMES * 352 - 22050);
   }
   const int option_print_level = 1;
   /* Print out options */

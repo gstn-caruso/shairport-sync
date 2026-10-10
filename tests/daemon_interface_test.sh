@@ -33,6 +33,14 @@ binary=$original_binary
 printf 'general = { name = "Daemon fixture"; port = 7100; };\n' > "$test_dir/valid.conf"
 check_status 0 --check-config --config "$test_dir/valid.conf"
 check_status 0 --config "$test_dir/valid.conf" --check-config
+for latency in 0 4410 11025 338398; do
+  printf 'latencies = { default = %s; };\n' "$latency" > "$test_dir/latency.conf"
+  check_status 0 --check-config --config "$test_dir/latency.conf"
+done
+for latency in -1 1 4409 338399; do
+  printf 'latencies = { default = %s; };\n' "$latency" > "$test_dir/latency.conf"
+  check_status 1 --check-config --config "$test_dir/latency.conf"
+done
 check_status 1 --check-config --config "$test_dir/missing.conf"
 check_status 1 --config "$test_dir/missing.conf"
 check_status 1 --check-config --config "$test_dir"
