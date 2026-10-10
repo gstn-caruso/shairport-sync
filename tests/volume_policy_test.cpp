@@ -87,6 +87,20 @@ TEST(VolumePolicy, HardwareSetterWithoutRangeUsesSoftwareGain) {
   EXPECT_TRUE(plan.unmute);
 }
 
+TEST(VolumePolicy, MuteRetainsRangeWarningWithoutGainChanges) {
+  VolumeSettings settings;
+  settings.maximumDb = -50;
+  OutputVolumeCapabilities hardware{{VolumeRange{-4000, 0}}, true};
+  auto plan = VolumePolicy::plan(-144, settings, hardware);
+  EXPECT_TRUE(plan.maximumIgnored);
+  EXPECT_TRUE(plan.requestMute);
+  EXPECT_FALSE(plan.hardwareAttenuation);
+  EXPECT_FALSE(plan.gainFixed16);
+  EXPECT_FALSE(plan.unmute);
+  EXPECT_EQ(plan.scaledAttenuation, 0);
+  EXPECT_EQ(plan.softwareAttenuation, 0);
+}
+
 TEST(VolumePolicy, ProfilesPreserveAttenuationAndFixedGain) {
   VolumeSettings settings;
   settings.rangeDb = 60;
