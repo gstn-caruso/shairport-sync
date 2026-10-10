@@ -76,7 +76,8 @@ workflow verified all four AMD64 configurations before publication. The tag,
 `VERSION`, changelog, downloaded checksum, Debian version/architecture,
 extracted binary version, and packaged sample configuration were checked.
 Assets contain only `shairport-sync_6.0.1_amd64.deb` and `SHA256SUMS`, with no
-ARM package. v6.0.1 was not installed; the installed receiver remains v6.0.0.
+ARM package. At that checkpoint, v6.0.1 was not installed and the receiver
+remained v6.0.0.
 
 The v6.0.0 package was installed in the user's existing setup. Its existing receiver
 configuration passed validation and was preserved. A systemd user-service
@@ -84,9 +85,7 @@ override selects `/usr/bin/shairport-sync --config` with that configuration.
 The service remained active with no restart or startup error, connected to
 the existing PulseAudio-on-PipeWire environment, and advertised through
 Avahi. NQPTP was already running. The user subsequently reported that the
-installed v6 works correctly and confirmed stereo playback. Keep that installed
-release unchanged while development continues unless another installation is
-requested.
+installed v6 works correctly and confirmed stereo playback.
 
 This user report validates stereo operation in that setup; the sender device
 and app were not specified. It does not establish the surround, pairing,
@@ -96,7 +95,8 @@ Since that historical installation check, PR45 shipped the bundled timing
 companion in **v6.1.0**. At the start of the monitor slice, the installed package
 was verified as 6.1.0 and its receiver service was active. This migration did
 not install or restart it; no additional device-playback claim follows from
-the package/service check.
+the package/service check. Keep the installed v6.1.0 unchanged unless another
+installation is requested.
 
 ## Work still open
 
