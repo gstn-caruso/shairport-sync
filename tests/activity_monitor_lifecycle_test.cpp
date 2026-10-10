@@ -23,15 +23,15 @@ struct HookEvent {
 
 class HookTranscript {
 public:
-  HookTranscript() {
+  explicit HookTranscript(double idleTimeout = 0.0, bool waitForStopHook = false) {
     EXPECT_EQ(pipe(events_.data()), 0);
     EXPECT_EQ(pipe(release_.data()), 0);
     start_ = command('A', release_[0]);
-    stop_ = command('D', -1);
+    stop_ = command('D', waitForStopHook ? release_[0] : -1);
     config.cmd_active_start = start_.data();
     config.cmd_active_stop = stop_.data();
     config.cmd_blocking = 1;
-    config.active_state_timeout = 0.0;
+    config.active_state_timeout = idleTimeout;
     activity_monitor_start();
   }
 
@@ -95,7 +95,10 @@ int main(int argc, char **argv) {
       return 1;
     if (releaseFd >= 0) {
       pollfd release{releaseFd, POLLIN, 0};
-      poll(&release, 1, 2000);
+      if (poll(&release, 1, 2000) == 1) {
+        char wake;
+        read(releaseFd, &wake, 1);
+      }
     }
     return 0;
   }
@@ -275,3 +278,19 @@ TEST(ActivityMonitorLifecycle, StopWaitsForAdmittedHookWithoutBlockingStatusOrAl
   EXPECT_EQ(hooks.next(50).transition, '\0');
   EXPECT_EQ(activity_status(), am_inactive);
 }
+
+TEST(ActivityMonitorLifecycle, DuplicateLifecycleAndPendingDeadlineDeactivateExactlyOnce) {
+  HookTranscript hooks(0.1);
+  hooks.release();
+  activity_monitor_signify_activity(1);
+  EXPECT_EQ(hooks.next().transition, 'A');
+  activity_monitor_start();
+  activity_monitor_signify_activity(0);
+  ASSERT_TRUE(reachesStatus(am_timing_out));
+  activity_monitor_stop();
+  activity_monitor_stop();
+  EXPECT_EQ(hooks.next().transition, 'D');
+  EXPECT_EQ(hooks.next(150).transition, '\0');
+  EXPECT_EQ(activity_status(), am_inactive);
+}
+
