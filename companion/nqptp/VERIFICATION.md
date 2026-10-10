@@ -50,3 +50,21 @@ Green: all nine timing cases pass after validating control commands before
 mutation and checking signed lengths before reading packets. Minimal Follow_Up
 packets no longer trigger unconditional reads of optional TLV diagnostics.
 Timing calculations remain covered by the six upstream oracle cases.
+
+## Runtime ownership and restart
+
+Red: ownership tests failed to link against the imported implementation because
+it provided only process-global `exit`/`atexit` cleanup, not the declared Runtime
+ownership API (`build/lifecycle-red.log`). Green: eight Runtime cases verify
+startup rollback on required-port conflicts (including either IPv4 or IPv6
+while the other family could bind), preservation of existing shared-memory
+contents, rollback on injected sizing/mapping failure, normal restart and
+SIGTERM shutdown followed by restart. These tests bind distinct loopback
+endpoints on unprivileged ports with per-process shared-memory names.
+An unavailable IPv6 kernel is an explicitly reported skip for that one case.
+No production sockets, `/nqptp` object or installed service were touched.
+
+The IPv6 conflict case initially failed: this host's `/etc/hosts` resolves
+`localhost` only to IPv4. Runtime now binds both numerical loopback addresses
+explicitly, skipping only an unavailable IPv6 protocol. The repeated companion
+selection passed 19/19 cases, including both family conflicts.

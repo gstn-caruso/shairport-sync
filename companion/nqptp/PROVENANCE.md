@@ -13,3 +13,18 @@ The receiver's `src/timing/nqptp-shm-structures.h` is the canonical C-compatible
 SMI10 contract, supplied through `nqptp-ipc`; there is no companion copy.
 Both executables report the monorepo release version, while companion output
 also identifies NQPTP 1.2.8 and smi10.
+
+The runtime replaces upstream `exit`/`atexit` cleanup with explicit ownership
+of sockets, mapping, descriptor and exclusively created shared-memory object.
+Signals are blocked during startup and consumed through signalfd, avoiding
+logging or cleanup from asynchronous signal handlers. Binding any required
+supported-family address fails startup on conflict. Endpoint and mapping-call
+injection is internal to tests; the executable keeps the upstream endpoints.
+Unused legacy per-client mappings and the old socket-opening helper were removed.
+
+Packet handlers retain upstream timing arithmetic, first-peer selection,
+awakening announcements and T/B/E/P semantics. Boundary changes reject malformed
+control before mutation, check signed lengths before packet access, copy wire
+messages to typed packed objects, and remove unchecked optional TLV diagnostics.
+Wire layouts use platform packing pragmas with standard fixed-size members,
+replacing zero-length array members. There is no GNU language-extension mode.

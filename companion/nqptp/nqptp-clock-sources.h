@@ -60,15 +60,6 @@ typedef struct {
 } clock_source_private_data;
 
 // information on each client
-typedef struct {
-  int shm_fd;
-  struct shm_structure *shared_memory; // the client's individual smi interface
-  char shm_interface_name[64];         // it's name
-  int client_id; // the 1-based index number of clocks' client_flags field associated with this
-                 // interface
-} client_record;
-
-extern int shm_fd;
 extern struct shm_structure *shared_memory;
 
 int find_clock_source_record(char *sender_string, clock_source_private_data *clocks_private_info);
@@ -78,11 +69,6 @@ int create_clock_source_record(char *sender_string, clock_source_private_data *c
 void update_clock_self_identifications(clock_source_private_data *clocks_private_info);
 
 void manage_clock_sources(uint64_t reception_time, clock_source_private_data *clocks_private_info);
-
-int get_client_id(char *client_shared_memory_interface_name);
-const char *get_client_name(int client_id);
-int delete_client(int client_id);
-int delete_clients();
 
 extern clock_source_private_data clocks_private[MAX_CLOCKS];
 

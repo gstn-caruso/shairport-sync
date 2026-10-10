@@ -40,7 +40,6 @@ typedef struct {
   socket_info sockets[MAX_OPEN_SOCKETS];
 } sockets_open_bundle;
 
-void open_sockets_at_port(const char *node, uint16_t port, sockets_open_bundle *sockets_open_stuff);
 void debug_print_buffer(int level, char *buf, size_t buf_len);
 uint64_t get_self_clock_id(); // a clock ID based on a MAC address
 }
