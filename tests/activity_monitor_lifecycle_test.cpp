@@ -21,6 +21,63 @@ struct HookEvent {
 };
 
 
+class HookTranscript {
+public:
+  HookTranscript() {
+    EXPECT_EQ(pipe(events_.data()), 0);
+    EXPECT_EQ(pipe(release_.data()), 0);
+    start_ = command('A', release_[0]);
+    stop_ = command('D', -1);
+    config.cmd_active_start = start_.data();
+    config.cmd_active_stop = stop_.data();
+    config.cmd_blocking = 1;
+    config.active_state_timeout = 0.0;
+    activity_monitor_start();
+  }
+
+  ~HookTranscript() {
+    release();
+    activity_monitor_stop();
+    config.cmd_active_start = nullptr;
+    config.cmd_active_stop = nullptr;
+    config.cmd_blocking = 0;
+    while (next(0).transition != '\0') {}
+    for (auto child : children_)
+      waitpid(child, nullptr, 0);
+    for (auto fd : events_)
+      close(fd);
+    for (auto fd : release_)
+      close(fd);
+  }
+
+  HookEvent next(int timeout = 500) {
+    pollfd ready{events_[0], POLLIN, 0};
+    if (poll(&ready, 1, timeout) != 1)
+      return {0, '\0'};
+    HookEvent event{};
+    if (read(events_[0], &event, sizeof(event)) != sizeof(event))
+      return {0, '\0'};
+    children_.push_back(event.child);
+    return event;
+  }
+
+  void release() {
+    const char wake = 'x';
+    EXPECT_EQ(write(release_[1], &wake, 1), 1);
+  }
+
+private:
+  std::string command(char transition, int releaseFd) {
+    return "/proc/self/exe --activity-hook " + std::to_string(events_[1]) + " " +
+           std::to_string(releaseFd) + " " + transition;
+  }
+  std::array<int, 2> events_{};
+  std::array<int, 2> release_{};
+  std::vector<pid_t> children_;
+  std::string start_;
+  std::string stop_;
+};
+
 static int exitEventFd;
 
 static void observeExplicitExitStop() {
@@ -173,3 +230,23 @@ TEST(ActivityMonitorLifecycle, StopClosesAdmissionAndCanRestart) {
   EXPECT_EQ(config.keep_dac_busy, 0);
   activity_monitor_stop();
 }
+
+TEST(ActivityMonitorLifecycle, StopWaitsForAdmittedHookWithoutBlockingStatusOrAllowingLateActivation) {
+  HookTranscript hooks;
+  auto activation = std::async(std::launch::async, [] { activity_monitor_signify_activity(1); });
+  ASSERT_EQ(hooks.next().transition, 'A');
+  auto status = std::async(std::launch::async, [] { return activity_status(); });
+  ASSERT_EQ(status.wait_for(100ms), std::future_status::ready);
+  EXPECT_EQ(status.get(), am_active);
+  auto stop = std::async(std::launch::async, [] { activity_monitor_stop(); });
+  EXPECT_EQ(stop.wait_for(20ms), std::future_status::timeout);
+  auto lateActivation = std::async(std::launch::async, [] { activity_monitor_signify_activity(1); });
+  hooks.release();
+  EXPECT_EQ(activation.wait_for(500ms), std::future_status::ready);
+  EXPECT_EQ(stop.wait_for(500ms), std::future_status::ready);
+  EXPECT_EQ(lateActivation.wait_for(500ms), std::future_status::ready);
+  EXPECT_EQ(hooks.next().transition, 'D');
+  EXPECT_EQ(hooks.next(50).transition, '\0');
+  EXPECT_EQ(activity_status(), am_inactive);
+}
+
