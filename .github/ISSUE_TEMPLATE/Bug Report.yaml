@@ -31,7 +31,7 @@ body:
     id: version
     attributes:
       label: Configuration Information.
-      description: Please paste the results of `shairport-sync --displayConfig` here, if available. This gives useful information about the environment Shairport Sync is running in and also displays the command line options and configuration settings. If `shairport-sync --displayConfig` is not available, please paste the results of two commands `uname -a` and  `shairport-sync -V`.
+      description: Please include `uname -a`, `shairport-sync --version`, configuration validation with `shairport-sync --check-config`, and relevant `journalctl --user -u shairport-sync` output. Remove private configuration values before sharing.
       render: shell
     validations:
       required: true

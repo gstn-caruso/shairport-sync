@@ -3,6 +3,7 @@ Description=Shairport Sync AirPlay 2 receiver (PulseAudio)
 After=network.target
 
 [Service]
+Type=simple
 ExecStart=/usr/local/bin/shairport-sync
 Restart=on-failure
 RestartSec=3

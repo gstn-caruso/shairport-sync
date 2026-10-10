@@ -1,5 +1,49 @@
 # Build configuration
 
+## Foreground operation
+
+The operational interface accepts only no arguments, `--config PATH`,
+`--version`, and `--check-config [--config PATH]`. Version reporting and
+configuration validation work without running PulseAudio, Avahi or NQPTP.
+No arguments use `shairport-sync.conf` in the installation configuration
+directory (`/etc` in Debian packages); an absent default file uses built-in
+defaults. Explicit missing or unreadable files fail. Invalid arguments exit 2;
+configuration or startup failures exit 1.
+
+Run under the systemd user service. Logs go to stderr for the journal. Restart
+after configuration changes. SIGTERM and SIGINT request shutdown; worker
+cancellation will migrate to cooperative stopping in the concurrency stage.
+
+Legacy setting flags are removed. Move supported settings to libconfig:
+
+| Former flag | Configuration equivalent |
+| --- | --- |
+| `--name` | `general.name` |
+| `--port` | `general.port` |
+| `--password` | `general.password` |
+| `--stuffing` | `general.interpolation` |
+| `--statistics` | `diagnostics.statistics` |
+| `--verbose` | `diagnostics.log_verbosity` |
+| `--logOutputLevel` | `diagnostics.log_output_level` |
+| `--on-start`, `--on-stop` | `sessioncontrol.run_this_before_play_begins`, `sessioncontrol.run_this_after_play_ends` |
+| `--wait-cmd` | `sessioncontrol.wait_for_completion` |
+| `--timeout` | `sessioncontrol.session_timeout` |
+| `--latency` | `latencies.default` (deprecated; prefer `general.audio_backend_latency_offset_in_seconds`) |
+| Deprecated `--resync`, `--tolerance` | `general.resync_threshold_in_seconds`, `general.drift_tolerance_in_seconds` |
+
+Use `--config PATH` instead of `-c` or `--configfile`; `--version` replaces `-V`.
+Daemon/PID/control, backend-selection and syslog flags are unsupported. Use
+`journalctl --user -u shairport-sync` for diagnostics.
+
+The loader supplies an immutable settings snapshot to `ReceiverApplication`.
+Loading and runtime workers still use the legacy global configuration adapter;
+removing that representation belongs to the session/infrastructure stages.
+The settings snapshot does not imply complete resource ownership migration.
+The popt library remains solely for existing subprocess-hook argument splitting;
+operational arguments use `StartupOptions`.
+
+## Build stack
+
 The CMake build is AirPlay 2 on Linux using PulseAudio, Avahi, OpenSSL and FFmpeg. These dependencies cannot be disabled. Other platforms fail explicitly.
 
 Use `-DCMAKE_INSTALL_PREFIX=/usr/local` and `-DCMAKE_INSTALL_SYSCONFDIR=/etc` to choose installation paths. `-DINSTALL_CONFIG_FILES=OFF` skips sample configuration installation. See [BUILD.md](BUILD.md) for the pinned compiler and build commands.
