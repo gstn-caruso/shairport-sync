@@ -85,3 +85,24 @@ closing and reopening the receiver mapping observes the new object and resumes
 timing. All endpoints use distinct loopback addresses, unprivileged ports and
 unique object names. These checks do not establish AirPlay playback or multiroom
 synchronization.
+
+## Installation and Debian package
+
+Red: the staged installation failed `tests/nqptp_package_test.cmake` because the
+system companion unit was absent (`build/package-red.log`). Green: the staged
+installation and the extracted `shairport-sync_6.0.1_amd64.deb` both pass that
+contract: binaries have matching versions; system/user units, provenance,
+COPYING and GPLv2 LICENSE are present; no activation links or Debian maintainer
+scripts exist. Dependencies explicitly include `avahi-daemon`, `systemd` and
+`pulseaudio | pipewire-pulse`, in addition to generated library dependencies.
+`tests/nqptp_unit_test.cmake` runs `systemd-analyze verify` against a staged
+executable path and passed without starting a service. Configuring the prefix
+`/opt/shairport-prefix-check` generated matching paths for both units.
+
+Reproduce with `DESTDIR=<stage> cmake --install <build>`, then
+`cmake -DROOT=<stage> -DPREFIX=/usr -DVERSION=<version>
+-P tests/nqptp_package_test.cmake`. After `cpack`, extract the package with
+`dpkg-deb -x <deb> <root>` and repeat with `-DPACKAGE=<deb>` and the extracted root.
+Unit validation uses the same ROOT/PREFIX with `tests/nqptp_unit_test.cmake`.
+All successful installation checks used staging directories; no host binary or
+unit was installed, enabled or started.

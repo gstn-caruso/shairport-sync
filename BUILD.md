@@ -5,7 +5,12 @@
 Use CMake 4.2 or newer, Ninja, Clang 23.1.3 (pinned in `.tool-versions`)
 and libstdc++ 15. CMake checks C++26 without GNU extensions by compiling and
 running `cmake/cpp26_probe.cpp`. All receiver production sources, including the
-entrypoint and generated plist, compile as C++26. The bundled pairing dependency
+entrypoint and generated plist, compile as C++26. The bundled NQPTP 1.2.8
+companion also builds from committed C++26 source with the same version and
+toolchain; see [its provenance](companion/nqptp/PROVENANCE.md).
+Companion dependencies are Linux/POSIX sockets and shared memory, threads and
+the realtime system library, declared separately from receiver dependencies.
+The bundled pairing dependency
 remains C behind an explicit linkage boundary; C tests exercise the receiver APIs.
 CMake rejects any own production source configured to compile as C.
 
@@ -99,7 +104,49 @@ leaks. Leak detection remains enabled. A TSan runtime startup failure caused by
 host address-space or sandbox restrictions is failed infrastructure validation;
 it does not establish the absence of data races.
 
-Install and run NQPTP compatible with this receiver's shared-memory interface (currently SMI version 10) and Avahi as system services. Start a PulseAudio-compatible user session. PipeWire users should run `pipewire-pulse`; the native PipeWire backend is not provided.
+Run the bundled `shairport-sync-nqptp` timing companion (SMI10) and Avahi as
+system services. Start a PulseAudio-compatible user session. PipeWire users
+should run `pipewire-pulse`; the native PipeWire backend is not provided.
+Installation ships both units without enabling or starting them. Copy and
+configure the sample as described below before activation. Activate the
+companion first, then the receiver from the audio user's session:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now shairport-sync-nqptp
+systemctl --user daemon-reload
+systemctl --user enable --now shairport-sync
+```
+
+The system companion uses a dynamic user, `CAP_NET_BIND_SERVICE` and the
+upstream realtime-priority limit of 6. It keeps production UDP ports 319/320,
+loopback UDP 9000 and the `/nqptp` shared-memory object. There is no dependency
+between the system and user systemd managers. The receiver remains in the
+PulseAudio-compatible user's session. Avahi must also be running before the
+receiver starts.
+
+### Migrating a separately installed NQPTP
+
+Before activating the bundled companion, stop and disable the existing NQPTP
+service (normally `sudo systemctl disable --now nqptp`). Inspect its actual unit
+name and stop any manually started copy too. The package does not modify or
+disable an existing NQPTP or PTP service. Conflicts on any required supported
+socket address fail startup with a clear diagnostic; the companion does not
+continue with a partial binding.
+
+Shared-memory creation is exclusive: an existing `/nqptp` object is preserved
+and startup fails rather than overwriting it. Normal shutdown removes the
+companion's own object. After an unclean termination, confirm that all NQPTP
+processes and any service owning it are stopped before manually removing the
+stale `/dev/shm/nqptp` object, then start the companion again. Check
+`sudo journalctl -u shairport-sync-nqptp` for binding or mapping failures.
+
+After every companion restart, restart the receiver with
+`systemctl --user restart shairport-sync` so it remaps shared memory. The old
+mapping can retain an obsolete clock even after its object is unlinked.
+Real AirPlay playback, multiroom synchronization and privileged activation
+remain manual acceptance checks on a designated test host; isolated tests
+verify sockets, timing samples and mapping behavior only.
 
 Copy `shairport-sync.conf.sample` to `shairport-sync.conf` and edit it before
 starting the receiver. When migrating an existing configuration, see
@@ -115,8 +162,9 @@ Every CI Release build uploads a `.deb` and checksum as workflow artifacts,
 including changes that do not increase the version. Packages built by CI target
 Ubuntu 26.04 amd64 and depend on that distribution's runtime libraries; they are
 not universal packages for older Ubuntu or Debian releases. CPack derives the
-library dependencies with `dpkg-shlibdeps`. NQPTP must be installed separately;
-the package does not install or start NQPTP, Avahi or the receiver.
+library dependencies with `dpkg-shlibdeps`. The package also declares Avahi,
+systemd and a PulseAudio-compatible provider (`pulseaudio | pipewire-pulse`).
+It includes the companion and both service units, without automatic activation.
 ARM64 packages and native ARM test execution are currently suspended.
 
 Build a package locally with the installed distribution's dependencies:
@@ -133,12 +181,16 @@ cpack --config build/package/CPackConfig.cmake -B build/package/packages
 sudo apt install ./build/package/packages/shairport-sync_*.deb
 ```
 
-The package contains `/usr/bin/shairport-sync`, the manual, license notices,
+The package contains `/usr/bin/shairport-sync` and
+`/usr/bin/shairport-sync-nqptp`, both service units, the manual, license notices,
 configuration documentation and `/etc/shairport-sync.conf.sample`. Copy the
 sample to `/etc/shairport-sync.conf` and configure it before starting. The
-packaged user unit uses `/usr/bin/shairport-sync`; enable it with
-`systemctl --user enable --now shairport-sync` from the PulseAudio user's session
-after starting NQPTP and Avahi. Remove any older user-unit override that still
+packaged system unit uses `/usr/bin/shairport-sync-nqptp`; activate it first with
+`sudo systemctl enable --now shairport-sync-nqptp`. The packaged user unit uses
+`/usr/bin/shairport-sync`; enable it with `systemctl --user enable --now shairport-sync`
+from the PulseAudio user's session after starting the companion and Avahi.
+Companion provenance and GPLv2 notices are installed under
+`/usr/share/doc/shairport-sync/nqptp/`. Remove any older user-unit override that still
 points to `/usr/local/bin/shairport-sync`.
 
 Pushes to `master` or `main`, including merged PRs, run the same validation.
