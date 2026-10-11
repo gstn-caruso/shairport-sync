@@ -1,4 +1,5 @@
 #include "session/session_registry.hpp"
+#include "session/runtime_session_worker.hpp"
 #include "session/runtime_principal_session.hpp"
 #include "cancellation_wait.hpp"
 #include <gtest/gtest.h>
@@ -94,8 +95,9 @@ TEST(SessionRegistry, FailedThreadCreationClosesOwnedSocket) {
   auto session = std::make_unique<SessionState>();
   session->connection_number = 1;
   session->fd = sockets[0];
-  SessionRegistry registry(rejectThread);
-  EXPECT_EQ(registry.start(std::move(session), unusedThread), EAGAIN);
+  SessionRegistry registry;
+  EXPECT_EQ(registry.start(std::make_unique<RuntimeSessionWorker>(
+                std::move(session), unusedThread, rejectThread)), EAGAIN);
   EXPECT_FALSE(registry.cancelAndJoin(1));
   char byte;
   EXPECT_EQ(read(sockets[1], &byte, 1), 0);
@@ -111,7 +113,8 @@ TEST_F(RegistryContract, ImmediateCompletionIsRetainedForOneJoin) {
   ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
   immediate->fd = sockets[0];
   immediate->connection_number = 2;
-  const auto started = successful.start(std::move(immediate), finishImmediately);
+  const auto started = successful.start(std::make_unique<RuntimeSessionWorker>(
+      std::move(immediate), finishImmediately));
   if (started != 0)
     close(sockets[1]);
   ASSERT_EQ(started, 0);
@@ -155,7 +158,8 @@ TEST_F(RegistryContract, CallerCancellationDuringRetirementKeepsSessionOwnedUnti
   cancellable->connection_number = 5;
   cancellable->fd = sockets[0];
   EXPECT_TRUE(principal.acquire(*cancellable, false).accepted);
-  const auto started = cancellation.start(std::move(cancellable), waitForCancellation);
+  const auto started = cancellation.start(std::make_unique<RuntimeSessionWorker>(
+      std::move(cancellable), waitForCancellation));
   if (started != 0)
     close(sockets[1]);
   ASSERT_EQ(started, 0);
@@ -218,8 +222,10 @@ TEST_F(RegistryContract, BatchCancellationSignalsAllWorkersBeforeJoiningBlockedC
   two->connection_number = 7;
   one->fd = sockets[0];
   two->fd = secondSockets[0];
-  const auto firstStarted = cancellation.start(std::move(one), waitForCancellation);
-  const auto secondStarted = cancellation.start(std::move(two), waitForCancellation);
+  const auto firstStarted = cancellation.start(std::make_unique<RuntimeSessionWorker>(
+      std::move(one), waitForCancellation));
+  const auto secondStarted = cancellation.start(std::make_unique<RuntimeSessionWorker>(
+      std::move(two), waitForCancellation));
   const auto retiringStarted = firstStarted == 0 && secondStarted == 0
       ? pthread_create(&retiring, nullptr, retireAll, nullptr) : EAGAIN;
   if (retiringStarted != 0) {

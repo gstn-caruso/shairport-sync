@@ -1,1 +1,6 @@
-target_sources(receiver PRIVATE session_registry.cpp)
+add_library(receiver-session-registry STATIC session_registry.cpp)
+target_include_directories(receiver-session-registry PUBLIC "${CMAKE_SOURCE_DIR}/src")
+target_compile_options(receiver-session-registry PRIVATE -Wall -Wextra -Wshadow -Wformat=2 -fno-common)
+target_link_libraries(receiver-session-registry PUBLIC Threads::Threads)
+target_link_libraries(receiver PUBLIC receiver-session-registry)
+target_sources(receiver PRIVATE runtime_session_worker.cpp session_state.cpp)

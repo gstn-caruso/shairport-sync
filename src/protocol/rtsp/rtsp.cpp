@@ -104,6 +104,7 @@ import receiver.protocol.rtsp.parameters;
 
 
 #include "session/session_registry.hpp"
+#include "session/runtime_session_worker.hpp"
 #include "session/runtime_principal_session.hpp"
 
 static RuntimePrincipalSession principalSession;
@@ -3100,7 +3101,8 @@ static void rtsp_listen_loop(RtspListener &listener, std::stop_token stop) {
         pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
         auto owner = std::move(unregistered);
         conn = nullptr;
-        ret = sessions.start(std::move(owner), rtsp_conversation_thread_func);
+        ret = sessions.start(std::make_unique<RuntimeSessionWorker>(
+            std::move(owner), rtsp_conversation_thread_func));
         pthread_setcancelstate(previousState, nullptr);
         if (ret) {
           char errorstring[1024];
