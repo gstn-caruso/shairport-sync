@@ -97,3 +97,20 @@ TEST(BufferedAudioBlock, SequenceBytesAreNotAuthenticatedAdditionalData) {
   EXPECT_EQ(block->sequence(), 0x2bcdeeu);
   EXPECT_TRUE(block->prepare({BufferedBlockCodec::alac}, buffered_block_fixture::key, 44100));
 }
+
+TEST(BufferedAudioBlock, AllShortBodiesAndOversizeAreTypedErrorsBeforeMetadataReads) {
+  const std::array<uint8_t, 36> minimum{};
+  for (std::size_t size = 0; size < 36; ++size) {
+    SCOPED_TRACE(size);
+    auto shortBlock = BufferedAudioBlock::parse(std::span(minimum).first(size));
+    ASSERT_FALSE(shortBlock);
+    EXPECT_EQ(shortBlock.error(), BufferedBlockError::invalidSize);
+  }
+  EXPECT_TRUE(BufferedAudioBlock::parse(minimum));
+  const std::vector<uint8_t> maximum(16384);
+  EXPECT_TRUE(BufferedAudioBlock::parse(maximum));
+  const std::vector<uint8_t> oversized(16385);
+  auto tooLarge = BufferedAudioBlock::parse(oversized);
+  ASSERT_FALSE(tooLarge);
+  EXPECT_EQ(tooLarge.error(), BufferedBlockError::invalidSize);
+}
