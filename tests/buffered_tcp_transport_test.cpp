@@ -64,7 +64,14 @@ TEST_F(BufferedTcp, StopBeforeAcceptAndIdleReceiveJoinPromptlyWithoutClosingList
   for (const bool connected : {false,true}) {
     BufferedTcpTransport transport(listener, 8);
     ASSERT_TRUE(transport.start());
-    if (connected) connectClient();
+    if (connected) {
+      connectClient();
+      const std::array<uint8_t,1> sent{73};
+      ASSERT_EQ(send(client, sent.data(), sent.size(), MSG_NOSIGNAL), 1);
+      std::array<uint8_t,1> received{};
+      ASSERT_EQ(transport.readExact(received).status, ByteQueueStatus::complete);
+      ASSERT_EQ(received, sent);
+    }
     const auto before = std::chrono::steady_clock::now();
     ASSERT_TRUE(transport.requestStop());
     transport.join();
