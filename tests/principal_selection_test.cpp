@@ -1,5 +1,7 @@
 #include "session/principal_participant.hpp"
 #include <gtest/gtest.h>
+#include <chrono>
+#include <future>
 import receiver.session.principal;
 
 namespace {
@@ -88,4 +90,42 @@ TEST(PrincipalSelection, ClearRetiresSelectionAndInvalidatesTicket) {
   EXPECT_FALSE(selection.commitIfSelected(*ticket, [] {}));
   EXPECT_FALSE(selection.clear());
   EXPECT_FALSE(selection.acquire(participant, true).accepted);
+}
+
+TEST(PrincipalSelection, SynchronousCallbackHoldsSelectionUntilItReturns) {
+  PrincipalSelection selection;
+  Participant first(10), replacement(11);
+  ASSERT_TRUE(selection.acquire(first, true).accepted);
+  std::promise<void> attempting;
+  std::future<PrincipalSelection::Acquisition> result;
+  const PrincipalSelection &readOnly = selection;
+  readOnly.withCurrent([&](PrincipalParticipant *current) {
+    EXPECT_EQ(current, &first);
+    result = std::async(std::launch::async, [&] {
+      attempting.set_value();
+      return selection.acquire(replacement, true);
+    });
+    attempting.get_future().wait();
+    EXPECT_EQ(result.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
+    EXPECT_FALSE(first.retired);
+  });
+  EXPECT_TRUE(result.get().accepted);
+  EXPECT_TRUE(first.retired);
+  EXPECT_TRUE(selection.isCurrent(11));
+}
+
+TEST(PrincipalSelection, ConditionalEffectRunsOncePerValidInvocation) {
+  PrincipalSelection selection;
+  Participant participant(12);
+  ASSERT_TRUE(selection.acquire(participant, true).accepted);
+  auto ticket = selection.ticketFor(12);
+  ASSERT_TRUE(ticket);
+  int effects = 0;
+  EXPECT_TRUE(selection.commitIfSelected(*ticket, [&] { ++effects; }));
+  EXPECT_EQ(effects, 1);
+  EXPECT_TRUE(selection.commitIfSelected(*ticket, [&] { ++effects; }));
+  EXPECT_EQ(effects, 2);
+  selection.releaseIfCurrent(12);
+  EXPECT_FALSE(selection.commitIfSelected(*ticket, [&] { ++effects; }));
+  EXPECT_EQ(effects, 2);
 }
