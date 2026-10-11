@@ -31,7 +31,7 @@ BufferedAudioBlock::prepare(BufferedBlockFormat format, std::span<const std::uin
   std::array<std::uint8_t, 12> nonce{};
   std::copy(wire_.end() - 8, wire_.end(), nonce.begin() + 4);
   const std::size_t leader = format.codec == BufferedBlockCodec::aac ? 7 : 0;
-  std::vector<std::uint8_t> payload(leader + wire_.size() - minimumSize);
+  std::vector<std::uint8_t> payload(std::max<std::size_t>(1, leader + wire_.size() - minimumSize));
   unsigned long long written = 0;
   if (crypto_aead_chacha20poly1305_ietf_decrypt(payload.data() + leader, &written, nullptr,
       wire_.data() + 12, wire_.size() - 20, wire_.data() + 4, 8, nonce.data(), key.data()) != 0)
