@@ -95,16 +95,18 @@ std::optional<RtspRequestStatus> RtspRequestReader::readBody(Pending &request) {
 }
 
 RtspRequestResult RtspRequestReader::read() {
+  auto phase = RtspRequestPhase::headers;
   try {
     Pending request;
     if (auto failure = readHeaders(request))
       return {*failure, {}};
+    phase = RtspRequestPhase::body;
     if (auto failure = readBody(request))
       return {*failure, {}};
     request.message->replaceBody(std::string_view(request.bytes.data(), request.used));
     return {RtspRequestStatus::success, std::move(request.message)};
   } catch (const std::bad_alloc &) {
-    effects_.diagnostic(RtspRequestDiagnostic::allocationFailure, RtspRequestPhase::headers, 0);
+    effects_.diagnostic(RtspRequestDiagnostic::allocationFailure, phase, 0);
     return {RtspRequestStatus::allocationFailure, {}};
   }
 }

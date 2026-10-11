@@ -17,3 +17,4 @@ target_include_directories(receiver-rtsp-request PUBLIC "${CMAKE_SOURCE_DIR}/src
 target_compile_options(receiver-rtsp-request PRIVATE -Wall -Wextra -Wshadow -Wformat=2 -fno-common)
 set_target_properties(receiver-rtsp-request PROPERTIES CXX_SCAN_FOR_MODULES ON)
 target_link_libraries(receiver-rtsp-request PUBLIC receiver-rtsp-message)
+target_link_libraries(receiver PUBLIC receiver-rtsp-request)
