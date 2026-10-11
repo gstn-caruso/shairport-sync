@@ -43,12 +43,68 @@ TEST(RealtimeAudioLegacy, GoldenStrippedPacketAuthenticatesAndSubmitsExactPlaint
   EXPECT_EQ(submitted[0].mute, 0); EXPECT_EQ(submitted[0].gap, 0);
   EXPECT_EQ(submitted[0].bytes, (std::vector<uint8_t>(buffered_block_fixture::plaintext.begin(),buffered_block_fixture::plaintext.end())));
 }
-TEST(RealtimeAudioLegacy, FailedAuthenticationCurrentlySubmitsAnEmptyPacket) {
+TEST(RealtimeAudioLegacy, FailedAuthenticationMustNotSubmitToPlayer) {
   submitted.clear();
   SessionState session{};
   session.session_key = const_cast<uint8_t *>(buffered_block_fixture::key.data());
   auto wire = buffered_block_fixture::encrypt(); wire[12] ^= 1;
   decipher_player_put_packet(wire.data()+2,wire.size()-2,&session);
-  ASSERT_EQ(submitted.size(), 1u);
-  EXPECT_TRUE(submitted[0].bytes.empty());
+  EXPECT_TRUE(submitted.empty());
 }
+class RealtimeIngressSockets : public testing::TestWithParam<bool> {};
+TEST_P(RealtimeIngressSockets, AudioAndD6UseExactAuthenticatedBytesAndRejectFailedMacBeforeSubmission) {
+  const bool control = GetParam();
+  submitted.clear();
+  SessionState session{};
+  session.connection_number = 52;
+  session.session_key = const_cast<uint8_t *>(buffered_block_fixture::key.data());
+  const int socketFd = socket(AF_INET,SOCK_DGRAM | SOCK_CLOEXEC,0);
+  ASSERT_GE(socketFd,0);
+  sockaddr_in address{};
+  address.sin_family = AF_INET; address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  ASSERT_EQ(bind(socketFd,reinterpret_cast<sockaddr *>(&address),sizeof(address)),0);
+  socklen_t addressSize = sizeof(address);
+  ASSERT_EQ(getsockname(socketFd,reinterpret_cast<sockaddr *>(&address),&addressSize),0);
+  if (control) session.ap2_control_socket = socketFd;
+  else session.realtime_audio_socket = socketFd;
+  const int client = socket(AF_INET,SOCK_DGRAM | SOCK_CLOEXEC,0);
+  ASSERT_GE(client,0);
+  ASSERT_EQ(connect(client,reinterpret_cast<sockaddr *>(&address),sizeof(address)),0);
+  pthread_t worker;
+  ASSERT_EQ(pthread_create(&worker,nullptr,control ? rtp_ap2_control_receiver : rtp_realtime_audio_receiver,&session),0);
+  for (unsigned index = 0; index < 3; ++index) {
+    auto wire = buffered_block_fixture::encrypt();
+    if (index == 1) wire[12] ^= 1;
+    if (index == 2) { wire[2] = 0x12; wire[3] = 0x34; }
+    std::vector<uint8_t> packet;
+    if (control) {
+      packet = {0x10,0xd6,0,0,0,0};
+      packet.insert(packet.end(),wire.begin()+2,wire.end());
+    } else packet = std::move(wire);
+    EXPECT_EQ(send(client,packet.data(),packet.size(),MSG_NOSIGNAL),static_cast<ssize_t>(packet.size()));
+  }
+  bool arrived;
+  {
+    std::unique_lock lock(submittedMutex);
+    arrived = submittedChanged.wait_for(lock,std::chrono::seconds(1),[] {
+      return std::count_if(submitted.begin(),submitted.end(),[](const auto &packet) { return !packet.bytes.empty(); }) == 2;
+    });
+  }
+  EXPECT_EQ(pthread_cancel(worker),0);
+  EXPECT_EQ(pthread_join(worker,nullptr),0);
+  close(client);
+  ASSERT_TRUE(arrived);
+  ASSERT_EQ(submitted.size(),2u);
+  EXPECT_EQ(submitted[0].sequence,0xcdef);
+  EXPECT_EQ(submitted[1].sequence,0x1234);
+  for (const auto &packet : submitted) {
+    EXPECT_EQ(packet.ssrc,ALAC_44100_S16_2);
+    EXPECT_EQ(packet.timestamp,0x01020304u);
+    EXPECT_EQ(packet.mute,0); EXPECT_EQ(packet.gap,0);
+    EXPECT_EQ(packet.bytes,(std::vector<uint8_t>(buffered_block_fixture::plaintext.begin(),buffered_block_fixture::plaintext.end())));
+  }
+  EXPECT_EQ(control ? session.ap2_control_socket : session.realtime_audio_socket,-1);
+  EXPECT_EQ(fcntl(socketFd,F_GETFD),-1);
+}
+INSTANTIATE_TEST_SUITE_P(Routes,RealtimeIngressSockets,testing::Values(false,true),
+    [](const auto &scenario) { return scenario.param ? "D6Control" : "UdpAudio"; });

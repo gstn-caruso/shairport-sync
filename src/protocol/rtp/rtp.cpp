@@ -414,6 +414,7 @@ int32_t decipher_player_put_packet(uint8_t *ciphered_audio_alt, ssize_t nread,
           conn->session_key); // *k
       if (response != 0) {
         debug(1, "Error decrypting an audio packet.");
+        return sequence_number;
       }
       // now pass it in to the regular processing chain
 
