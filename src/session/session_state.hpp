@@ -2,6 +2,7 @@
 
 #include "session/session_category.h"
 #include "session/principal_participant.hpp"
+#include "protocol/ap2/buffered_flush_policy.hpp"
 #include "runtime/common.h"
 #include "playback/player.h"
 #include "timing/rtp_clock.hpp"
@@ -103,11 +104,7 @@ struct SessionState : PrincipalParticipant {
 
   int ap2_event_receiver_exited;
 
-  int ap2_immediate_flush_requested;
-  uint32_t ap2_immediate_flush_until_rtp_timestamp;
-  uint32_t ap2_immediate_flush_until_sequence_number;
-
-  ap2_flush_request_t ap2_deferred_flush_requests[MAX_DEFERRED_FLUSH_REQUESTS];
+  BufferedFlushPolicy bufferedFlush;
 
   ssize_t ap2_audio_buffer_size;
 

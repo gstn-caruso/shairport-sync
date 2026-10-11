@@ -829,9 +829,8 @@ void handle_flushbuffered(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *r
 
     if (flushFromValid == 0) {
       // an immediate flush is requested
-      conn->ap2_immediate_flush_requested = 1;
-      conn->ap2_immediate_flush_until_sequence_number = flushUntilSeq & 0x7fffff;
-      conn->ap2_immediate_flush_until_rtp_timestamp = flushUntilTS;
+      conn->bufferedFlush.requestImmediate(static_cast<uint32_t>(flushUntilSeq),
+                                            static_cast<uint32_t>(flushUntilTS));
       debug(2,
             "Connection %d: immediate flush request created: flushUntilTS: %" PRIu64
             ", flushUntilSeq: %" PRIu64 ".",
@@ -844,23 +843,10 @@ void handle_flushbuffered(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *r
       reset_ptp_anchor_info(
           conn); // stop the clock for an immediate flush until it is restarted using SETRATEANCHORI
     } else {
-      // look for a record slot that isn't in use
-      unsigned int i = 0;
-      unsigned int found = 0;
-      while ((i < MAX_DEFERRED_FLUSH_REQUESTS) && (found == 0)) {
-        if (conn->ap2_deferred_flush_requests[i].inUse == 0) {
-          found = 1;
-        } else {
-          i++;
-        }
-      }
-      if (found != 0) {
-        conn->ap2_deferred_flush_requests[i].inUse = 1;
-        conn->ap2_deferred_flush_requests[i].active = 0;
-        conn->ap2_deferred_flush_requests[i].flushFromSeq = flushFromSeq & 0x7fffff;
-        conn->ap2_deferred_flush_requests[i].flushFromTS = flushFromTS;
-        conn->ap2_deferred_flush_requests[i].flushUntilSeq = flushUntilSeq & 0x7fffff;
-        conn->ap2_deferred_flush_requests[i].flushUntilTS = flushUntilTS;
+      if (conn->bufferedFlush.requestDeferred(static_cast<uint32_t>(flushFromSeq),
+                                               static_cast<uint32_t>(flushFromTS),
+                                               static_cast<uint32_t>(flushUntilSeq),
+                                               static_cast<uint32_t>(flushUntilTS))) {
         debug(2,
               "Connection %d: deferred flush request created: flushFromSeq: %" PRIu64
               ", flushUntilSeq: %" PRIu64 ".",

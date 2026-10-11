@@ -37,6 +37,64 @@
 #include <stdint.h>
 
 
+static void logBufferedFlush(const BufferedFlushPolicy::Decision &decision, ssrc_t ssrc) {
+  using Kind = BufferedFlushPolicy::EventKind;
+  for (const auto &event : decision.events()) {
+    switch (event.kind) {
+    case Kind::immediateStarted:
+      debug(2, "immediate flush started at sequence number %u until sequence number of %u.",
+            event.sequence, event.untilSequence);
+      break;
+    case Kind::immediateOverrun:
+      if (ssrc == SSRC_NONE) {
+        debug(2, "immediate flush endpoint followed by a SSRC_NONE packet. Seq_no is %u, "
+                 "conn->ap2_immediate_flush_until_sequence_number is %u.",
+              event.sequence, event.untilSequence);
+      } else {
+        debug(1, "immediate flush may have escaped its endpoint! Seq_no is %u, "
+                 "conn->ap2_immediate_flush_until_sequence_number is %u.",
+              event.sequence, event.untilSequence);
+      }
+      break;
+    case Kind::immediateCompleted:
+      debug(2, "immediate flush completed at seq_no: %u, "
+               "conn->ap2_immediate_flush_until_sequence_number: %u.",
+            event.sequence, event.untilSequence);
+      break;
+    case Kind::immediateDiscard:
+      debug(4, "immediate flush of block %u until block %u", event.sequence, event.untilSequence);
+      break;
+    case Kind::deferredCancelled:
+    case Kind::deferredActivated:
+    case Kind::deferredCompleted: {
+      const char *prefix = event.kind == Kind::deferredCancelled
+          ? "deferred flush cancelled by an immediate flush:  "
+          : event.kind == Kind::deferredActivated ? "deferred flush activated:  "
+                                                 : "deferred flush terminated: ";
+      debug(event.kind == Kind::deferredCancelled ? 1 : 2,
+            "%sflushFromTS: %12u, flushFromSeq: %12u, "
+            "flushUntilTS: %12u, flushUntilSeq: %12u, timestamp: %12u.",
+            prefix, event.fromTimestamp, event.fromSequence,
+            event.untilTimestamp, event.untilSequence, event.timestamp);
+      break;
+    }
+    case Kind::deferredOverrun:
+      debug(2, "deferred flush terminated due to overshoot at block %u: flushFromTS: %12u, "
+               "flushFromSeq: %12u, flushUntilTS: %12u, flushUntilSeq: %12u, timestamp: %12u.",
+            event.sequence, event.fromTimestamp, event.fromSequence,
+            event.untilTimestamp, event.untilSequence, event.timestamp);
+      debug(2, "immediate flush was %s.", event.immediateWasActive ? "on" : "off");
+      break;
+    case Kind::deferredDiscard:
+      debug(4, "deferred flush of block: %u, timestamp: %u, SSRC: \"%s\". flushFromTS: %12u, "
+               "flushFromSeq: %12u, flushUntilTS: %12u, flushUntilSeq: %12u, timestamp: %12u.",
+            event.sequence, event.timestamp, get_ssrc_name(ssrc), event.fromTimestamp,
+            event.fromSequence, event.untilTimestamp, event.untilSequence, event.timestamp);
+      break;
+    }
+  }
+}
+
 void addADTStoPacket(uint8_t *packet, int packetLen, int rate, int channel_configuration) {
   // https://stackoverflow.com/questions/18862715/how-to-generate-the-aac-adts-elementary-stream-with-android-mediacodec
   // with thanks!
@@ -108,14 +166,7 @@ void *rtp_buffered_audio_processor(void *arg) {
   conn->resampler.reset();
   pthread_setcancelstate(previousDecoderCancellationState, nullptr);
 
-  // turn off all flush requests that might have been pending in the connection. Not sure if this is
-  // right...
-  unsigned int fr = 0;
-  for (fr = 0; fr < MAX_DEFERRED_FLUSH_REQUESTS; fr++) {
-    conn->ap2_deferred_flush_requests[fr].inUse = 0;
-    conn->ap2_deferred_flush_requests[fr].active = 0;
-  }
-  conn->ap2_immediate_flush_requested = 0;
+  conn->bufferedFlush.resetForBufferedReceiver();
 
   pthread_cleanup_push(rtp_buffered_audio_cleanup_handler, arg);
 
@@ -203,8 +254,6 @@ void *rtp_buffered_audio_processor(void *arg) {
   int finished = 0;
 
   uint64_t blocks_read = 0;
-
-  int ap2_immediate_flush_requested = 0; // for diagnostics, probably
 
   uint32_t first_timestamp_in_this_sequence = 0;
   int packets_played_in_this_sequence = 0;
@@ -337,125 +386,10 @@ void *rtp_buffered_audio_processor(void *arg) {
 
     if (finished == 0) {
       pthread_mutex_lock_and_cleanup_push(&conn->flush_mutex);
-      if (blocks_read != 0) {
-        if (conn->ap2_immediate_flush_requested != 0) {
-          if (ap2_immediate_flush_requested == 0) {
-            debug(2, "immediate flush started at sequence number %u until sequence number of %u.",
-                  seq_no, conn->ap2_immediate_flush_until_sequence_number);
-          }
-          if ((blocks_read != 0) &&
-              ((a_minus_b_mod23(seq_no, conn->ap2_immediate_flush_until_sequence_number) > 0))) {
-
-            if (payload_ssrc == SSRC_NONE) {
-              debug(2,
-                    "immediate flush endpoint followed by a SSRC_NONE packet. Seq_no is %u, "
-                    "conn->ap2_immediate_flush_until_sequence_number is %u.",
-                    seq_no, conn->ap2_immediate_flush_until_sequence_number);
-
-            } else {
-              debug(1,
-                    "immediate flush may have escaped its endpoint! Seq_no is %u, "
-                    "conn->ap2_immediate_flush_until_sequence_number is %u.",
-                    seq_no, conn->ap2_immediate_flush_until_sequence_number);
-            }
-          }
-
-          if ((blocks_read != 0) &&
-              ((a_minus_b_mod23(seq_no, conn->ap2_immediate_flush_until_sequence_number) >= 0))) {
-            debug(2,
-                  "immediate flush completed at seq_no: %u, "
-                  "conn->ap2_immediate_flush_until_sequence_number: %u.",
-                  seq_no, conn->ap2_immediate_flush_until_sequence_number);
-
-            conn->ap2_immediate_flush_requested = 0;
-            ap2_immediate_flush_requested = 0;
-            // debug(1, "flushed to %u, requested %u.", seq_no,
-            // conn->ap2_immediate_flush_until_sequence_number);
-
-            // turn off all deferred requests. Not sure if this is right...
-            unsigned int f = 0;
-            for (f = 0; f < MAX_DEFERRED_FLUSH_REQUESTS; f++) {
-              if ((conn->ap2_deferred_flush_requests[f].inUse != 0) &&
-                  (conn->ap2_deferred_flush_requests[f].active == 0)) {
-                debug(1,
-                      "deferred flush cancelled by an immediate flush:  flushFromTS: %12u, "
-                      "flushFromSeq: %12u, "
-                      "flushUntilTS: %12u, flushUntilSeq: %12u, timestamp: %12u.",
-                      conn->ap2_deferred_flush_requests[f].flushFromTS,
-                      conn->ap2_deferred_flush_requests[f].flushFromSeq,
-                      conn->ap2_deferred_flush_requests[f].flushUntilTS,
-                      conn->ap2_deferred_flush_requests[f].flushUntilSeq, timestamp);
-              }
-              conn->ap2_deferred_flush_requests[f].inUse = 0;
-              conn->ap2_deferred_flush_requests[f].active = 0;
-            }
-
-          } else {
-            debug(4, "immediate flush of block %u until block %u", seq_no,
-                  conn->ap2_immediate_flush_until_sequence_number);
-            ap2_immediate_flush_requested = 1;
-            new_audio_block_needed = 1; //
-          }
-        }
-      }
-
-      // now, even if an immediate flush has been requested and is active, we still need to process
-      // deferred flush requests as they may refer to sequences that are going to be purged anyway
-
-      unsigned int f = 0;
-      for (f = 0; f < MAX_DEFERRED_FLUSH_REQUESTS; f++) {
-        if (conn->ap2_deferred_flush_requests[f].inUse != 0) {
-          if ((conn->ap2_deferred_flush_requests[f].flushFromSeq == seq_no) &&
-              (conn->ap2_deferred_flush_requests[f].flushUntilSeq != seq_no)) {
-            debug(2,
-                  "deferred flush activated:  flushFromTS: %12u, flushFromSeq: %12u, "
-                  "flushUntilTS: %12u, flushUntilSeq: %12u, timestamp: %12u.",
-                  conn->ap2_deferred_flush_requests[f].flushFromTS,
-                  conn->ap2_deferred_flush_requests[f].flushFromSeq,
-                  conn->ap2_deferred_flush_requests[f].flushUntilTS,
-                  conn->ap2_deferred_flush_requests[f].flushUntilSeq, timestamp);
-            conn->ap2_deferred_flush_requests[f].active = 1;
-            new_audio_block_needed = 1;
-          }
-          if (conn->ap2_deferred_flush_requests[f].flushUntilSeq == seq_no) {
-            debug(2,
-                  "deferred flush terminated: flushFromTS: %12u, flushFromSeq: %12u, "
-                  "flushUntilTS: %12u, flushUntilSeq: %12u, timestamp: %12u.",
-                  conn->ap2_deferred_flush_requests[f].flushFromTS,
-                  conn->ap2_deferred_flush_requests[f].flushFromSeq,
-                  conn->ap2_deferred_flush_requests[f].flushUntilTS,
-                  conn->ap2_deferred_flush_requests[f].flushUntilSeq, timestamp);
-            conn->ap2_deferred_flush_requests[f].active = 0;
-            conn->ap2_deferred_flush_requests[f].inUse = 0;
-          } else if (a_minus_b_mod23(seq_no, conn->ap2_deferred_flush_requests[f].flushUntilSeq) >
-                     0) {
-            // now, do a modulo 2^23 unsigned int calculation to see if we may have overshot the
-            // flushUntilSeq
-            debug(2,
-                  "deferred flush terminated due to overshoot at block %u: flushFromTS: %12u, "
-                  "flushFromSeq: %12u, "
-                  "flushUntilTS: %12u, flushUntilSeq: %12u, timestamp: %12u.",
-                  seq_no, conn->ap2_deferred_flush_requests[f].flushFromTS,
-                  conn->ap2_deferred_flush_requests[f].flushFromSeq,
-                  conn->ap2_deferred_flush_requests[f].flushUntilTS,
-                  conn->ap2_deferred_flush_requests[f].flushUntilSeq, timestamp);
-            conn->ap2_deferred_flush_requests[f].active = 0;
-            conn->ap2_deferred_flush_requests[f].inUse = 0;
-            debug(2, "immediate flush was %s.", ap2_immediate_flush_requested == 0 ? "off" : "on");
-          } else if (conn->ap2_deferred_flush_requests[f].active != 0) {
-            new_audio_block_needed = 1;
-            debug(4,
-                  "deferred flush of block: %u, timestamp: %u, SSRC: \"%s\". flushFromTS: %12u, "
-                  "flushFromSeq: %12u, "
-                  "flushUntilTS: %12u, flushUntilSeq: %12u, timestamp: %12u.",
-                  seq_no, timestamp, get_ssrc_name(payload_ssrc),
-                  conn->ap2_deferred_flush_requests[f].flushFromTS,
-                  conn->ap2_deferred_flush_requests[f].flushFromSeq,
-                  conn->ap2_deferred_flush_requests[f].flushUntilTS,
-                  conn->ap2_deferred_flush_requests[f].flushUntilSeq, timestamp);
-          }
-        }
-      }
+      const auto flush = conn->bufferedFlush.evaluate(blocks_read != 0, seq_no, timestamp);
+      if (flush.discardCurrent)
+        new_audio_block_needed = 1;
+      logBufferedFlush(flush, payload_ssrc);
       pthread_cleanup_pop(1); // the mutex
 
       // now, if the block is not invalidated by the flush code, see if we need

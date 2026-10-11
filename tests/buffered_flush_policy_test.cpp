@@ -1,5 +1,7 @@
 #include "protocol/ap2/buffered_flush_policy.hpp"
 #include <gtest/gtest.h>
+#include <atomic>
+#include <thread>
 
 TEST(BufferedFlushPolicy, EmptyPolicyRetainsCurrentBlockWithoutEvents) {
   BufferedFlushPolicy policy;
@@ -147,4 +149,47 @@ TEST(BufferedFlushPolicy, DeferredRequestsEvaluateBeforeAnyBlockWhileImmediateWa
   ASSERT_EQ(endpoint.events().size(), 2u);
   EXPECT_EQ(endpoint.events()[0].kind, BufferedFlushPolicy::EventKind::immediateStarted);
   EXPECT_EQ(endpoint.events()[1].kind, BufferedFlushPolicy::EventKind::immediateCompleted);
+}
+
+TEST(BufferedFlushPolicy, CachedDeferredStartRepeatsActivationAndOwnedEventsRemainValid) {
+  BufferedFlushPolicy policy;
+  ASSERT_TRUE(policy.requestDeferred(10, 100, 20, 200));
+  auto original = policy.evaluate(true, 10, 123);
+  auto repeated = policy.evaluate(true, 10, 456);
+  ASSERT_EQ(repeated.events().size(), 2u);
+  EXPECT_EQ(repeated.events()[0].kind, BufferedFlushPolicy::EventKind::deferredActivated);
+  EXPECT_EQ(repeated.events()[1].kind, BufferedFlushPolicy::EventKind::deferredDiscard);
+  policy.resetForBufferedReceiver();
+  EXPECT_EQ(original.events()[0].timestamp, 123u);
+  EXPECT_EQ(repeated.events()[0].timestamp, 456u);
+}
+
+TEST(BufferedFlushPolicy, FreedFirstSlotIsReusedBeforeLaterOccupiedSlots) {
+  BufferedFlushPolicy policy;
+  for (unsigned index = 0; index < 10; ++index)
+    ASSERT_TRUE(policy.requestDeferred(15, index, index == 0 ? 10 : 30, 300));
+  EXPECT_FALSE(policy.evaluate(true, 10, 0).discardCurrent);
+  ASSERT_TRUE(policy.requestDeferred(15, 999, 30, 300));
+  auto start = policy.evaluate(true, 15, 0);
+  ASSERT_EQ(start.events().size(), 20u);
+  EXPECT_EQ(start.events()[0].fromTimestamp, 999u);
+  for (unsigned index = 1; index < 10; ++index)
+    EXPECT_EQ(start.events()[2 * index].fromTimestamp, index);
+}
+
+TEST(BufferedFlushPolicy, ConcurrentProducersAdmitAtMostTenCompleteRequests) {
+  BufferedFlushPolicy policy;
+  std::atomic<unsigned> accepted = 0;
+  auto produce = [&] {
+    for (unsigned index = 0; index < 8; ++index)
+      if (policy.requestDeferred(10, 100, 20, 200))
+        ++accepted;
+  };
+  std::thread first(produce), second(produce);
+  first.join();
+  second.join();
+  EXPECT_EQ(accepted, 10u);
+  auto start = policy.evaluate(true, 10, 0);
+  EXPECT_TRUE(start.discardCurrent);
+  EXPECT_EQ(start.events().size(), 20u);
 }

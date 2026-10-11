@@ -51,3 +51,30 @@ TEST_F(BufferedFlushDispatch, FullDeferredQueueStillAcknowledgesEleventhRequest)
   EXPECT_EQ(connection.ap2_play_enabled, 1);
   EXPECT_TRUE(connection.clock.hasAnchor());
 }
+
+TEST_F(BufferedFlushDispatch, ImmediatePlistControlsPacketDiscardThroughEndpoint) {
+  flush(std::nullopt, 20);
+  EXPECT_TRUE(connection.bufferedFlush.evaluate(true, 19, 0).discardCurrent);
+  EXPECT_FALSE(connection.bufferedFlush.evaluate(true, 20, 0).discardCurrent);
+  EXPECT_FALSE(connection.bufferedFlush.evaluate(true, 21, 0).discardCurrent);
+}
+
+TEST_F(BufferedFlushDispatch, DeferredPlistMasksSequenceAndControlsActivePacketRange) {
+  flush(0x80000a, 0x800014);
+  EXPECT_FALSE(connection.bufferedFlush.evaluate(true, 9, 999).discardCurrent);
+  auto start = connection.bufferedFlush.evaluate(true, 10, 999);
+  EXPECT_TRUE(start.discardCurrent);
+  ASSERT_EQ(start.events().size(), 2u);
+  EXPECT_EQ(start.events()[0].fromTimestamp, 100u);
+  EXPECT_EQ(start.events()[0].untilTimestamp, 200u);
+  EXPECT_TRUE(connection.bufferedFlush.evaluate(true, 19, 0).discardCurrent);
+  EXPECT_FALSE(connection.bufferedFlush.evaluate(true, 20, 0).discardCurrent);
+}
+
+TEST_F(BufferedFlushDispatch, EleventhAcknowledgedPlistDoesNotCreateAnActiveRange) {
+  for (uint64_t index = 0; index < 11; ++index)
+    flush(100 + index * 10, 105 + index * 10);
+  auto eleventhStart = connection.bufferedFlush.evaluate(true, 200, 0);
+  EXPECT_FALSE(eleventhStart.discardCurrent);
+  EXPECT_EQ(eleventhStart.events().size(), 10u);
+}
