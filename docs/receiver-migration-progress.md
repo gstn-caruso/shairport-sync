@@ -279,6 +279,48 @@ does not acquire the outer mutex. Independent review and hosted CI remain
 pending for this slice. Complete buffered TCP/cipher/decoder/player acceptance,
 device pause/resume, and broader audio/session ownership remain open.
 
+The buffered-block slice moves wire metadata parsing, ChaCha20-Poly1305-IETF
+authentication, owned payload preparation, and AAC ADTS framing into the named
+module `receiver.protocol.ap2.buffered_block`. Its explicit format descriptor
+contains only codec/channel configuration; its library links standard-library
+facilities and libsodium. Runtime SSRC lookup, late-block admission, clock/flush
+decisions, format preparation, mute/discontinuity policy, and player submission
+remain at their existing points. The buffered processor's inline header reads,
+crypto call, ADTS helper, and leading-256-byte payload buffer are removed.
+
+The block view borrows the current wire bytes and copies 23-bit sequence,
+big-endian timestamp, and SSRC metadata. Preparation validates the explicit
+32-byte key span, authenticates bytes 4..11 as AAD, takes ciphertext/tag from
+byte 12 up to the trailing eight-byte nonce, and front-pads that nonce with
+four zero bytes. Successful payloads own their bytes; AAC prepends the same
+seven ADTS bytes with 44.1/48-kHz indices, channel-seven encoding, and the
+existing unsupported-rate fallback. Allocation exceptions propagate; no new
+allocation-recovery policy is introduced.
+
+The separate safety fix validates the two-byte-inclusive declared length before
+the native `read_sized_block` body copy: the prefix must be complete and at
+least two, the body must be 36..16384 bytes, and it must fit the destination.
+Malformed framing produces a diagnostic and finishes the buffered receiver.
+Wrapped tests call the actual runtime read adapter: every short declared
+length, oversized prefixes, incomplete prefixes, and insufficient destinations
+are rejected before any body read. The unchecked adapter made these tests
+fail before the fix. Core parsing also rejects all short bodies and oversized
+input before metadata reads. This requires `fix` classification and an
+automated patch release, expected v6.1.4; no version is incremented manually.
+
+A deterministic non-silent golden fixture passed against the original sodium
+contract and ADTS helper before extraction. Fifteen standalone cases cover
+metadata, owned bytes, AAC headers, separate AAD/ciphertext/tag/nonce tampering,
+key errors, empty plaintext, and wire bounds. Actual ALAC/AAC encoders feed
+encrypted blocks through preparation and synchronous `player_put_packet`;
+352/1024 decoded frames remain queued after source/prepared storage changes.
+The standalone link contains only the block module, libsodium, and GTest.
+The full pinned Release suite passes 520/520; focused ASan+UBSan and TSan each
+pass 46/46, including prior flush and player boundary cases. Actual core
+sanitizer instrumentation is present. Independent review and hosted CI remain
+pending. Complete buffered TCP scheduling/cancellation, device playback,
+performance measurements, and broader decoder/session ownership remain open.
+
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
 fixture comparing every decoded sample; a temporary left/right decoder-plane
