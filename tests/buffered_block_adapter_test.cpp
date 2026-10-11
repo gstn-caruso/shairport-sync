@@ -1,6 +1,7 @@
 #include "buffered_block_fixture.hpp"
 #include "session/session_state.hpp"
 #include <gtest/gtest.h>
+#include <cstring>
 #include <span>
 
 import receiver.protocol.ap2.buffered_block;
@@ -54,9 +55,11 @@ TEST_P(BufferedBlockHandoff, OwnedPreparedPayloadDecodesSynchronouslyIntoRealPla
   for (unsigned channel = 0; channel < 2; ++channel)
     for (int sample = 0; sample < frame->nb_samples; ++sample) {
       if (aac)
-        reinterpret_cast<float *>(frame->data[channel])[sample] = (sample % 17 - 8) * 0.03f;
+        reinterpret_cast<float *>(frame->data[channel])[sample] = channel == 0
+            ? (sample % 17 - 8) * 0.03f : (sample % 23 - 11) * 0.02f + 0.05f;
       else
-        reinterpret_cast<int16_t *>(frame->data[channel])[sample] = (sample % 11 - 5) * 3000;
+        reinterpret_cast<int16_t *>(frame->data[channel])[sample] = channel == 0
+            ? (sample % 11 - 5) * 3000 : -12000 + sample * 60;
     }
   ASSERT_EQ(avcodec_send_frame(encoder.get(), frame.get()), 0);
   std::unique_ptr<AVPacket, decltype(releasePacket)> packet(av_packet_alloc(), releasePacket);
@@ -73,17 +76,70 @@ TEST_P(BufferedBlockHandoff, OwnedPreparedPayloadDecodesSynchronouslyIntoRealPla
   auto prepared = block->prepare({aac ? BufferedBlockCodec::aac : BufferedBlockCodec::alac, 2},
       buffered_block_fixture::key, format.sampleRate());
   ASSERT_TRUE(prepared);
+  std::vector<uint8_t> aacReference;
+  if (aac) {
+    AudioDecoder referenceDecoder;
+    ASSERT_TRUE(referenceDecoder.prepare(format));
+    auto referenceFrame = referenceDecoder.decode(*prepared);
+    ASSERT_TRUE(referenceFrame);
+    Resampler referenceResampler;
+    ASSERT_TRUE(referenceResampler.configure(format, AV_SAMPLE_FMT_FLTP, {format.sampleRate(), 2}));
+    auto converted = referenceResampler.convert(**referenceFrame);
+    ASSERT_TRUE(converted);
+    aacReference.assign(converted->bytes().begin(), converted->bytes().end());
+  }
   SessionState session{};
   ASSERT_EQ(pthread_mutex_init(&session.flush_mutex, nullptr), 0);
   EXPECT_EQ(player_put_packet(format.ssrc(), 1, block->timestamp(), prepared->data(),
       prepared->size(), 0, 0, &session), format.framesPerPacket());
-  prepared->clear();
+  std::fill(prepared->begin(), prepared->end(), 0xa5);
   std::fill(wire.begin(), wire.end(), 0);
+  std::vector<uint8_t>().swap(*prepared);
+  std::vector<uint8_t>().swap(wire);
+  packet.reset();
+  EXPECT_EQ(prepared->capacity(), 0u);
+  EXPECT_EQ(wire.capacity(), 0u);
   auto queued = session.packetBuffer.front();
   ASSERT_TRUE(queued);
   EXPECT_TRUE(queued->packet.ready);
   EXPECT_EQ(queued->packet.frames, format.framesPerPacket());
   EXPECT_EQ(queued->sampleFormat, encoder->sample_fmt);
+  auto front = session.packetBuffer.takeFrontIf(queued->revision);
+  ASSERT_TRUE(front);
+  auto &audio = std::get<QueuedAudioPacket>(*front);
+  Resampler queuedResampler;
+  ASSERT_TRUE(queuedResampler.configure(format, queued->sampleFormat, {format.sampleRate(), 2}));
+  ASSERT_TRUE(audio.convertWith(queuedResampler));
+  const auto bytes = audio.audioBytes();
+  const std::size_t sampleBytes = aac ? sizeof(int32_t) : sizeof(int16_t);
+  ASSERT_EQ(bytes.size(), format.framesPerPacket() * 2 * sampleBytes);
+  if (aac)
+    ASSERT_EQ(aacReference.size(), bytes.size());
+  bool nonSilent = false, differentChannels = false;
+  for (unsigned sample = 0; sample < format.framesPerPacket(); ++sample) {
+    SCOPED_TRACE(sample);
+    if (aac) {
+      int32_t left, right, expectedLeft, expectedRight;
+      std::memcpy(&left, bytes.data() + 2 * sample * sampleBytes, sampleBytes);
+      std::memcpy(&right, bytes.data() + (2 * sample + 1) * sampleBytes, sampleBytes);
+      std::memcpy(&expectedLeft, aacReference.data() + 2 * sample * sampleBytes, sampleBytes);
+      std::memcpy(&expectedRight, aacReference.data() + (2 * sample + 1) * sampleBytes, sampleBytes);
+      EXPECT_EQ(left, expectedLeft);
+      EXPECT_EQ(right, expectedRight);
+      nonSilent |= expectedLeft != 0 || expectedRight != 0;
+      differentChannels |= expectedLeft != expectedRight;
+    } else {
+      int16_t left, right;
+      std::memcpy(&left, bytes.data() + 2 * sample * sampleBytes, sampleBytes);
+      std::memcpy(&right, bytes.data() + (2 * sample + 1) * sampleBytes, sampleBytes);
+      EXPECT_EQ(left, (int(sample) % 11 - 5) * 3000);
+      EXPECT_EQ(right, -12000 + int(sample) * 60);
+      nonSilent |= left != 0 || right != 0;
+      differentChannels |= left != right;
+    }
+  }
+  EXPECT_TRUE(nonSilent);
+  EXPECT_TRUE(differentChannels);
   EXPECT_EQ(pthread_mutex_destroy(&session.flush_mutex), 0);
 }
 INSTANTIATE_TEST_SUITE_P(Codecs, BufferedBlockHandoff, testing::Values(
