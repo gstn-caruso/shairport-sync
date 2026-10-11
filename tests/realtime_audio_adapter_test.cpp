@@ -63,9 +63,11 @@ TEST(RealtimeAudioLegacy, AuthenticatedEmptyControlPayloadStillSubmits) {
   EXPECT_TRUE(submitted[0].bytes.empty());
   EXPECT_EQ(submitted[0].sequence,0xcdef);
 }
-class RealtimeIngressSockets : public testing::TestWithParam<bool> {};
+struct RealtimeRoute { bool control; const char *name; };
+void PrintTo(const RealtimeRoute &route,std::ostream *output) { *output << route.name; }
+class RealtimeIngressSockets : public testing::TestWithParam<RealtimeRoute> {};
 TEST_P(RealtimeIngressSockets, AudioAndD6UseExactAuthenticatedBytesAndRejectFailedMacBeforeSubmission) {
-  const bool control = GetParam();
+  const bool control = GetParam().control;
   submitted.clear();
   SessionState session{};
   session.connection_number = 52;
@@ -118,5 +120,6 @@ TEST_P(RealtimeIngressSockets, AudioAndD6UseExactAuthenticatedBytesAndRejectFail
   EXPECT_EQ(control ? session.ap2_control_socket : session.realtime_audio_socket,-1);
   EXPECT_EQ(fcntl(socketFd,F_GETFD),-1);
 }
-INSTANTIATE_TEST_SUITE_P(Routes,RealtimeIngressSockets,testing::Values(false,true),
-    [](const auto &scenario) { return scenario.param ? "D6Control" : "UdpAudio"; });
+INSTANTIATE_TEST_SUITE_P(Routes,RealtimeIngressSockets,
+    testing::Values(RealtimeRoute{false,"UdpAudio"},RealtimeRoute{true,"D6Control"}),
+    [](const auto &scenario) { return scenario.param.name; });

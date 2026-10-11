@@ -76,7 +76,8 @@ struct RealtimeDraws : RandomSource {
 };
 TEST(RealUDPIngress, ErrorAndStrictThirtySixByteBoundaryDoNotDrawRandomNumbers) {
   RealtimeDatagrams input;
-  input.packets = {{{},42},{buffered_block_fixture::encrypt(std::span<const uint8_t>{}),0},{std::vector<uint8_t>(35),0}};
+  input.packets = {{{},42},{buffered_block_fixture::encrypt(std::span<const uint8_t>{}),0},{std::vector<uint8_t>(35),0},
+                  {buffered_block_fixture::encrypt(std::span(buffered_block_fixture::plaintext).first(1)),0}};
   RealtimeDraws random;
   RealUDPIngress ingress(input,random,0.5);
   auto error = ingress.one(buffered_block_fixture::key);
@@ -84,6 +85,12 @@ TEST(RealUDPIngress, ErrorAndStrictThirtySixByteBoundaryDoNotDrawRandomNumbers) 
   EXPECT_EQ(ingress.one(buffered_block_fixture::key).kind,RealtimeReceiveKind::shortPacket);
   EXPECT_EQ(ingress.one(buffered_block_fixture::key).kind,RealtimeReceiveKind::shortPacket);
   EXPECT_EQ(random.calls,0u);
+  random.value = 1;
+  auto minimal = ingress.one(buffered_block_fixture::key);
+  ASSERT_EQ(minimal.kind,RealtimeReceiveKind::audio);
+  ASSERT_TRUE(minimal.audio);
+  EXPECT_EQ(minimal.audio->plaintext,(std::vector<uint8_t>{0x10}));
+  EXPECT_EQ(random.calls,1u);
 }
 TEST(RealUDPIngress, ZeroFractionBypassesRandomAndConsecutiveDatagramsOwnPayloadAcrossSequenceWrap) {
   RealtimeDatagrams input;
