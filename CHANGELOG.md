@@ -1,3 +1,13 @@
+## [6.1.4](https://github.com/gstn-caruso/shairport-sync/compare/v6.1.3...v6.1.4) (2026-10-11)
+
+### Bug Fixes
+
+* **ap2:** validate buffered blocks before owned payload preparation ([#58](https://github.com/gstn-caruso/shairport-sync/issues/58)) ([135b252](https://github.com/gstn-caruso/shairport-sync/commit/135b25252ae0658a2117c578c661f996a94fed0a))
+
+### Code Refactoring
+
+* **ap2:** own buffered flush requests and packet decisions ([#57](https://github.com/gstn-caruso/shairport-sync/issues/57)) ([b26dff8](https://github.com/gstn-caruso/shairport-sync/commit/b26dff8b7e935512918674eaab5312c5574ad301))
+
 ## [6.1.3](https://github.com/gstn-caruso/shairport-sync/compare/v6.1.2...v6.1.3) (2026-10-11)
 
 ### Bug Fixes
