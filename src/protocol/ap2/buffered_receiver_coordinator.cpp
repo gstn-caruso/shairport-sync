@@ -23,6 +23,7 @@ struct BufferedReceiverCoordinator::State {
   std::optional<AudioFormat> format;
   BufferedPacketMetadata packet{};
   std::uint64_t blocksRead = 0;
+  std::uint32_t previousSsrc = 0;
   State(ExactByteInput &bytes, BufferedSessionPort &live, BufferedClockPort &time,
         BufferedAudioSinkPort &audio, double desired)
       : input(bytes), session(live), clock(time), sink(audio), playback(desired) {}
@@ -77,15 +78,31 @@ struct BufferedReceiverCoordinator::State {
       session.diagnostic(BufferedReadDiagnostic{invalid});
       return BufferedReceiverResult::invalidSize;
     }
+    const auto previous = packet;
+    if (packet.ssrc != SSRC_NONE) previousSsrc = packet.ssrc;
     block = *parsed;
     packet = {block->sequence(),block->timestamp(),block->ssrc(),read.count};
     ++blocksRead;
     format = AudioFormat::fromSsrc(static_cast<ssrc_t>(packet.ssrc));
+    if (packet.ssrc != previousSsrc && packet.ssrc != SSRC_NONE)
+      session.diagnostic(BufferedFormatDiagnostic{format ? BufferedFormatKind::changed : BufferedFormatKind::unknown,
+                                                 packet, previousSsrc != SSRC_NONE});
     if (format) {
       needsRead = false;
       if (sink.shape().rate == 0) {
+        session.diagnostic(BufferedFormatDiagnostic{BufferedFormatKind::initial,packet});
         sink.initialize(packet.ssrc);
         playback.seedPlayerSequence(packet.sequence);
+      } else {
+        const auto expectedSequence = (previous.sequence + 1) & 0x7fffff;
+        if (expectedSequence != packet.sequence)
+          session.diagnostic(BufferedHistoryDiagnostic{BufferedHistoryKind::sequence,packet,
+                                                      expectedSequence,previous.sequence});
+        const auto oldFormat = AudioFormat::fromSsrc(static_cast<ssrc_t>(previousSsrc));
+        const auto expectedTimestamp = previous.timestamp + (oldFormat ? oldFormat->framesPerPacket() : 0);
+        if (packet.timestamp != expectedTimestamp)
+          session.diagnostic(BufferedHistoryDiagnostic{BufferedHistoryKind::timestamp,packet,
+                                                      expectedTimestamp,previous.timestamp});
       }
     }
     return BufferedReceiverResult::continued;

@@ -81,6 +81,12 @@ protected:
   CoordinatorSession session{effects};
   CoordinatorClock clock{effects};
   CoordinatorSink sink{effects};
+  template<class Diagnostic> std::vector<Diagnostic> diagnostics() const {
+    std::vector<Diagnostic> result;
+    for (const auto &event : session.diagnostics)
+      if (auto value = std::get_if<Diagnostic>(&event)) result.push_back(*value);
+    return result;
+  }
 };
 TEST_F(BufferedCoordinator, FirstAdvanceWaitsForTimingResetsAndFlushesBeforeAnyBlock) {
   clock.readyImmediately = false;
@@ -91,6 +97,33 @@ TEST_F(BufferedCoordinator, FirstAdvanceWaitsForTimingResetsAndFlushesBeforeAnyB
   ASSERT_EQ(session.everRead.size(), 1u);
   EXPECT_FALSE(session.everRead[0]);
   EXPECT_EQ(effects, (std::vector<std::string>{"ready","wait:1000","ready","reset","play","flush","map:0","wait:20000"}));
+}
+TEST_F(BufferedCoordinator, LaterBlockPreservesMetadataHistoryWithoutReinitializingInput) {
+  session.enabled = true;
+  input.add(1000); input.add(3000, ALAC_44100_S16_2);
+  BufferedReceiverCoordinator coordinator(input,session,clock,sink,0.25);
+  coordinator.advance(); coordinator.advance();
+  ASSERT_EQ(sink.sent.size(), 2u);
+  EXPECT_EQ(sink.initializations, 1u);
+  EXPECT_EQ(sink.sent[1].submission.sequence, 0xcdf0);
+  EXPECT_FALSE(sink.sent[1].submission.mute);
+  EXPECT_EQ(sink.sent[1].submission.gap, 976);
+  EXPECT_EQ(sink.sent[1].bytes, (std::vector<uint8_t>(buffered_block_fixture::plaintext.begin(),buffered_block_fixture::plaintext.end())));
+  auto formats = diagnostics<BufferedFormatDiagnostic>();
+  ASSERT_EQ(formats.size(), 3u);
+  EXPECT_EQ(formats[0].kind, BufferedFormatKind::changed);
+  EXPECT_FALSE(formats[0].switching);
+  EXPECT_EQ(formats[1].kind, BufferedFormatKind::initial);
+  EXPECT_EQ(formats[2].packet.ssrc, ALAC_44100_S16_2);
+  EXPECT_TRUE(formats[2].switching);
+  auto history = diagnostics<BufferedHistoryDiagnostic>();
+  ASSERT_EQ(history.size(), 2u);
+  EXPECT_EQ(history[0].kind, BufferedHistoryKind::sequence);
+  EXPECT_EQ(history[0].expected, 0x2bcdf0u);
+  EXPECT_EQ(history[0].previous, 0x2bcdefu);
+  EXPECT_EQ(history[1].kind, BufferedHistoryKind::timestamp);
+  EXPECT_EQ(history[1].expected, 2024u);
+  EXPECT_EQ(history[1].packet.timestamp, 3000u);
 }
 TEST_F(BufferedCoordinator, CompleteEncryptedCycleObservesReadsInitializesFlushesAndSubmitsOwnedPayload) {
   input.add(); session.enabled = true;
