@@ -465,6 +465,55 @@ Whole-processor cooperative stop, other workers, device acceptance, and controll
 performance measurements remain open. No package installation or live restart
 was performed.
 
+The realtime audio ingress slice applies Long Method (#82) and Feature Envy (#77)
+through the standard-library/libsodium module
+`receiver.protocol.ap2.realtime_audio`. Its decoder owns authenticated plaintext
+and copies the realtime 16-bit sequence and big-endian timestamp. The stripped
+layout has a ten-byte header; bytes 2..9 are AAD, ciphertext/tag begin at byte 10,
+and the trailing eight-byte nonce receives four leading zero bytes. Sizes below
+34 or above 4094 and missing/wrong-length keys are explicit errors. Sequence
+bytes remain outside AAD. This layout is deliberately independent of buffered
+23-bit sequence parsing, while using the same deterministic wire fixture.
+
+`RealUDPIngress` owns its 4096-byte receive storage and coherent datagram/RNG
+ports. It preserves the strict full-datagram `>36` gate: an authenticated empty
+34-byte stripped payload remains valid for control, while its 36-byte UDP form
+is rejected before RNG or authentication. Fraction zero bypasses RNG; otherwise
+only a draw strictly greater than the captured drop fraction admits a packet.
+Drop-fraction writes are confined to startup configuration/lease setup. The
+runtime UDP loop supplies sockets, randomness, cancellation cleanup, diagnostics,
+and the fixed ALAC-44100 stereo submission adapter. D6 retains its original
+control framing/drop guards, strips six bytes, and uses the same decoder and
+submission adapter. The core knows no session, configuration, socket, pthread,
+player, or FFmpeg types; allocation exceptions propagate without catching forced
+unwind. Dead UDP sequence-warning tracking and inline crypto/parsing are removed.
+
+The original helper's successful golden/non-silent plaintext and failed-MAC empty
+submission were characterized before extraction. Three no-failed-submission
+regressions then failed against the actual helper, UDP receiver, and D6 receiver.
+The separate fix rejects failed authentication before calling the player, avoiding
+packet-window/accounting effects from unauthenticated input. Authenticated empty
+control payloads still call the player. This requires `fix` classification and
+the automated patch release expected v6.1.7; no version is incremented manually.
+
+Fourteen standalone cases cover metadata/owned plaintext, every short length,
+exact maximum/empty payload, key errors, separate AAD/cipher/tag/nonce mutations,
+sequence mutation/wrap, receive errors, exact 36/37-byte boundaries, and strict
+random dropping. Runtime fixtures verify exact submitted plaintext/metadata,
+fixed codec/mute/gap values, failed-MAC rejection, and native pthread cancellation
+closing actual loopback UDP/control sockets. They supply player effects and do
+not add a new end-to-end realtime decoder/device acceptance claim. Existing
+non-silent ALAC/AAC handoff and session lifecycle cases remain in focused checks.
+The isolated link contains only realtime audio, libsodium, and GoogleTest; both
+production module objects contain ASan+UBSan/TSan instrumentation. Local evidence
+is preserved under `/tmp/realtime-ingress-*`; review and hosted CI remain pending.
+The Release baseline passes 561/561 in 17.37 seconds; the final suite passes
+580/580 in 17.71 seconds. All 55 focused realtime, block/authentication,
+player-handoff, and session lifecycle cases pass under each of ASan+UBSan and TSan.
+AP2 control timing/anchor policy, whole-worker cooperative stopping, device
+acceptance, and controlled performance measurements remain open. No package
+installation or live restart was performed.
+
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
 fixture comparing every decoded sample; a temporary left/right decoder-plane
