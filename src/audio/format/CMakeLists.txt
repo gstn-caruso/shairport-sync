@@ -1,1 +1,1 @@
-add_library(receiver-audio-format STATIC audio_format.cpp channel_mapping.cpp)
+add_library(receiver-audio-format STATIC audio_format.cpp channel_mapping.cpp native_format.cpp)

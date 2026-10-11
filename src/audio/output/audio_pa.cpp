@@ -463,55 +463,6 @@ static int configure(int32_t requested_encoded_format, char **resulting_channel_
   return response;
 }
 
-void load_pulseaudio_settings() {
-  // debug(1, "pa_init");
-  // set up default values first
-  config.audio_backend_buffer_desired_length = 0.35;
-  config.audio_backend_buffer_interpolation_threshold_in_seconds =
-      0.02; // below this, soxr interpolation will not occur -- it'll be basic interpolation
-            // instead.
-
-  config.audio_backend_latency_offset = 0;
-
-  // get settings from settings file, passing in defaults for format_set, rate_set and channel_set
-  // Note, these options may be in the "general" stanza or the named stanza
-  parse_audio_options("pulseaudio", SPS_FORMAT_SET, SPS_RATE_SET, SPS_CHANNEL_SET);
-
-  // now the specific options
-  if (config.cfg != NULL) {
-    const char *str;
-
-    /* Get the PulseAudio server name. */
-    if (config_lookup_non_empty_string(config.cfg, "pulseaudio.server", &str)) {
-      config.pa_server = (char *)str;
-    }
-
-    // get the default channel mapping setting basis -- "alsa" or "pulseaudio".
-
-    if (config_lookup_non_empty_string(config.cfg, "pulseaudio.default_channel_layouts",
-                                       &default_channel_layouts)) {
-      if ((strcasecmp(default_channel_layouts, "alsa") == 0) ||
-          (strcasecmp(default_channel_layouts, "pulseaudio") == 0)) {
-        debug(1, "pulseaudio default_channel_layouts setting: \"%s\".", default_channel_layouts);
-      } else {
-        debug(1, "Invalid pulseaudio default_channel_layouts setting. Must be \"alsa\" or "
-                 "\"pulseaudio\".");
-        default_channel_layouts = NULL;
-      }
-    };
-
-    /* Get the Application Name. */
-    if (config_lookup_non_empty_string(config.cfg, "pulseaudio.application_name", &str)) {
-      config.pa_application_name = (char *)str;
-    }
-
-    /* Get the PulseAudio sink name. */
-    if (config_lookup_non_empty_string(config.cfg, "pulseaudio.sink", &str)) {
-      config.pa_sink = (char *)str;
-    }
-  }
-
-}
 
 static int init(__attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
 
