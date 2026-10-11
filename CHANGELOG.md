@@ -1,3 +1,13 @@
+## [6.1.7](https://github.com/gstn-caruso/shairport-sync/compare/v6.1.6...v6.1.7) (2026-10-11)
+
+### Bug Fixes
+
+* **rtp:** reject unauthenticated audio through explicit realtime ingress ([#62](https://github.com/gstn-caruso/shairport-sync/issues/62)) ([0ac93a0](https://github.com/gstn-caruso/shairport-sync/commit/0ac93a09e1fa33d64c6dcf836420a7a200fee989))
+
+### Code Refactoring
+
+* **ap2:** coordinate buffered reception through explicit ports ([#61](https://github.com/gstn-caruso/shairport-sync/issues/61)) ([78c4484](https://github.com/gstn-caruso/shairport-sync/commit/78c448438204b09e1e28d94f4721727b821e13f2))
+
 ## [6.1.6](https://github.com/gstn-caruso/shairport-sync/compare/v6.1.5...v6.1.6) (2026-10-11)
 
 ### Bug Fixes
