@@ -27,3 +27,22 @@ TEST(BufferedFlushPolicy, ImmediateFlushDiscardsBeforeEndpointAndRetainsEndpoint
   EXPECT_EQ(endpoint.events()[0].kind, BufferedFlushPolicy::EventKind::immediateCompleted);
   EXPECT_TRUE(policy.evaluate(true, 20, 0).events().empty());
 }
+
+TEST(BufferedFlushPolicy, DeferredFlushActivatesAtStartAndRetainsEndpoint) {
+  BufferedFlushPolicy policy;
+  ASSERT_TRUE(policy.requestDeferred(10, 100, 20, 200));
+  EXPECT_FALSE(policy.evaluate(true, 9, 999).discardCurrent);
+  auto start = policy.evaluate(true, 10, 0);
+  EXPECT_TRUE(start.discardCurrent);
+  ASSERT_EQ(start.events().size(), 2u);
+  EXPECT_EQ(start.events()[0].kind, BufferedFlushPolicy::EventKind::deferredActivated);
+  EXPECT_EQ(start.events()[1].kind, BufferedFlushPolicy::EventKind::deferredDiscard);
+  EXPECT_EQ(start.events()[0].fromTimestamp, 100u);
+  EXPECT_EQ(start.events()[0].untilTimestamp, 200u);
+  EXPECT_TRUE(policy.evaluate(true, 19, 0).discardCurrent);
+  auto end = policy.evaluate(true, 20, 999);
+  EXPECT_FALSE(end.discardCurrent);
+  ASSERT_EQ(end.events().size(), 1u);
+  EXPECT_EQ(end.events()[0].kind, BufferedFlushPolicy::EventKind::deferredCompleted);
+  EXPECT_TRUE(policy.evaluate(true, 20, 999).events().empty());
+}

@@ -7,7 +7,16 @@ void BufferedFlushPolicy::requestImmediate(std::uint32_t sequence, std::uint32_t
   immediate_.untilSequence = sequence & 0x7fffff;
   immediate_.untilTimestamp = timestamp;
 }
-bool BufferedFlushPolicy::requestDeferred(std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {
+bool BufferedFlushPolicy::requestDeferred(std::uint32_t fromSequence, std::uint32_t fromTimestamp,
+                                         std::uint32_t untilSequence, std::uint32_t untilTimestamp) {
+  std::lock_guard lock(mutex_);
+  for (auto &request : deferred_) {
+    if (!request.inUse) {
+      request = {true, false, fromSequence & 0x7fffff, fromTimestamp,
+                 untilSequence & 0x7fffff, untilTimestamp};
+      return true;
+    }
+  }
   return false;
 }
 void BufferedFlushPolicy::append(Decision &decision, EventKind kind, const Request &request,
@@ -40,6 +49,25 @@ BufferedFlushPolicy::Decision BufferedFlushPolicy::evaluate(bool everReadBlock,
     } else {
       append(decision, EventKind::immediateDiscard, immediate_, sequence, timestamp);
       immediateDiagnosticActive_ = true;
+      decision.discardCurrent = true;
+    }
+  }
+  for (auto &request : deferred_) {
+    if (!request.inUse)
+      continue;
+    if (request.fromSequence == sequence && request.untilSequence != sequence) {
+      append(decision, EventKind::deferredActivated, request, sequence, timestamp);
+      request.active = true;
+      decision.discardCurrent = true;
+    }
+    if (request.untilSequence == sequence) {
+      append(decision, EventKind::deferredCompleted, request, sequence, timestamp);
+      request.active = request.inUse = false;
+    } else if (a_minus_b_mod23(sequence, request.untilSequence) > 0) {
+      append(decision, EventKind::deferredOverrun, request, sequence, timestamp);
+      request.active = request.inUse = false;
+    } else if (request.active) {
+      append(decision, EventKind::deferredDiscard, request, sequence, timestamp);
       decision.discardCurrent = true;
     }
   }
