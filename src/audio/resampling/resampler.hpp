@@ -3,6 +3,11 @@
 #include "audio/format/audio_format.hpp"
 #include "audio/format/channel_mapping.hpp"
 #include "audio/pcm/converted_audio.hpp"
+extern "C" {
+#include <libavutil/frame.h>
+#include <libavutil/samplefmt.h>
+#include <libswresample/swresample.h>
+}
 #include <expected>
 #include <mutex>
 

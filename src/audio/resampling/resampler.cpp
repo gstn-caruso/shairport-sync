@@ -2,6 +2,10 @@
 #include <array>
 #include <climits>
 #include <new>
+extern "C" {
+#include <libavutil/channel_layout.h>
+#include <libavutil/opt.h>
+}
 
 namespace {
 uint64_t defaultLayout(unsigned channels) {

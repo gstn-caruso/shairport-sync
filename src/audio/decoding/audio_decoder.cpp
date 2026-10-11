@@ -1,7 +1,10 @@
 #include "audio/decoding/audio_decoder.hpp"
 #include <climits>
 #include <cstring>
+extern "C" {
 #include <libavutil/intreadwrite.h>
+#include <libavutil/mem.h>
+}
 
 namespace {
 struct PacketDeleter {
