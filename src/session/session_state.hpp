@@ -1,6 +1,7 @@
 #pragma once
 
 #include "session/session_category.h"
+#include "session/principal_participant.hpp"
 #include "runtime/common.h"
 #include "playback/player.h"
 #include "timing/rtp_clock.hpp"
@@ -18,13 +19,14 @@
 #include <cstdlib>
 #include <atomic>
 
-struct SessionState {
+struct SessionState : PrincipalParticipant {
   SessionState() = default;
   SessionState(const SessionState &) = delete;
   SessionState &operator=(const SessionState &) = delete;
-  ~SessionState();
-  bool mayAcquirePrincipal() const { return !retiring_.load(); }
-  void beginRetirement() { retiring_.store(true); }
+  ~SessionState() override;
+  int id() const override { return connection_number; }
+  bool mayAcquirePrincipal() const override { return !retiring_.load(); }
+  void beginRetirement() override { retiring_.store(true); }
   int connection_number;           // for debug ID purposes, nothing else...
   int resend_interval;                      // this is really just for debugging
   char *UserAgent;                          // free this on teardown

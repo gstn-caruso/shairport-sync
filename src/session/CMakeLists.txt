@@ -10,3 +10,4 @@ target_include_directories(receiver-principal-selection PUBLIC "${CMAKE_SOURCE_D
 set_target_properties(receiver-principal-selection PROPERTIES CXX_SCAN_FOR_MODULES ON)
 target_compile_options(receiver-principal-selection PRIVATE -Wall -Wextra -Wshadow -Wformat=2 -fno-common)
 target_link_libraries(receiver-principal-selection PUBLIC Threads::Threads)
+target_link_libraries(receiver PUBLIC receiver-principal-selection)
