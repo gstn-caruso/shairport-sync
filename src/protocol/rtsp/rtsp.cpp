@@ -361,6 +361,7 @@ public:
       if (error == 0) {
         debug(level, "Connection %d%s closed by client.", id, channel);
       } else {
+        channel = phase == RtspRequestPhase::headers ? " RTSP port" : "";
         char description[1024];
         strerror_r(error, description, sizeof(description));
         debug(level, "Connection %d%s closed by client with error %d: \"%s\".",

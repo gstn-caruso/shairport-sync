@@ -13,7 +13,11 @@ import receiver.protocol.rtsp.request;
 
 class RequestInput : public RtspRequestInput {
 public:
-  bool stopped() override { return stop || sizes.size() >= stopAfterReads; }
+  bool stopped() override {
+    if (beforeStop)
+      beforeStop();
+    return stop || sizes.size() >= stopAfterReads;
+  }
   RtspRequestRead read(std::span<char> destination) override {
     sizes.push_back(destination.size());
     if (beforeRead)
@@ -38,6 +42,7 @@ public:
   RtspRequestRead terminal{0, 0, false};
   bool allocationFails = false;
   std::function<void()> beforeRead;
+  std::function<void()> beforeStop;
 };
 class RequestClock : public RtspRequestClock {
 public:
@@ -186,12 +191,15 @@ TEST(RtspRequestReader, BodyStallWarningPrecedesStopAndNoBodyReadOccurs) {
   RequestClock clock;
   clock.times = {0, 15000000001};
   RequestEffects effects;
+  std::vector<unsigned> warningsAtStop;
+  input.beforeStop = [&] { warningsAtStop.push_back(effects.warnings); };
   RtspRequestReader reader(input, clock, effects);
   auto result = reader.read();
   EXPECT_EQ(result.status, RtspRequestStatus::shutdown);
   EXPECT_FALSE(result.message);
   EXPECT_EQ(input.sizes.size(), 1u);
   EXPECT_EQ(effects.warnings, 1u);
+  EXPECT_EQ(warningsAtStop, (std::vector<unsigned>{0, 1}));
   ASSERT_EQ(effects.diagnostics.size(), 1u);
   EXPECT_EQ(effects.diagnostics[0].phase, RtspRequestPhase::body);
 }
