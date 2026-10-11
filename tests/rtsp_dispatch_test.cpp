@@ -60,6 +60,68 @@ struct MethodResponse {
   int status;
 };
 
+TEST_F(RtspDispatch, EightByteVolumePrefixAcceptsNonTerminatorSuffix) {
+  connection.volumeControl.rememberLevel(AirPlayVolume{-12.5});
+  request.request("GET_PARAMETER");
+  request.replaceBody("volumeXX");
+  dispatch();
+  EXPECT_EQ(response.responseCode(), 200);
+  EXPECT_EQ(response.bodyText(), "\r\nvolume: -12.500000\r\n");
+}
+
+TEST_F(RtspDispatch, OtherVolumeRequestLengthsReturnAnEmptySuccess) {
+  for (const auto body : {"volume", "volume\n", "volume\r\nextra", "otherXXX"}) {
+    SCOPED_TRACE(body);
+    request = RtspMessage{};
+    response = RtspMessage{};
+    request.request("GET_PARAMETER");
+    request.replaceBody(body);
+    dispatch();
+    EXPECT_EQ(response.responseCode(), 200);
+    EXPECT_TRUE(response.bodyText().empty());
+  }
+}
+
+TEST_F(RtspDispatch, SuffixedTextTypeProcessesEveryVolumeAndKeepsTheLast) {
+  request.request("SET_PARAMETER");
+  request.addHeader("Content-Type", "text/parameters; charset=utf-8");
+  request.replaceBody("volume: -20\r\nprogress: 0/1/2\r\nvolume: -10\r\n");
+  dispatch();
+  EXPECT_EQ(response.responseCode(), 200);
+  EXPECT_DOUBLE_EQ(suggested_volume(&connection), -10);
+}
+
+TEST_F(RtspDispatch, SuffixedMetadataTypePreservesContainerValidation) {
+  const char complete[] = {'m', 'l', 'i', 't', 0, 0, 0, 8, 'm', 'i', 'n', 'm', 0, 0, 0, 0};
+  const char incomplete[] = {'m', 'l', 'i', 't', 0, 0, 0, 20};
+  for (const auto body : {std::string_view(complete, sizeof(complete)),
+                          std::string_view(incomplete, sizeof(incomplete))}) {
+    SCOPED_TRACE(body.size());
+    request = RtspMessage{};
+    response = RtspMessage{};
+    request.request("SET_PARAMETER");
+    request.addHeader("Content-Type", "application/x-dmap-tagged; suffix=accepted");
+    request.replaceBody(body);
+    dispatch();
+    EXPECT_EQ(response.responseCode(), body.size() == sizeof(complete) ? 200 : 400);
+  }
+}
+
+TEST_F(RtspDispatch, ImageUnknownAndMissingContentTypesLeaveVolumeAlone) {
+  connection.volumeControl.rememberLevel(AirPlayVolume{-20});
+  for (const auto type : {"image/jpeg", "application/unknown", ""}) {
+    SCOPED_TRACE(type);
+    request = RtspMessage{};
+    response = RtspMessage{};
+    request.request("SET_PARAMETER");
+    if (*type) request.addHeader("Content-Type", type);
+    request.replaceBody("volume: -10\r\n");
+    dispatch();
+    EXPECT_EQ(response.responseCode(), 200);
+    EXPECT_DOUBLE_EQ(suggested_volume(&connection), -20);
+  }
+}
+
 void PrintTo(const MethodResponse &method, std::ostream *output) {
   *output << method.method << " -> " << method.status;
 }
