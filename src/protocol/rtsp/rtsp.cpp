@@ -2297,7 +2297,11 @@ void handle_setup_2(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
               conn->connection_number, err);
         }
 
-        listen(conn->buffered_audio_socket, 128); // ensure it's open before telling the client
+        const auto bufferedFlags = fcntl(conn->buffered_audio_socket, F_GETFL);
+        if (bufferedFlags < 0 || fcntl(conn->buffered_audio_socket, F_SETFL, bufferedFlags | O_NONBLOCK) < 0 ||
+            listen(conn->buffered_audio_socket, 128) < 0)
+          die("SETUP on Connection %d: cannot prepare buffered TCP listener: %d.",
+              conn->connection_number, errno);
 
         debug(2, "Connection %d: TCP Buffered Audio port opened: %u.", conn->connection_number,
               conn->local_buffered_audio_port);
