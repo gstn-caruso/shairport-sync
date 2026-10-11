@@ -37,6 +37,7 @@
 #include <stdint.h>
 #include "protocol/ap2/buffered_block_input.hpp"
 import receiver.protocol.ap2.buffered_block;
+import receiver.protocol.ap2.buffered_playback;
 
 
 static void logBufferedFlush(const BufferedFlushPolicy::Decision &decision, ssrc_t ssrc) {
@@ -146,13 +147,11 @@ void *rtp_buffered_audio_processor(void *arg) {
   uint32_t seq_no =
       0; // audio packet number. Initialised to avoid a "possibly uninitialised" warning.
   uint32_t previous_seqno = 0;
-  uint16_t sequence_number_for_player = 0;
 
   uint32_t timestamp = 0; // initialised to avoid a "possibly uninitialised" warning.
   uint32_t previous_timestamp = 0;
 
-  uint32_t expected_timestamp = 0;
-  uint64_t previous_buffer_should_be_time = 0;
+  BufferedPlaybackPolicy playback(config.audio_decoded_buffer_desired_length);
 
   ssize_t nread;
 
@@ -162,13 +161,6 @@ void *rtp_buffered_audio_processor(void *arg) {
 
   uint64_t blocks_read = 0;
 
-  uint32_t first_timestamp_in_this_sequence = 0;
-  int packets_played_in_this_sequence = 0;
-
-  int play_enabled = 0;
-
-  int very_early_packets_signalled = 0;
-  // double requested_lead_time = 0.0; // normal lead time minimum -- maybe  it should be about 0.1
 
   // wait until our timing information is valid
   while (have_ptp_timing_information(conn) == 0)
@@ -178,19 +170,19 @@ void *rtp_buffered_audio_processor(void *arg) {
 
   do {
 
-    if ((play_enabled == 0) && (conn->ap2_play_enabled != 0)) {
-      // play newly started
+    const auto play = playback.onPlayState(conn->ap2_play_enabled != 0);
+    if (play.started) {
       debug(2, "Play started.");
+    }
+    if (play.needFreshBlock)
       new_audio_block_needed = 1;
-    }
 
-    if ((play_enabled != 0) && (conn->ap2_play_enabled == 0)) {
+    if (play.stopped) {
       debug(2, "Play stopped.");
-      packets_played_in_this_sequence = 0; // not all blocks read are played...
-      reset_buffer(conn); // stop play ASAP
     }
+    if (play.resetPlayer)
+      reset_buffer(conn);
 
-    play_enabled = conn->ap2_play_enabled;
 
     // now, if get_next_block is non-zero, read a block. We may flush or use it
 
@@ -243,9 +235,7 @@ void *rtp_buffered_audio_processor(void *arg) {
             if (conn->inputAudio.sampleRate() == 0) {
               debug(2, "Preparing initial decoding chain for %s.", get_ssrc_name(payload_ssrc));
               prepareIncomingAudio(*conn, payload_ssrc);
-              sequence_number_for_player =
-                  seq_no & 0xffff; // this is arbitrary -- the sequence_number_for_player numbers will
-                                   // be sequential irrespective of seq_no jumps...
+              playback.seedPlayerSequence(seq_no);
             } else {
               uint32_t t_expected_seqno = (previous_seqno + 1) & 0x7fffff;
               if (t_expected_seqno != seq_no) {
@@ -293,186 +283,90 @@ void *rtp_buffered_audio_processor(void *arg) {
       logBufferedFlush(flush, payload_ssrc);
       pthread_cleanup_pop(1); // the mutex
 
-      // now, if the block is not invalidated by the flush code, see if we need
-      // to decode it and pass it to the player
       if (new_audio_block_needed == 0) {
-        // is there space in the player thread's buffer system?
-        // size_t player_buffer_occupancy = get_audio_buffer_occupancy(conn);
-        // debug(1,"player buffer size and occupancy: %u and %u", player_buffer_size,
-        // player_buffer_occupancy);
-
-        // If we are playing and there is room in the player buffer, and the block it not too
-        // early, go ahead and decode the block
-        // and send it to the player. Otherwise, keep the block and sleep for a while.
-
-        // calculate if there is room in the decoded audio buffer...
-
-        // debug(1, "frames buffered: %f seconds, desired length: %f seconds.", (1.0 *
-        // player_buffer_occupancy * conn->frames_per_packet) / conn->input_rate,
-        // config.audio_decoded_buffer_desired_length);
-
-        // int audio_decoded_buffer_below_desired_length = ((1.0 * player_buffer_occupancy *
-        // conn->frames_per_packet) / conn->input_rate) <=
-        // config.audio_decoded_buffer_desired_length;
-        uint64_t buffer_should_be_time;
-
-        int have_valid_time = (frame_to_local_time(timestamp, &buffer_should_be_time, conn) == 0);
-
-        // A slight problem here is that counting the number of buffers may not be sufficient,
-        // because the actual device may be
-        // taking data in large quantities at a single time.
-
-        // So we just have to ensure that there
-        // is enough of a lead time maintained for sufficient audio to be available to prevent
-        // the device from under-running.
-
-        // If means that the Shairport Sync player might run out of audio occasionally, but
-        // as long as the device has enough in its buffer, everything is fine.
-
-        // But it also means that Shairport Sync's buffers must be sufficient to hold all the
-        // entire lead-time's amount of audio in case the device has a zero-sized buffer.
-
-        if (have_valid_time != 0) {
-          // calculate the lead time to make sure it's not too early...
-          int64_t lead_time = buffer_should_be_time - get_absolute_time_in_ns();
-          if ((play_enabled != 0) &&
-              (lead_time * 1E-9 < (config.audio_decoded_buffer_desired_length + 0.1))) {
-            //            && (audio_decoded_buffer_below_desired_length != 0)
-            very_early_packets_signalled = 0; // reset very early packet warning signaller
-
-            // try to identify blocks that are timed to before the last buffer, and drop 'em
-            int64_t time_from_last_buffer_time =
-                buffer_should_be_time - previous_buffer_should_be_time;
-
-            if ((packets_played_in_this_sequence == 0) || (time_from_last_buffer_time > 0)) {
-
-              if (payloadFormat && bufferedBlock) {
-                if (lead_time >= 0) {
-                  const auto key = conn->session_key
-                      ? std::span<const uint8_t>(conn->session_key, 32) : std::span<const uint8_t>{};
-                  auto prepared = bufferedBlock->prepare(
-                      {payloadFormat->isAac() ? BufferedBlockCodec::aac : BufferedBlockCodec::alac,
-                       payloadFormat->aacChannelConfiguration()},
-                      key, conn->inputAudio.sampleRate());
-                  if (!prepared) {
-                    if (prepared.error() == BufferedBlockError::missingKey)
-                      debug(2, "No session key, so the audio packet can not be deciphered -- skipped.");
-                    else if (prepared.error() == BufferedBlockError::authenticationFailed)
-                      debug(1, "Error decrypting audio packet %u -- packet length %zd.", seq_no, nread);
-                  }
-                  if (prepared) {
-                    auto *payload_pointer = prepared->data();
-                    const auto payload_length = prepared->size();
-                    if (payloadFormat->isAac() && conn->inputAudio.sampleRate() != 44100 &&
-                        conn->inputAudio.sampleRate() != 48000)
-                      debug(1, "Unsupported AAC sample rate %u.", conn->inputAudio.sampleRate());
-                    int mute =
-                        ((packets_played_in_this_sequence == 0) && payloadFormat->isAac());
-                    if (mute) {
-                      debug(2, "Connection %d: muting first AAC block -- block %u -- timestamp %u.",
-                            conn->connection_number, seq_no, timestamp);
-                    }
-                    int32_t timestamp_difference = 0;
-                    if (packets_played_in_this_sequence == 0) {
-                      // first_block_in_this_sequence = seq_no;
-                      first_timestamp_in_this_sequence = timestamp;
-                      debug(2,
-                            "Connection %d: "
-                            "first block %u, first timestamp %u.",
-                            conn->connection_number, seq_no, timestamp);
-                    } else {
-                      timestamp_difference = timestamp - expected_timestamp;
-                      if (timestamp_difference != 0) {
-                        debug(2,
-                              "Connection %d: "
-                              "unexpected timestamp in block %u. Actual: %u, expected: %u "
-                              "difference: %d, "
-                              "%f ms. "
-                              "Positive means later, i.e. a gap. First timestamp was %u, payload "
-                              "type: \"%s\".",
-                              conn->connection_number, seq_no, timestamp, expected_timestamp,
-                              timestamp_difference,
-                              1000.0 * timestamp_difference / conn->inputAudio.sampleRate(),
-                              first_timestamp_in_this_sequence, get_ssrc_name(payload_ssrc));
-                        // mute the first packet after a discontinuity
-                        if (payloadFormat->isAac()) {
-                          debug(2,
-                                "Connection %d: muting first AAC block -- block %u -- following a "
-                                "timestamp discontinuity, timestamp %u.",
-                                conn->connection_number, seq_no, timestamp);
-                          mute = 1;
-                        }
-                      }
-                    }
-                    int skip_this_block = 0;
-                    if (timestamp_difference < 0) {
-
-                      // uncomment this to drop incoming new buffers that are too old and for whose
-                      // timings buffers have already been decoded and placed in the player queue
-                      // this is easier, but maybe the new late buffers are better than the previous
-                      // ones
-                      // (?)
-
-                      int32_t abs_timestamp_difference = -timestamp_difference;
-                      if ((size_t)abs_timestamp_difference > payloadFormat->framesPerPacket()) {
-                        skip_this_block = 1;
-                        debug(2,
-                              "skipping block %u because it is too old. Timestamp "
-                              "difference: %d, length of block: %zu.",
-                              seq_no, timestamp_difference,
-                              static_cast<size_t>(payloadFormat->framesPerPacket()));
-                      }
-                    }
-                    if (skip_this_block == 0) {
-                      uint32_t packet_size = player_put_packet(
-                          payload_ssrc, sequence_number_for_player, timestamp, payload_pointer,
-                          payload_length, mute, timestamp_difference, conn);
-                      debug(4, "block %u, timestamp %u, length %u sent to the player.", seq_no,
-                            timestamp, packet_size);
-                      sequence_number_for_player++;                 // simply increment
-                      expected_timestamp = timestamp + packet_size; // for the next time
-                      packets_played_in_this_sequence++;
-                    }
-                  }
-                } else {
-                  debug(3,
-                        "skipped deciphering block %u with timestamp %u because its lead time is "
-                        "out of range at %f "
-                        "seconds.",
-                        seq_no, timestamp, lead_time * 1.0E-9);
-                  uint32_t currentAnchorRTP = 0;
-                  uint64_t currentAnchorLocalTime = 0;
-                  if (get_ptp_anchor_local_time_info(conn, &currentAnchorRTP,
-                                                     &currentAnchorLocalTime) == clock_ok) {
-                    debug(3, "anchorRTP: %u, anchorLocalTime: %" PRIu64 ".", currentAnchorRTP,
-                          currentAnchorLocalTime);
-                  } else {
-                    debug(3, "Clock not okay");
-                  }
-                }
+        uint64_t scheduledTime = 0;
+        const bool validTime = frame_to_local_time(timestamp, &scheduledTime, conn) == 0;
+        const auto admission = playback.admit(
+            validTime ? std::optional<uint64_t>{scheduledTime} : std::nullopt,
+            validTime ? get_absolute_time_in_ns() : 0,
+            conn->inputAudio.framesPerPacket(), conn->inputAudio.sampleRate());
+        if (admission.kind == BufferedAdmissionKind::waitClock) {
+          debug(4, "just you wait, Henry Higgins, without valid timing information...");
+          usleep(admission.waitUs);
+        } else if (admission.kind == BufferedAdmissionKind::waitPacket) {
+          if (admission.warnEarly)
+            debug(1, "incoming frame, sequence number %u suddenly has a lead time of %f seconds, "
+                     "with a desired decoded buffer length of %f.",
+                  seq_no, admission.leadNs * 1E-9, config.audio_decoded_buffer_desired_length);
+          usleep(admission.waitUs);
+        } else {
+          if (admission.kind == BufferedAdmissionKind::dropBeforePrevious) {
+            debug(1, "dropping buffer that should have played before the last actually played.");
+          } else if (payloadFormat && bufferedBlock) {
+            if (admission.kind == BufferedAdmissionKind::prepare) {
+              const auto key = conn->session_key
+                  ? std::span<const uint8_t>(conn->session_key, 32) : std::span<const uint8_t>{};
+              auto prepared = bufferedBlock->prepare(
+                  {payloadFormat->isAac() ? BufferedBlockCodec::aac : BufferedBlockCodec::alac,
+                   payloadFormat->aacChannelConfiguration()},
+                  key, conn->inputAudio.sampleRate());
+              if (!prepared) {
+                if (prepared.error() == BufferedBlockError::missingKey)
+                  debug(2, "No session key, so the audio packet can not be deciphered -- skipped.");
+                else if (prepared.error() == BufferedBlockError::authenticationFailed)
+                  debug(1, "Error decrypting audio packet %u -- packet length %zd.", seq_no, nread);
               } else {
-                debug(2, "Unrecognised or invalid ssrc: %s.", get_ssrc_name(payload_ssrc));
+                if (payloadFormat->isAac() && conn->inputAudio.sampleRate() != 44100 &&
+                    conn->inputAudio.sampleRate() != 48000)
+                  debug(1, "Unsupported AAC sample rate %u.", conn->inputAudio.sampleRate());
+                const auto submission = playback.planAuthenticated(
+                    timestamp, payloadFormat->isAac(), payloadFormat->framesPerPacket());
+                if (submission.first) {
+                  if (submission.mute)
+                    debug(2, "Connection %d: muting first AAC block -- block %u -- timestamp %u.",
+                          conn->connection_number, seq_no, timestamp);
+                  debug(2, "Connection %d: first block %u, first timestamp %u.",
+                        conn->connection_number, seq_no, timestamp);
+                } else if (submission.gap != 0) {
+                  debug(2, "Connection %d: unexpected timestamp in block %u. Actual: %u, expected: %u "
+                           "difference: %d, %f ms. Positive means later, i.e. a gap. "
+                           "First timestamp was %u, payload type: \"%s\".",
+                        conn->connection_number, seq_no, timestamp, submission.expectedTimestamp,
+                        submission.gap, 1000.0 * submission.gap / conn->inputAudio.sampleRate(),
+                        submission.firstTimestamp, get_ssrc_name(payload_ssrc));
+                  if (submission.mute)
+                    debug(2, "Connection %d: muting first AAC block -- block %u -- following a "
+                             "timestamp discontinuity, timestamp %u.",
+                          conn->connection_number, seq_no, timestamp);
+                }
+                if (submission.skipTooOld) {
+                  debug(2, "skipping block %u because it is too old. Timestamp difference: %d, "
+                           "length of block: %zu.",
+                        seq_no, submission.gap, static_cast<size_t>(payloadFormat->framesPerPacket()));
+                } else {
+                  const auto packetSize = player_put_packet(
+                      payload_ssrc, submission.sequence, timestamp, prepared->data(), prepared->size(),
+                      submission.mute, submission.gap, conn);
+                  debug(4, "block %u, timestamp %u, length %u sent to the player.",
+                        seq_no, timestamp, packetSize);
+                  playback.didSubmit(timestamp, packetSize);
+                }
               }
             } else {
-              debug(1, "dropping buffer that should have played before the last actually played.");
+              debug(3, "skipped deciphering block %u with timestamp %u because its lead time is "
+                       "out of range at %f seconds.",
+                    seq_no, timestamp, admission.leadNs * 1E-9);
+              uint32_t anchorRtp = 0;
+              uint64_t anchorLocalTime = 0;
+              if (get_ptp_anchor_local_time_info(conn, &anchorRtp, &anchorLocalTime) == clock_ok)
+                debug(3, "anchorRTP: %u, anchorLocalTime: %" PRIu64 ".", anchorRtp, anchorLocalTime);
+              else
+                debug(3, "Clock not okay");
             }
-            new_audio_block_needed = 1; // the block has been used up and is no longer current
           } else {
-            if ((very_early_packets_signalled == 0) &&
-                (lead_time * 1E-9 > (config.audio_decoded_buffer_desired_length + 0.2))) {
-              debug(1,
-                    "incoming frame, sequence number %u suddenly has a lead time of %f seconds, "
-                    "with a desired "
-                    "decoded buffer length of %f.",
-                    seq_no, 1.0 * lead_time * 1E-9, config.audio_decoded_buffer_desired_length);
-              very_early_packets_signalled = 1;
-            }
-            usleep(((1000000 * conn->inputAudio.framesPerPacket()) / conn->inputAudio.sampleRate()) *
-                   2); // wait for approximately the length of two packets
+            debug(2, "Unrecognised or invalid ssrc: %s.", get_ssrc_name(payload_ssrc));
           }
-        } else {
-          debug(4, "just you wait, Henry Higgins, without valid timing information...");
-          usleep(20000); // just you wait, Henry Higgins...
+          new_audio_block_needed = 1;
         }
       }
     }

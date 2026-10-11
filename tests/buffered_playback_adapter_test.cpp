@@ -41,13 +41,12 @@ extern "C" void *rtp_buffered_audio_processor(void *);
 
 TEST(BufferedPlaybackAdapter, RealEncryptedStreamPreservesClockOrderMuteAndOldBlockSkip) {
   submitted.clear(); effects.clear(); waitForClock = true;
-  SessionState session;
+  SessionState session{};
+  ASSERT_EQ(pthread_mutex_init(&session.flush_mutex, nullptr), 0);
   session.connection_number = 41;
   session.ap2_audio_buffer_size = 31;
   session.ap2_play_enabled = 1;
-  session.session_key = static_cast<unsigned char *>(malloc(32));
-  ASSERT_NE(session.session_key, nullptr);
-  std::copy(buffered_block_fixture::key.begin(), buffered_block_fixture::key.end(), session.session_key);
+  session.session_key = const_cast<unsigned char *>(buffered_block_fixture::key.data());
   const int listener = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
   ASSERT_GE(listener, 0);
   sockaddr_in address{};
@@ -61,7 +60,7 @@ TEST(BufferedPlaybackAdapter, RealEncryptedStreamPreservesClockOrderMuteAndOldBl
   const int client = socket(AF_INET, SOCK_STREAM, 0);
   ASSERT_GE(client, 0);
   ASSERT_EQ(connect(client, reinterpret_cast<sockaddr *>(&address), sizeof(address)), 0);
-  for (const uint32_t timestamp : {1000u,2024u,100u}) {
+  for (const uint32_t timestamp : {1000u,2024u,100u,0x80000be8u}) {
     const auto block = buffered_block_fixture::encrypt(buffered_block_fixture::plaintext, AAC_48000_F24_2, timestamp);
     std::vector<uint8_t> bytes{0, static_cast<uint8_t>(block.size()+2)};
     bytes.insert(bytes.end(), block.begin(), block.end());
@@ -72,6 +71,7 @@ TEST(BufferedPlaybackAdapter, RealEncryptedStreamPreservesClockOrderMuteAndOldBl
   ASSERT_EQ(pthread_create(&processor, nullptr, rtp_buffered_audio_processor, &session), 0);
   ASSERT_EQ(pthread_join(processor, nullptr), 0);
   close(client);
+  ASSERT_EQ(pthread_mutex_destroy(&session.flush_mutex), 0);
   ASSERT_EQ(submitted.size(), 2u);
   EXPECT_EQ(submitted[0].sequence, 0xcdef);
   EXPECT_EQ(submitted[1].sequence, 0xcdf0);
@@ -82,6 +82,6 @@ TEST(BufferedPlaybackAdapter, RealEncryptedStreamPreservesClockOrderMuteAndOldBl
   EXPECT_EQ(submitted[1].gap, 0);
   EXPECT_EQ(submitted[0].payload.size(), buffered_block_fixture::plaintext.size()+7);
   EXPECT_TRUE(std::equal(buffered_block_fixture::plaintext.begin(), buffered_block_fixture::plaintext.end(), submitted[0].payload.begin()+7));
-  EXPECT_EQ(effects, (std::vector<std::string>{"reset","prepare","clock","wait:20000","clock","now","submit","clock","now","submit","clock","now"}));
+  EXPECT_EQ(effects, (std::vector<std::string>{"reset","prepare","clock","wait:20000","clock","now","submit","clock","now","submit","clock","now","clock","now"}));
   EXPECT_EQ(session.buffered_audio_socket, -1);
 }
