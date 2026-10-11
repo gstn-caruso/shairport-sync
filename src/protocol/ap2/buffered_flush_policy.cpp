@@ -73,5 +73,13 @@ BufferedFlushPolicy::Decision BufferedFlushPolicy::evaluate(bool everReadBlock,
   }
   return decision;
 }
-void BufferedFlushPolicy::resetForBufferedReceiver() {}
-void BufferedFlushPolicy::clearDeferredForPlayback() {}
+void BufferedFlushPolicy::resetForBufferedReceiver() {
+  std::lock_guard lock(mutex_);
+  immediate_ = {};
+  immediateDiagnosticActive_ = false;
+  deferred_ = {};
+}
+void BufferedFlushPolicy::clearDeferredForPlayback() {
+  std::lock_guard lock(mutex_);
+  deferred_ = {};
+}

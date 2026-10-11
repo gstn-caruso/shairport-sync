@@ -46,3 +46,20 @@ TEST(BufferedFlushPolicy, DeferredFlushActivatesAtStartAndRetainsEndpoint) {
   EXPECT_EQ(end.events()[0].kind, BufferedFlushPolicy::EventKind::deferredCompleted);
   EXPECT_TRUE(policy.evaluate(true, 20, 999).events().empty());
 }
+
+TEST(BufferedFlushPolicy, PlaybackClearPreservesImmediateWhileReceiverResetClearsAll) {
+  BufferedFlushPolicy policy;
+  policy.requestImmediate(20, 200);
+  ASSERT_TRUE(policy.requestDeferred(10, 100, 30, 300));
+  policy.clearDeferredForPlayback();
+  auto current = policy.evaluate(true, 10, 0);
+  EXPECT_TRUE(current.discardCurrent);
+  ASSERT_EQ(current.events().size(), 2u);
+  EXPECT_EQ(current.events()[0].kind, BufferedFlushPolicy::EventKind::immediateStarted);
+  EXPECT_EQ(current.events()[1].kind, BufferedFlushPolicy::EventKind::immediateDiscard);
+  ASSERT_TRUE(policy.requestDeferred(11, 100, 30, 300));
+  policy.resetForBufferedReceiver();
+  auto reset = policy.evaluate(true, 11, 0);
+  EXPECT_FALSE(reset.discardCurrent);
+  EXPECT_TRUE(reset.events().empty());
+}
