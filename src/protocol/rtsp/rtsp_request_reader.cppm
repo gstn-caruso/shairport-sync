@@ -3,6 +3,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 
 export module receiver.protocol.rtsp.request;
@@ -45,6 +46,11 @@ public:
       : input_(input), clock_(clock), effects_(effects) {}
   RtspRequestResult read();
 private:
+  struct Pending;
+  std::optional<RtspRequestStatus> readHeaders(Pending &request);
+  std::optional<RtspRequestStatus> readBody(Pending &request);
+  std::optional<RtspRequestStatus> receive(Pending &request, std::size_t count, RtspRequestPhase phase);
+  bool stopped(RtspRequestPhase phase);
   RtspRequestInput &input_;
   RtspRequestClock &clock_;
   RtspRequestEffects &effects_;
