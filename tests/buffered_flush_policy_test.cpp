@@ -7,3 +7,23 @@ TEST(BufferedFlushPolicy, EmptyPolicyRetainsCurrentBlockWithoutEvents) {
   EXPECT_FALSE(decision.discardCurrent);
   EXPECT_TRUE(decision.events().empty());
 }
+
+TEST(BufferedFlushPolicy, ImmediateFlushDiscardsBeforeEndpointAndRetainsEndpoint) {
+  BufferedFlushPolicy policy;
+  policy.requestImmediate(20, 200);
+  auto before = policy.evaluate(true, 19, 999);
+  EXPECT_TRUE(before.discardCurrent);
+  ASSERT_EQ(before.events().size(), 2u);
+  EXPECT_EQ(before.events()[0].kind, BufferedFlushPolicy::EventKind::immediateStarted);
+  EXPECT_EQ(before.events()[1].kind, BufferedFlushPolicy::EventKind::immediateDiscard);
+  EXPECT_EQ(before.events()[1].untilSequence, 20u);
+  auto repeat = policy.evaluate(true, 19, 999);
+  EXPECT_TRUE(repeat.discardCurrent);
+  ASSERT_EQ(repeat.events().size(), 1u);
+  EXPECT_EQ(repeat.events()[0].kind, BufferedFlushPolicy::EventKind::immediateDiscard);
+  auto endpoint = policy.evaluate(true, 20, 0);
+  EXPECT_FALSE(endpoint.discardCurrent);
+  ASSERT_EQ(endpoint.events().size(), 1u);
+  EXPECT_EQ(endpoint.events()[0].kind, BufferedFlushPolicy::EventKind::immediateCompleted);
+  EXPECT_TRUE(policy.evaluate(true, 20, 0).events().empty());
+}
