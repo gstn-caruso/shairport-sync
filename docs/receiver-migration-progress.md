@@ -240,6 +240,45 @@ line. Buffered excess, including a following request, remains body content;
 pipelining correction, broader protocol decomposition, and device acceptance
 remain open. Allocation-address debug tracing is no longer emitted.
 
+The buffered-flush slice gives `BufferedFlushPolicy` ownership of immediate
+and deferred request state, admission, activation, endpoint completion,
+overrun handling, and reset scopes. Its ordinary header supports the many
+`SessionState` consumers; its standalone library declares only standard-library,
+Threads, and pure `receiver-mod23` dependencies. Raw session flush flags,
+request arrays, and the shared flush-record type/capacity macro are removed.
+`SessionState` owns the policy; RTSP plist parsing, playback pause/anchor reset,
+packet discarding, and diagnostic formatting remain runtime responsibilities.
+
+The policy has ten first-free deferred slots and returns owned events in a
+fixed twenty-two-event result, without heap allocation or effect callbacks.
+Immediate completion cancels all deferred requests, including active ones;
+only inactive cancellations are logged. Deferred starts require exact sequence
+matching; missed starts retain blocks until endpoint/overrun. Endpoints retain
+their current packet. Twenty-three-bit masking and modular comparisons retain
+wraparound behavior; timestamps are diagnostic data rather than discard
+boundaries. Cached deferred start packets still repeat activation events.
+Receiver initialization clears all requests, while playback initialization
+clears only deferred requests. `everReadBlock == false` skips immediate
+evaluation while still evaluating deferred requests.
+
+Three real FLUSHBUFFERED dispatch characterizations passed before extraction:
+immediate requests pause playback and clear its anchor, deferred requests
+preserve both, and a full queue acknowledges an eleventh request with 200.
+Six adapter cases now connect real plist dispatch to scripted packet decisions;
+thirteen standalone policy cases cover ranges, overlap, event ordering, resets,
+wraparound, first-free reuse, bounded capacity, and concurrent producers. The
+standalone link contains only policy/mod23/GTest libraries. The full pinned
+Release suite passes 499/499; focused ASan+UBSan and TSan each pass 61/61,
+including existing RTSP dispatch and playback/player cases. Actual policy
+sanitizer instrumentation is present.
+
+The outer runtime `flush_mutex` remains around RTSP admission/pause/anchor
+effects and processor evaluation/logging. The lock order is outer mutex then
+policy mutex; events are logged after releasing the policy mutex. The policy
+does not acquire the outer mutex. Independent review and hosted CI remain
+pending for this slice. Complete buffered TCP/cipher/decoder/player acceptance,
+device pause/resume, and broader audio/session ownership remain open.
+
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
 fixture comparing every decoded sample; a temporary left/right decoder-plane

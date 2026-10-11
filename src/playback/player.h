@@ -10,7 +10,6 @@
 
 
 
-#define MAX_DEFERRED_FLUSH_REQUESTS 10
 #include "platform/utilities/pairing_api.h"
 #include <plist/plist.h>
 
@@ -63,15 +62,6 @@ typedef struct {
   pair_cipher_bundle data_cipher_bundle;
   char *data_cipher_salt;
 } ap2_pairing;
-
-typedef struct {
-  uint32_t inUse;  // record free or contains a current flush record
-  uint32_t active; // set if blocks within the given range are being flushed.
-  uint32_t flushFromTS;
-  uint32_t flushFromSeq;
-  uint32_t flushUntilTS;
-  uint32_t flushUntilSeq;
-} ap2_flush_request_t;
 
 
 #ifdef __cplusplus

@@ -631,11 +631,7 @@ void *player_thread_func(void *arg) {
   conn->ap2_rate = 0;
   conn->ap2_play_enabled = 0;
 
-  unsigned int f = 0;
-  for (f = 0; f < MAX_DEFERRED_FLUSH_REQUESTS; f++) {
-    conn->ap2_deferred_flush_requests[f].inUse = 0;
-    conn->ap2_deferred_flush_requests[f].active = 0;
-  }
+  conn->bufferedFlush.clearDeferredForPlayback();
 
   // This must be after init_alac_decoder
   ab_resync(conn);
