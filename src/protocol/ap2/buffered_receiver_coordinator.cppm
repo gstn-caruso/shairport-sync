@@ -37,6 +37,7 @@ class BufferedSessionPort {
 public:
   virtual ~BufferedSessionPort() = default;
   virtual bool playbackEnabled() const = 0;
+  // Evaluate and publish flush diagnostics under the session's existing flush lock.
   virtual bool evaluateFlush(bool everRead, const BufferedPacketMetadata &) = 0;
   virtual void observeRead(const BufferedBlockRead &) = 0;
   virtual std::span<const std::uint8_t> key() const = 0;
@@ -57,6 +58,7 @@ public:
   virtual BufferedInputShape shape() const = 0;
   virtual void initialize(std::uint32_t ssrc) = 0;
   virtual void reset() = 0;
+  // Submission consumes the borrowed payload synchronously; the span must not be retained.
   virtual unsigned submit(const BufferedPacketMetadata &, const BufferedAudioSubmission &,
                           std::span<std::uint8_t> payload) = 0;
 };
