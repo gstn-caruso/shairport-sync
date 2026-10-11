@@ -243,3 +243,49 @@ TEST_F(BufferedCoordinator, ZeroFrameReturnCommitsSequenceAndFirstPacketState) {
   EXPECT_FALSE(sink.sent[1].submission.mute);
   EXPECT_EQ(sink.sent[1].submission.gap, 0);
 }
+TEST_F(BufferedCoordinator, UnknownFormatCountsAndFlushesBlockThenReadsNextWithoutClockOrAuthentication) {
+  input.add(77,0xdeadbeef); input.add(1000); session.enabled = true;
+  BufferedReceiverCoordinator coordinator(input,session,clock,sink,0.25);
+  coordinator.advance();
+  EXPECT_EQ(clock.nowCalls, 0u); EXPECT_EQ(session.keyCalls, 0u); EXPECT_EQ(sink.initializations, 0u);
+  ASSERT_EQ(session.flushed.size(), 1u);
+  EXPECT_TRUE(session.everRead[0]); EXPECT_EQ(session.flushed[0].ssrc, 0xdeadbeefu);
+  coordinator.advance();
+  ASSERT_EQ(sink.sent.size(), 1u);
+  EXPECT_TRUE(sink.sent[0].submission.mute);
+  auto formats = diagnostics<BufferedFormatDiagnostic>();
+  ASSERT_EQ(formats.size(), 3u);
+  EXPECT_EQ(formats[0].kind, BufferedFormatKind::unknown);
+  EXPECT_TRUE(formats[1].switching);
+}
+TEST_F(BufferedCoordinator, TerminalReadsObserveStatisticsAndReturnBeforeFlushOrAdmission) {
+  struct Case { std::vector<uint8_t> bytes; ByteQueueStatus terminal; BufferedReceiverResult expected; };
+  const std::vector<Case> cases{
+      {{},ByteQueueStatus::endOfStream,BufferedReceiverResult::closed},
+      {{},ByteQueueStatus::error,BufferedReceiverResult::readError},
+      {{0},ByteQueueStatus::endOfStream,BufferedReceiverResult::invalidSize},
+      {{0,54,1,2},ByteQueueStatus::endOfStream,BufferedReceiverResult::closed},
+      {{0,37,1,2},ByteQueueStatus::endOfStream,BufferedReceiverResult::invalidSize}};
+  for (const auto &scenario : cases) {
+    SCOPED_TRACE(static_cast<int>(scenario.expected));
+    input.bytes = scenario.bytes; input.position = 0; input.terminal = scenario.terminal; input.error = 42;
+    session.enabled = true; session.diagnostics.clear(); session.observations.clear();
+    BufferedReceiverCoordinator coordinator(input,session,clock,sink,0.25);
+    EXPECT_EQ(coordinator.advance(), scenario.expected);
+    EXPECT_TRUE(session.flushed.empty()); EXPECT_EQ(clock.nowCalls, 0u);
+    ASSERT_EQ(session.observations.size(), 1u);
+    auto events = diagnostics<BufferedReadDiagnostic>();
+    ASSERT_EQ(events.size(), 1u);
+    if (scenario.terminal == ByteQueueStatus::error) EXPECT_EQ(events[0].read.errorCode, 42);
+  }
+}
+TEST_F(BufferedCoordinator, RunRepeatsIterationsUntilEofWithoutFlushingTerminalRead) {
+  input.add(1000); input.add(2024); session.enabled = true;
+  BufferedReceiverCoordinator coordinator(input,session,clock,sink,0.25);
+  EXPECT_EQ(coordinator.run(), BufferedReceiverResult::closed);
+  EXPECT_EQ(input.reads, 5u);
+  EXPECT_EQ(sink.sent.size(), 2u);
+  EXPECT_EQ(session.flushed.size(), 2u);
+  EXPECT_EQ(session.observations.size(), 3u);
+  EXPECT_EQ(sink.resets, 1u);
+}
