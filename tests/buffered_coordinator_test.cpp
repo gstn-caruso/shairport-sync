@@ -191,3 +191,55 @@ TEST_F(BufferedCoordinator, FlushCachedBlockRunsBeforeAdmissionAndConsumesWithou
   ASSERT_EQ(sink.sent.size(), 1u);
   EXPECT_EQ(sink.sent[0].packet.timestamp, 2024u);
 }
+TEST_F(BufferedCoordinator, MissingKeyAndFailedAuthenticationConsumeWithoutPlanningFirstPacket) {
+  input.add(77); input.add(88,AAC_48000_F24_2,true); input.add(1000);
+  session.enabled = true; session.keyPresent = false;
+  BufferedReceiverCoordinator coordinator(input,session,clock,sink,0.25);
+  coordinator.advance();
+  session.keyPresent = true;
+  coordinator.advance(); coordinator.advance();
+  ASSERT_EQ(sink.sent.size(), 1u);
+  EXPECT_TRUE(sink.sent[0].submission.mute);
+  EXPECT_EQ(sink.sent[0].submission.sequence, 0xcdef);
+  EXPECT_EQ(sink.sent[0].packet.timestamp, 1000u);
+  auto preparation = diagnostics<BufferedPreparationDiagnostic>();
+  ASSERT_EQ(preparation.size(), 2u);
+  EXPECT_EQ(preparation[0].kind, BufferedPreparationKind::missingKey);
+  EXPECT_EQ(preparation[1].kind, BufferedPreparationKind::authenticationFailed);
+}
+TEST_F(BufferedCoordinator, LateConsumptionNeverAuthenticatesAndDiagnosesAnchorAfterLateEvent) {
+  input.add(77); input.add(1000); session.enabled = true; clock.scheduled = 999999999;
+  BufferedReceiverCoordinator coordinator(input,session,clock,sink,0.25);
+  coordinator.advance();
+  EXPECT_EQ(session.keyCalls, 0u); EXPECT_TRUE(sink.sent.empty());
+  EXPECT_EQ(effects.back(), "anchor");
+  auto admission = diagnostics<BufferedAdmissionDiagnostic>();
+  ASSERT_EQ(admission.size(), 1u);
+  EXPECT_EQ(admission[0].kind, BufferedAdmissionDiagnosticKind::late);
+  EXPECT_EQ(admission[0].leadNs, -1);
+  clock.scheduled = 1050000000;
+  coordinator.advance();
+  ASSERT_EQ(sink.sent.size(), 1u);
+  EXPECT_TRUE(sink.sent[0].submission.mute);
+}
+TEST_F(BufferedCoordinator, TooOldAuthenticatedBlocksSkipWithoutCommittingPlayerSequence) {
+  input.add(1000); input.add(0); input.add(2024); session.enabled = true;
+  BufferedReceiverCoordinator coordinator(input,session,clock,sink,0.25);
+  coordinator.advance(); coordinator.advance(); coordinator.advance();
+  ASSERT_EQ(sink.sent.size(), 2u);
+  EXPECT_EQ(sink.sent[1].submission.sequence, 0xcdf0);
+  EXPECT_FALSE(sink.sent[1].submission.mute);
+  EXPECT_EQ(sink.sent[1].submission.gap, 0);
+  auto submission = diagnostics<BufferedSubmissionDiagnostic>();
+  EXPECT_EQ(std::count_if(submission.begin(),submission.end(),[](auto event){ return event.kind == BufferedSubmissionKind::skip && event.gap == -2024; }), 1);
+}
+TEST_F(BufferedCoordinator, ZeroFrameReturnCommitsSequenceAndFirstPacketState) {
+  input.add(1000); input.add(1000); session.enabled = true; sink.returned = 0;
+  BufferedReceiverCoordinator coordinator(input,session,clock,sink,0.25);
+  coordinator.advance(); coordinator.advance();
+  ASSERT_EQ(sink.sent.size(), 2u);
+  EXPECT_EQ(sink.sent[0].submission.sequence, 0xcdef);
+  EXPECT_EQ(sink.sent[1].submission.sequence, 0xcdf0);
+  EXPECT_FALSE(sink.sent[1].submission.mute);
+  EXPECT_EQ(sink.sent[1].submission.gap, 0);
+}

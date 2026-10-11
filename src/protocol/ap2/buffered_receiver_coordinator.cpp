@@ -53,18 +53,53 @@ struct BufferedReceiverCoordinator::State {
         session.diagnostic(BufferedAdmissionDiagnostic{BufferedAdmissionDiagnosticKind::early,packet,admission.leadNs});
       clock.wait(admission.waitUs);
     } else {
-      if (admission.kind == BufferedAdmissionKind::prepare && block && format) {
-        auto prepared = block->prepare({format->isAac() ? BufferedBlockCodec::aac : BufferedBlockCodec::alac,
-                                       format->aacChannelConfiguration()}, session.key(), shape.rate);
-        if (prepared) {
-          auto plan = playback.planAuthenticated(packet.timestamp,format->isAac(),format->framesPerPacket());
-          const auto returned = sink.submit(packet,{plan.sequence,plan.mute,plan.gap},*prepared);
-          playback.didSubmit(packet.timestamp,returned);
+      if (admission.kind == BufferedAdmissionKind::dropBeforePrevious) {
+        session.diagnostic(BufferedAdmissionDiagnostic{BufferedAdmissionDiagnosticKind::drop,packet});
+      } else if (block && format) {
+        if (admission.kind == BufferedAdmissionKind::prepare) prepareCurrent(shape);
+        else {
+          session.diagnostic(BufferedAdmissionDiagnostic{BufferedAdmissionDiagnosticKind::late,packet,admission.leadNs});
+          clock.diagnoseAnchor();
         }
+      } else {
+        session.diagnostic(BufferedAdmissionDiagnostic{BufferedAdmissionDiagnosticKind::invalidFormat,packet});
       }
       needsRead = true;
     }
     return BufferedReceiverResult::continued;
+  }
+  void reportSubmission(BufferedSubmissionKind kind, const BufferedSubmissionPlan &plan,
+                        unsigned frames, unsigned rate) {
+    session.diagnostic(BufferedSubmissionDiagnostic{kind,packet,plan.gap,plan.expectedTimestamp,
+                                                   plan.firstTimestamp,frames,rate});
+  }
+  void prepareCurrent(BufferedInputShape shape) {
+    auto prepared = block->prepare({format->isAac() ? BufferedBlockCodec::aac : BufferedBlockCodec::alac,
+                                   format->aacChannelConfiguration()}, session.key(), shape.rate);
+    if (!prepared) {
+      if (prepared.error() == BufferedBlockError::missingKey)
+        session.diagnostic(BufferedPreparationDiagnostic{BufferedPreparationKind::missingKey,packet});
+      else if (prepared.error() == BufferedBlockError::authenticationFailed)
+        session.diagnostic(BufferedPreparationDiagnostic{BufferedPreparationKind::authenticationFailed,packet});
+      return;
+    }
+    if (format->isAac() && shape.rate != 44100 && shape.rate != 48000)
+      session.diagnostic(BufferedPreparationDiagnostic{BufferedPreparationKind::unsupportedRate,packet,shape.rate});
+    const auto plan = playback.planAuthenticated(packet.timestamp,format->isAac(),format->framesPerPacket());
+    if (plan.first) {
+      if (plan.mute) reportSubmission(BufferedSubmissionKind::firstMute,plan,0,shape.rate);
+      reportSubmission(BufferedSubmissionKind::first,plan,0,shape.rate);
+    } else if (plan.gap != 0) {
+      reportSubmission(BufferedSubmissionKind::discontinuity,plan,0,shape.rate);
+      if (plan.mute) reportSubmission(BufferedSubmissionKind::discontinuityMute,plan,0,shape.rate);
+    }
+    if (plan.skipTooOld) {
+      reportSubmission(BufferedSubmissionKind::skip,plan,format->framesPerPacket(),shape.rate);
+      return;
+    }
+    const auto returned = sink.submit(packet,{plan.sequence,plan.mute,plan.gap},*prepared);
+    reportSubmission(BufferedSubmissionKind::submitted,plan,returned,shape.rate);
+    playback.didSubmit(packet.timestamp,returned);
   }
   BufferedReceiverResult readBlock() {
     const auto read = readBufferedAudioBlock(input,wire);
