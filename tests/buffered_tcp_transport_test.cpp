@@ -10,6 +10,14 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <sys/eventfd.h>
+
+static bool failEventFd = false;
+extern "C" int __real_eventfd(unsigned int, int);
+extern "C" int __wrap_eventfd(unsigned int initial, int flags) {
+  if (failEventFd) { errno = EMFILE; return -1; }
+  return __real_eventfd(initial, flags);
+}
 
 class BufferedTcp : public testing::Test {
 protected:
@@ -104,4 +112,41 @@ TEST_F(BufferedTcp, InvalidAndBlockingListenersFailWithoutChangingBorrowedFlags)
   BufferedTcpTransport blocking(listener, 8);
   EXPECT_EQ(blocking.start().error(), EINVAL);
   EXPECT_EQ(fcntl(listener, F_GETFL), flags & ~O_NONBLOCK);
+}
+TEST_F(BufferedTcp, EventFdFailureIsExplicitAndDoesNotStartWorkerOrLeak) {
+  const auto before = descriptors();
+  unsigned attempts = 0;
+  {
+    BufferedTcpTransport transport(listener, 8, {}, [&](pthread_t *, auto, void *) { ++attempts; return 0; });
+    failEventFd = true;
+    const auto started = transport.start();
+    failEventFd = false;
+    ASSERT_FALSE(started);
+    EXPECT_EQ(started.error(), EMFILE);
+    std::array<uint8_t,1> byte{};
+    EXPECT_EQ(transport.readExact(byte).errorCode, EMFILE);
+    EXPECT_EQ(transport.readExact(byte).status, ByteQueueStatus::error);
+    transport.join();
+  }
+  EXPECT_EQ(attempts, 0u);
+  EXPECT_EQ(descriptors(), before);
+}
+TEST_F(BufferedTcp, PeerResetRetainsNativeErrorAfterBufferedBytesDrain) {
+  BufferedTcpTransport transport(listener, 8);
+  ASSERT_TRUE(transport.start());
+  connectClient();
+  const std::array<uint8_t,1> sent{42};
+  ASSERT_EQ(send(client, sent.data(), sent.size(), MSG_NOSIGNAL), 1);
+  std::array<uint8_t,1> byte{};
+  ASSERT_EQ(transport.readExact(byte).status, ByteQueueStatus::complete);
+  EXPECT_EQ(byte, sent);
+  const linger reset{1,0};
+  ASSERT_EQ(setsockopt(client, SOL_SOCKET, SO_LINGER, &reset, sizeof(reset)), 0);
+  close(client);
+  client = -1;
+  auto failure = transport.readExact(byte);
+  EXPECT_EQ(failure.status, ByteQueueStatus::error);
+  EXPECT_EQ(failure.errorCode, ECONNRESET);
+  EXPECT_EQ(transport.readExact(byte).errorCode, ECONNRESET);
+  transport.join();
 }
