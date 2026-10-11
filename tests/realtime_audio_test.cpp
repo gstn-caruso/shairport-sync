@@ -50,6 +50,7 @@ TEST(RealtimeEncryptedAudio, SequenceOutsideAadCanChangeWithoutInvalidatingAuthe
   ASSERT_TRUE(result); EXPECT_EQ(result->sequence,0xffff);
 }
 struct RealtimeTamper { const char *name; size_t offset; };
+void PrintTo(const RealtimeTamper &scenario,std::ostream *output) { *output << scenario.name; }
 class RealtimeAuthentication : public testing::TestWithParam<RealtimeTamper> {};
 TEST_P(RealtimeAuthentication, SeparateAuthenticatedFieldsRejectMutation) {
   auto wire = buffered_block_fixture::encrypt(); wire[GetParam().offset] ^= 1;
@@ -58,3 +59,66 @@ TEST_P(RealtimeAuthentication, SeparateAuthenticatedFieldsRejectMutation) {
 INSTANTIATE_TEST_SUITE_P(Fields,RealtimeAuthentication,
     testing::Values(RealtimeTamper{"Timestamp",4},RealtimeTamper{"Ssrc",8},RealtimeTamper{"Ciphertext",12},RealtimeTamper{"Tag",28},RealtimeTamper{"Nonce",51}),
     [](const auto &scenario) { return scenario.param.name; });
+struct RealtimeDatagrams : DatagramInput {
+  struct Packet { std::vector<uint8_t> bytes; int error = 0; };
+  std::vector<Packet> packets;
+  size_t next = 0;
+  DatagramRead read(std::span<uint8_t> destination) override {
+    const auto &packet = packets.at(next++);
+    std::copy(packet.bytes.begin(),packet.bytes.end(),destination.begin());
+    return {packet.bytes.size(),packet.error};
+  }
+};
+struct RealtimeDraws : RandomSource {
+  double value = 0;
+  unsigned calls = 0;
+  double draw() override { ++calls; return value; }
+};
+TEST(RealUDPIngress, ErrorAndStrictThirtySixByteBoundaryDoNotDrawRandomNumbers) {
+  RealtimeDatagrams input;
+  input.packets = {{{},42},{buffered_block_fixture::encrypt(std::span<const uint8_t>{}),0},{std::vector<uint8_t>(35),0}};
+  RealtimeDraws random;
+  RealUDPIngress ingress(input,random,0.5);
+  auto error = ingress.one(buffered_block_fixture::key);
+  EXPECT_EQ(error.kind,RealtimeReceiveKind::readError); EXPECT_EQ(error.errorCode,42);
+  EXPECT_EQ(ingress.one(buffered_block_fixture::key).kind,RealtimeReceiveKind::shortPacket);
+  EXPECT_EQ(ingress.one(buffered_block_fixture::key).kind,RealtimeReceiveKind::shortPacket);
+  EXPECT_EQ(random.calls,0u);
+}
+TEST(RealUDPIngress, ZeroFractionBypassesRandomAndConsecutiveDatagramsOwnPayloadAcrossSequenceWrap) {
+  RealtimeDatagrams input;
+  auto first = buffered_block_fixture::encrypt(); first[2] = 0xff; first[3] = 0xff;
+  auto second = buffered_block_fixture::encrypt(); second[2] = 0; second[3] = 0;
+  input.packets = {{first,0},{second,0}};
+  RealtimeDraws random;
+  RealUDPIngress ingress(input,random,0);
+  auto one = ingress.one(buffered_block_fixture::key);
+  auto two = ingress.one(buffered_block_fixture::key);
+  ASSERT_EQ(one.kind,RealtimeReceiveKind::audio); ASSERT_TRUE(one.audio);
+  ASSERT_EQ(two.kind,RealtimeReceiveKind::audio); ASSERT_TRUE(two.audio);
+  EXPECT_EQ(one.audio->sequence,0xffff); EXPECT_EQ(two.audio->sequence,0);
+  EXPECT_EQ(one.audio->plaintext,two.audio->plaintext);
+  EXPECT_EQ(random.calls,0u);
+}
+TEST(RealUDPIngress, EqualityDropsAndOnlyStrictlyGreaterRandomDrawAdmits) {
+  RealtimeDatagrams input;
+  const auto wire = buffered_block_fixture::encrypt(); input.packets = {{wire,0},{wire,0},{wire,0}};
+  RealtimeDraws random;
+  RealUDPIngress ingress(input,random,0.5);
+  random.value = 0.5; EXPECT_EQ(ingress.one(buffered_block_fixture::key).kind,RealtimeReceiveKind::dropped);
+  random.value = 0.500001; EXPECT_EQ(ingress.one(buffered_block_fixture::key).kind,RealtimeReceiveKind::audio);
+  random.value = 0.499999; EXPECT_EQ(ingress.one(buffered_block_fixture::key).kind,RealtimeReceiveKind::dropped);
+  EXPECT_EQ(random.calls,3u);
+}
+TEST(RealUDPIngress, AuthenticationAndMissingKeyReturnTypedRejectionsWithoutAudio) {
+  RealtimeDatagrams input;
+  auto bad = buffered_block_fixture::encrypt(); bad[12] ^= 1;
+  input.packets = {{bad,0},{buffered_block_fixture::encrypt(),0}};
+  RealtimeDraws random;
+  RealUDPIngress ingress(input,random,0);
+  auto failure = ingress.one(buffered_block_fixture::key);
+  EXPECT_EQ(failure.kind,RealtimeReceiveKind::rejected);
+  EXPECT_EQ(failure.rejection,RealtimeAudioError::authenticationFailed); EXPECT_FALSE(failure.audio);
+  auto missing = ingress.one({});
+  EXPECT_EQ(missing.rejection,RealtimeAudioError::missingKey); EXPECT_FALSE(missing.audio);
+}

@@ -5,6 +5,7 @@ module;
 #include <vector>
 #include <array>
 #include <algorithm>
+#include <optional>
 #include <sodium.h>
 module receiver.protocol.ap2.realtime_audio;
 
@@ -26,4 +27,13 @@ std::expected<AuthenticatedRealtimeAudio,RealtimeAudioError> RealtimeEncryptedAu
     return std::unexpected(RealtimeAudioError::authenticationFailed);
   plaintext.resize(length);
   return AuthenticatedRealtimeAudio{sequence,timestamp,std::move(plaintext)};
+}
+RealtimeReceiveOutcome RealUDPIngress::one(std::span<const std::uint8_t> key) {
+  const auto read = input_.read(buffer_);
+  if (read.errorCode != 0) return {RealtimeReceiveKind::readError,read.errorCode};
+  if (read.count <= 36) return {RealtimeReceiveKind::shortPacket};
+  if (dropFraction_ != 0 && !(random_.draw() > dropFraction_)) return {RealtimeReceiveKind::dropped};
+  auto decoded = RealtimeEncryptedAudio::decode(std::span(buffer_).subspan(2,read.count-2),key);
+  if (!decoded) return {RealtimeReceiveKind::rejected,0,decoded.error()};
+  return {RealtimeReceiveKind::audio,0,RealtimeAudioError::tooShort,std::move(*decoded)};
 }
