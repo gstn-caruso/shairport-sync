@@ -106,6 +106,7 @@ import receiver.protocol.rtsp.parameters;
 #include "session/session_registry.hpp"
 #include "session/runtime_session_worker.hpp"
 #include "session/runtime_principal_session.hpp"
+import receiver.protocol.rtsp.request;
 
 static RuntimePrincipalSession principalSession;
 static SessionRegistry sessions;
@@ -183,30 +184,6 @@ play_lock_r get_play_lock(rtsp_conn_info *conn, int allow_session_interruption) 
   pthread_setcancelstate(previousState, nullptr);
   pthread_testcancel();
   return response;
-}
-
-// park a null at the line ending, and return the next line pointer
-// accept \r, \n, or \r\n
-static char *nextline(char *in, int inbuf) {
-  char *out = NULL;
-  while (inbuf) {
-    if (*in == '\r') {
-      *in++ = 0;
-      out = in;
-      inbuf--;
-    }
-    if ((*in == '\n') && (inbuf)) {
-      *in++ = 0;
-      out = in;
-    }
-
-    if (out)
-      break;
-
-    in++;
-    inbuf--;
-  }
-  return out;
 }
 
 static void buf_add(sized_buffer *buf, uint8_t *in, size_t in_len) {
@@ -348,197 +325,94 @@ void set_client_as_ptp_clock(rtsp_conn_info *conn) {
 
 void msg_cleanup_function(void *arg);
 
-enum rtsp_read_request_response rtsp_read_request(rtsp_conn_info *conn, RtspMessage **the_packet) {
-  enum rtsp_read_request_response reply = rtsp_read_request_response_pending;
-  *the_packet = msg_init();
-  pthread_cleanup_push(msg_cleanup_function, the_packet);
-  ssize_t buflen = 4096;
-  char *buf = static_cast<char *>(malloc(buflen + 1));
-  if (buf == NULL) {
-    debug(1, "Connection %d: rtsp_read_request: can't get a buffer.", conn->connection_number);
-    reply = rtsp_read_request_response_error;
-  } else {
-    debug(4, "buf is allocated at 0x%" PRIxPTR ".", (uintptr_t)buf);
-    pthread_cleanup_push(malloc_cleanup, &buf);
-    ssize_t nread;
-    ssize_t inbuf = 0;
-    int msg_size = -1;
-
-    while ((msg_size < 0) && (reply == rtsp_read_request_response_pending)) {
-      if (conn->stop != 0) {
-        debug(3, "Connection %d: shutdown requested by client.", conn->connection_number);
-        reply = rtsp_read_request_response_immediate_shutdown_requested;
-        // goto shutdown;
-      } else {
-
-        nread = read_from_rtsp_connection(conn, buf + inbuf, buflen - inbuf);
-
-        if (nread <= 0) {
-          // ETIMEDOUT seems to be from the keepalive having failed.
-          // But it does seem as it it's not always sent, e.g. if another read() is outstanding (?)
-          // EAGAIN seems to be simply from the read() request timing out.
-          if (errno == ETIMEDOUT) {
-            debug(1,
-                  "Connection %d has disappeared. As Yeats almost said, \"Too long a "
-                  "silence / can make a stone "
-                  "of the heart\". ETIMEOUT",
-                  conn->connection_number);
-            reply = rtsp_read_request_response_immediate_shutdown_requested;
-          } else if (nread == 0) {
-            if (errno == 0) {
-              // a blocking read that returns zero means eof -- implies connection closed by client
-              debug(2, "Connection %d RTSP closed by client.", conn->connection_number);
-            } else {
-              char errorstring[1024];
-              strerror_r(errno, (char *)errorstring, sizeof(errorstring));
-              debug(2, "Connection %d RTSP port closed by client with error %d: \"%s\".",
-                    conn->connection_number, errno, (char *)errorstring);
-            }
-            safe_socket_close(&conn->fd); // close it from our end too...
-            reply = rtsp_read_request_response_channel_closed;
-          } else {
-            char errorstring[1024];
-            strerror_r(errno, (char *)errorstring, sizeof(errorstring));
-            debug(1, "Connection %d: rtsp_read_request_response_read_error %d: \"%s\".",
-                  conn->connection_number, errno, (char *)errorstring);
-            reply = rtsp_read_request_response_read_error;
-          }
-          // goto shutdown;
-        } else {
-
-          /* // this outputs the message received
-              {
-              void *pt = malloc(nread+1);
-              memset(pt, 0, nread+1);
-              memcpy(pt, buf + inbuf, nread);
-              debug(1, "Incoming string on port: \"%s\"",pt);
-              free(pt);
-              }
-          */
-          inbuf += nread;
-
-          char *next;
-          while ((reply == rtsp_read_request_response_pending) && (msg_size < 0) &&
-                 (next = nextline(buf, inbuf))) {
-            if (!*the_packet)
-              *the_packet = msg_init();
-            auto parsed = (*the_packet)->readLine(buf);
-            if (parsed)
-              msg_size = *parsed;
-            else
-              msg_free(the_packet);
-            if (!(*the_packet)) {
-              debug(1, "Connection %d: rtsp_read_request can't find an RTSP header.",
-                    conn->connection_number);
-              reply = rtsp_read_request_response_bad_packet;
-              // goto shutdown;
-            } else {
-              inbuf -= next - buf;
-              if (inbuf)
-                memmove(buf, next, inbuf);
-            }
-          }
-        }
-      }
-    }
-
-    if ((reply == rtsp_read_request_response_pending) && (msg_size > 0)) {
-      // more input is needed...
-      uint64_t threshold_time =
-          get_absolute_time_in_ns() + ((uint64_t)15000000000); // i.e. fifteen seconds from now
-      int warning_message_sent = 0;
-
-      if (msg_size > buflen) {
-        buf = static_cast<char *>(realloc(buf, msg_size + 1));
-        if (buf == NULL) {
-          warn("Connection %d: too much content.", conn->connection_number);
-          reply = rtsp_read_request_response_error;
-          // goto shutdown;
-        } else {
-          debug(4, "buf is reallocated at 0x%" PRIxPTR ".", (uintptr_t)buf);
-          buflen = msg_size;
-        }
-      }
-
-      // const size_t max_read_chunk = 1024 * 1024 / 16;
-      while ((inbuf < msg_size) && (reply == rtsp_read_request_response_pending)) {
-
-        // we are going to read the stream in chunks and time how long it takes to
-        // do so.
-        // If it's taking too long, (and we find out about it), we will send an
-        // error message as
-        // metadata
-
-        if (warning_message_sent == 0) {
-          uint64_t time_now = get_absolute_time_in_ns();
-          if (time_now > threshold_time) { // it's taking too long
-            debug(1, "Error receiving metadata from source -- transmission seems "
-                     "to be stalled.");
-            warning_message_sent = 1;
-          }
-        }
-
-        if (conn->stop != 0) {
-          debug(1, "RTSP shutdown requested.");
-          reply = rtsp_read_request_response_immediate_shutdown_requested;
-          // goto shutdown;
-        } else {
-          size_t read_chunk = msg_size - inbuf;
-          // if (read_chunk > max_read_chunk)
-          //  read_chunk = max_read_chunk;
-          // usleep(80000); // wait about 80 milliseconds between reads of up to max_read_chunk
-          nread = read_from_rtsp_connection(conn, buf + inbuf, read_chunk);
-
-          if (nread <= 0) {
-            // ETIMEDOUT seems to be from the keepalive having failed.
-            // But it does seem as it it's not always sent, e.g. if another read() is outstanding
-            // (?) EAGAIN seems to be simply from the read() request timing out.
-            if (errno == ETIMEDOUT) {
-              debug(1,
-                    "Connection %d has disappeared. As Yeats almost said, \"Too long a "
-                    "silence / can make a stone "
-                    "of the heart\". ETIMEOUT",
-                    conn->connection_number);
-              reply = rtsp_read_request_response_immediate_shutdown_requested;
-              // Note: the socket will be closed when the thread exits
-            } else if (nread == 0) {
-              if (errno == 0) {
-                // a blocking read that returns zero means eof -- implies connection closed by
-                // client
-                debug(1, "Connection %d closed by client.", conn->connection_number);
-              } else {
-                char errorstring[1024];
-                strerror_r(errno, (char *)errorstring, sizeof(errorstring));
-                debug(1, "Connection %d closed by client with error %d: \"%s\".",
-                      conn->connection_number, errno, (char *)errorstring);
-              }
-              reply = rtsp_read_request_response_channel_closed;
-              // Note: the socket will be closed when the thread exits
-            } else {
-              char errorstring[1024];
-              strerror_r(errno, (char *)errorstring, sizeof(errorstring));
-              debug(1, "Connection %d: rtsp_read_request_response_read_error %d: \"%s\".",
-                    conn->connection_number, errno, (char *)errorstring);
-              reply = rtsp_read_request_response_read_error;
-            }
-            // goto shutdown;
-          } else {
-            inbuf += nread;
-          }
-        }
-      }
-    }
-    if (reply == rtsp_read_request_response_pending) {
-      reply = rtsp_read_request_response_ok;
-      RtspMessage *msg = *the_packet;
-      msg->replaceBody(std::string_view(buf, inbuf));
-      *the_packet = msg;
-    }
-
-    pthread_cleanup_pop(1);
+namespace {
+class RuntimeRequestTransport : public RtspRequestInput,
+                                public RtspRequestClock,
+                                public RtspRequestEffects {
+public:
+  explicit RuntimeRequestTransport(SessionState &session) : session_(session) {}
+  bool stopped() override { return session_.stop != 0; }
+  RtspRequestRead read(std::span<char> destination) override {
+    const auto count = read_from_rtsp_connection(&session_, destination.data(), destination.size());
+    const auto error = errno;
+    return {count, error, error == ETIMEDOUT};
   }
-  pthread_cleanup_pop(reply != rtsp_read_request_response_ok);
-  return reply;
+  std::uint64_t nowNs() override { return get_absolute_time_in_ns(); }
+  void closeHeaderChannel() override { safe_socket_close(&session_.fd); }
+  void stalled() override {
+    debug(1, "Error receiving metadata from source -- transmission seems to be stalled.");
+  }
+  void diagnostic(RtspRequestDiagnostic event, RtspRequestPhase phase, int error) override {
+    const auto id = session_.connection_number;
+    switch (event) {
+    case RtspRequestDiagnostic::shutdown:
+      if (phase == RtspRequestPhase::headers)
+        debug(3, "Connection %d: shutdown requested by client.", id);
+      else
+        debug(1, "RTSP shutdown requested.");
+      break;
+    case RtspRequestDiagnostic::timeout:
+      debug(1, "Connection %d has disappeared. As Yeats almost said, \"Too long a "
+               "silence / can make a stone of the heart\". ETIMEOUT", id);
+      break;
+    case RtspRequestDiagnostic::closed: {
+      const auto level = phase == RtspRequestPhase::headers ? 2 : 1;
+      const char *channel = phase == RtspRequestPhase::headers ? " RTSP" : "";
+      if (error == 0) {
+        debug(level, "Connection %d%s closed by client.", id, channel);
+      } else {
+        channel = phase == RtspRequestPhase::headers ? " RTSP port" : "";
+        char description[1024];
+        strerror_r(error, description, sizeof(description));
+        debug(level, "Connection %d%s closed by client with error %d: \"%s\".",
+              id, channel, error, description);
+      }
+      break;
+    }
+    case RtspRequestDiagnostic::readError: {
+      char description[1024];
+      strerror_r(error, description, sizeof(description));
+      debug(1, "Connection %d: rtsp_read_request_response_read_error %d: \"%s\".",
+            id, error, description);
+      break;
+    }
+    case RtspRequestDiagnostic::badPacket:
+      debug(1, "Connection %d: rtsp_read_request can't find an RTSP header.", id);
+      break;
+    case RtspRequestDiagnostic::allocationFailure:
+      if (phase == RtspRequestPhase::headers)
+        debug(1, "Connection %d: rtsp_read_request: can't get a buffer.", id);
+      else
+        warn("Connection %d: too much content.", id);
+      break;
+    }
+  }
+private:
+  SessionState &session_;
+};
+}
+
+enum rtsp_read_request_response rtsp_read_request(rtsp_conn_info *conn, RtspMessage **the_packet) {
+  *the_packet = nullptr;
+  RuntimeRequestTransport transport(*conn);
+  RtspRequestReader reader(transport, transport, transport);
+  auto result = reader.read();
+  switch (result.status) {
+  case RtspRequestStatus::success:
+    *the_packet = result.message.release();
+    return rtsp_read_request_response_ok;
+  case RtspRequestStatus::shutdown:
+    return rtsp_read_request_response_immediate_shutdown_requested;
+  case RtspRequestStatus::badPacket:
+    return rtsp_read_request_response_bad_packet;
+  case RtspRequestStatus::channelClosed:
+    return rtsp_read_request_response_channel_closed;
+  case RtspRequestStatus::readError:
+    return rtsp_read_request_response_read_error;
+  case RtspRequestStatus::allocationFailure:
+    return rtsp_read_request_response_error;
+  }
+  std::terminate();
 }
 
 int msg_write_response(rtsp_conn_info *conn, RtspMessage *response) {

@@ -192,6 +192,54 @@ Independent review and hosted CI remain pending for this slice. Participants
 must outlive selection and callbacks must not reenter or retain borrowed
 pointers. Broader session encapsulation and cooperative stopping remain open.
 
+The RTSP request-reader slice moves framing into the named module
+`receiver.protocol.rtsp.request`. `RtspRequestReader` owns the pending message
+and header/body storage, with explicit input, monotonic-clock, and diagnostic
+ports. Its library depends only on the standard library and
+`receiver-rtsp-message`; its twenty-seven standalone cases link without the receiver,
+audio, pairing, or native service libraries. The runtime adapter retains socket
+and cipher reads, captured transport errors, stop state, diagnostic wording,
+and header-EOF descriptor closure. The framing loop and old line scanner have
+been removed from `rtsp.cpp`.
+
+Pending header/body storage uses uninitialized owned arrays. Growth copies only
+already received bytes, avoiding eager initialization of the declared content
+length. A bounded 5000-byte allocation-poisoning check failed with zero-filled
+vector growth and passes with uninitialized storage; it also checks that the
+buffered body prefix survives growth.
+
+Seven socket cases first passed against the original reader, including actual
+HomeKit cipher encryption/decryption, binary bodies, mixed line delimiters,
+NUL-truncated header interpretation, negative content lengths, full headers,
+and header/body EOF closure differences. Additional coverage preserves stale
+ETIMEDOUT precedence at EOF. Standalone cases cover fragmented reads, exact
+missing-body read sizes, phase-specific errors and timeouts, terminal CR,
+split CRLF, large bodies, allocation failure, stop checks, and a warning only
+after fifteen seconds, once, before the next read or stop check. Existing
+partially read request cancellation still releases the request and leaves its
+output null under ASan+UBSan and TSan.
+
+After allocation review corrections, the pinned Release suite passes 480/480;
+focused ASan+UBSan and TSan each pass 36/36. Core objects contain actual
+sanitizer instrumentation.
+Independent review and hosted CI remain pending for this slice. Only
+`std::bad_alloc` is caught; pthread forced unwind propagates through RAII.
+Allocation recovery is an intentional behavior fix: the original message
+constructor terminated the process on allocation failure, and parser/body-copy
+allocation failures escaped. These failures now return allocation-failure
+status with no message and release pending resources, consistently with header
+and body storage failure. Six bounded linker fault-injection cases exercise
+actual message, header-array, request-line, header-list, body-growth, and
+body-copy allocations across both diagnostic phases, then verify successful
+retry. No host heap exhaustion is used. The PR must retain `fix` classification,
+requiring a patch release through the project's release automation.
+The bounded scanner avoids the original terminal-CR
+uninitialized lookahead while preserving observable delimiter behavior,
+including treating a following fragment's leading LF as a separate empty
+line. Buffered excess, including a following request, remains body content;
+pipelining correction, broader protocol decomposition, and device acceptance
+remain open. Allocation-address debug tracing is no longer emitted.
+
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
 fixture comparing every decoded sample; a temporary left/right decoder-plane
