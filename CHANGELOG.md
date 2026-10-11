@@ -1,3 +1,18 @@
+## [6.1.3](https://github.com/gstn-caruso/shairport-sync/compare/v6.1.2...v6.1.3) (2026-10-11)
+
+### Bug Fixes
+
+* **rtsp:** recover allocation failures in an isolated request reader ([#56](https://github.com/gstn-caruso/shairport-sync/issues/56)) ([1ce0e9e](https://github.com/gstn-caruso/shairport-sync/commit/1ce0e9eb92c4a3f6a46c6bd697ae918ab0cc0d80))
+
+### Code Refactoring
+
+* **audio:** isolate decoder and resampler dependencies ([#50](https://github.com/gstn-caruso/shairport-sync/issues/50)) ([aaa0e26](https://github.com/gstn-caruso/shairport-sync/commit/aaa0e26fe4afa942229f8d9ad54de6d71587a046))
+* **config:** own settings and isolate configuration loading ([#53](https://github.com/gstn-caruso/shairport-sync/issues/53)) ([4bdb5f5](https://github.com/gstn-caruso/shairport-sync/commit/4bdb5f5c7873ae19019db3248250a59af37df847))
+* **playback:** make output setup dependencies explicit ([#52](https://github.com/gstn-caruso/shairport-sync/issues/52)) ([a5891a3](https://github.com/gstn-caruso/shairport-sync/commit/a5891a3ddb49cc86ad29c68d9b4be9e435864f42))
+* **rtsp:** isolate parameter handling behind an explicit volume port ([#51](https://github.com/gstn-caruso/shairport-sync/issues/51)) ([86293f4](https://github.com/gstn-caruso/shairport-sync/commit/86293f4dbb4c4cad0d7973e479469d4d94fb88f5))
+* **session:** isolate principal selection behind a C++ module ([#55](https://github.com/gstn-caruso/shairport-sync/issues/55)) ([6d3289c](https://github.com/gstn-caruso/shairport-sync/commit/6d3289c5eb5d9ebef1622104df50e878cb58ddcb))
+* **session:** isolate registry lifecycle policy from runtime workers ([#54](https://github.com/gstn-caruso/shairport-sync/issues/54)) ([2464896](https://github.com/gstn-caruso/shairport-sync/commit/2464896ae39f533a9381f59d7b5b255c0ae2820e))
+
 ## [6.1.2](https://github.com/gstn-caruso/shairport-sync/compare/v6.1.1...v6.1.2) (2026-10-10)
 
 ### Bug Fixes
