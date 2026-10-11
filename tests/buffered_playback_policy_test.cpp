@@ -102,3 +102,11 @@ TEST(BufferedPlaybackPolicy, TimestampWrapAndConstantPreviousScheduleRemainCompa
   EXPECT_EQ(policy.admit(0, 0, 352, 44100).kind, BufferedAdmissionKind::dropBeforePrevious);
   EXPECT_EQ(policy.admit(1, 1, 352, 44100).kind, BufferedAdmissionKind::prepare);
 }
+TEST(BufferedPlaybackPolicy, MinimumSignedTimestampGapIsTooOldWithoutSignedNegationOverflow) {
+  BufferedPlaybackPolicy policy(0.25);
+  policy.didSubmit(0, 0);
+  auto plan = policy.planAuthenticated(0x80000000, true, 1024);
+  EXPECT_EQ(plan.gap, INT32_MIN);
+  EXPECT_TRUE(plan.skipTooOld);
+  EXPECT_EQ(policy.planAuthenticated(0, true, 1024).sequence, 1);
+}

@@ -40,8 +40,8 @@ BufferedSubmissionPlan BufferedPlaybackPolicy::planAuthenticated(std::uint32_t t
   const auto gap = first ? std::int32_t{0} : std::bit_cast<std::int32_t>(timestamp - expectedTimestamp_);
   bool skip = false;
   if (gap < 0) {
-    const std::int32_t magnitude = -gap;
-    skip = static_cast<unsigned>(magnitude) > frames;
+    const auto magnitude = -static_cast<std::int64_t>(gap);
+    skip = static_cast<std::uint64_t>(magnitude) > frames;
   }
   return {first, isAac && (first || gap != 0), skip, playerSequence_, gap,
           firstTimestamp_, expectedTimestamp_};
