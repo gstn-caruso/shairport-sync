@@ -196,6 +196,12 @@ The RTSP request-reader slice moves framing into the named module
 `receiver.protocol.rtsp.request`. `RtspRequestReader` owns the pending message
 and header/body storage, with explicit input, monotonic-clock, and diagnostic
 ports. Its library depends only on the standard library and
+Pending header/body storage uses uninitialized owned arrays. Growth copies only
+already received bytes, avoiding eager initialization of the declared content
+length. A bounded 5000-byte allocation-poisoning check failed with zero-filled
+vector growth and passes with uninitialized storage; it also checks that the
+buffered body prefix survives growth.
+
 `receiver-rtsp-message`; its twenty standalone cases link without the receiver,
 audio, pairing, or native service libraries. The runtime adapter retains socket
 and cipher reads, captured transport errors, stop state, diagnostic wording,
