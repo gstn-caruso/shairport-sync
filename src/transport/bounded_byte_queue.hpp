@@ -10,6 +10,8 @@
 class BoundedByteQueue : public ExactByteInput {
 public:
   explicit BoundedByteQueue(std::size_t capacity);
+  // Use one logical producer and one logical consumer, or externally serialize
+  // entire append/readExact calls on each side; waits can interleave their portions.
   ByteQueueResult append(std::span<const std::uint8_t> bytes);
   ByteQueueResult readExact(std::span<std::uint8_t> destination) override;
   void finish();
