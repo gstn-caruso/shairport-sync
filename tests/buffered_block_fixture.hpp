@@ -18,10 +18,13 @@ inline constexpr std::array<std::uint8_t, 52> golden{
     0x58,0x5d,0x00,0xf5,0x10,0x34,0x7f,0xf9,0x4d,0xc2,0x09,0x09,0x92,0x18,0xe9,0xc1,
     1,2,3,4,5,6,7,8};
 inline std::vector<std::uint8_t> encrypt(std::span<const std::uint8_t> payload = plaintext,
-                                        std::uint32_t ssrc = 0x16000000) {
+                                        std::uint32_t ssrc = 0x16000000,
+                                        std::uint32_t timestamp = 0x01020304) {
   std::vector<std::uint8_t> block{0x80,0xab,0xcd,0xef,1,2,3,4,0x16,0,0,0};
   for (unsigned offset = 0; offset < 4; ++offset)
     block[8 + offset] = ssrc >> (24 - 8 * offset);
+  for (unsigned offset = 0; offset < 4; ++offset)
+    block[4 + offset] = timestamp >> (24 - 8 * offset);
   const std::array<std::uint8_t, 12> nonce{0,0,0,0,1,2,3,4,5,6,7,8};
   block.resize(12 + payload.size() + 16 + 8);
   unsigned long long written = 0;
