@@ -27,17 +27,17 @@
 #include "session/session_state.hpp"
 #include "audio/output/audio_player_adapter.hpp"
 #include "protocol/ap2/ap2_buffered_audio_processor.h"
+#include "protocol/ap2/buffered_block_input.hpp"
 #include "runtime/common.h"
 #include "playback/player.h"
 #include "protocol/rtp/rtp.h"
 #include "transport/buffered_tcp_transport.hpp"
-#include "platform/utilities/mod23.h"
 #include "platform/utilities/network_utilities.h"
-#include <sodium.h>
-#include <stdint.h>
-#include "protocol/ap2/buffered_block_input.hpp"
-import receiver.protocol.ap2.buffered_block;
-import receiver.protocol.ap2.buffered_playback;
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <variant>
+import receiver.protocol.ap2.buffered_coordinator;
 
 
 static void logBufferedFlush(const BufferedFlushPolicy::Decision &decision, ssrc_t ssrc) {
@@ -108,276 +108,197 @@ void rtp_buffered_audio_cleanup_handler(__attribute__((unused)) void *arg) {
   debug(2, "Connection %d: rtp_buffered_audio_processor exit.", conn->connection_number);
 }
 
+class RuntimeBufferedSession : public BufferedSessionPort {
+public:
+  RuntimeBufferedSession(SessionState &session, double desired) : session_(session), desired_(desired) {}
+  bool playbackEnabled() const override { return session_.ap2_play_enabled != 0; }
+  bool evaluateFlush(bool everRead, const BufferedPacketMetadata &packet) override {
+    bool discard;
+    pthread_mutex_lock_and_cleanup_push(&session_.flush_mutex);
+    const auto decision = session_.bufferedFlush.evaluate(everRead,packet.sequence,packet.timestamp);
+    discard = decision.discardCurrent;
+    logBufferedFlush(decision,static_cast<ssrc_t>(packet.ssrc));
+    pthread_cleanup_pop(1);
+    return discard;
+  }
+  void observeRead(const BufferedBlockRead &read) override {
+    session_.statistics.observeBufferedBytes(read.prefixRemaining);
+    if (read.bodyRemaining) session_.statistics.observeBufferedBytes(*read.bodyRemaining);
+  }
+  std::span<const uint8_t> key() const override {
+    return session_.session_key ? std::span<const uint8_t>(session_.session_key,32) : std::span<const uint8_t>{};
+  }
+  void diagnostic(const BufferedReceiverDiagnostic &event) override {
+    std::visit([this](const auto &value) { report(value); },event);
+  }
+private:
+  SessionState &session_;
+  double desired_;
+  void report(const BufferedPlayDiagnostic &event) {
+    debug(2,event.started ? "Play started." : "Play stopped.");
+  }
+  void report(const BufferedFormatDiagnostic &event) {
+    switch (event.kind) {
+    case BufferedFormatKind::unknown:
+      debug(2,"Unrecognised SSRC: %u.",event.packet.ssrc);
+      break;
+    case BufferedFormatKind::initial:
+      debug(2,"Preparing initial decoding chain for %s.",get_ssrc_name(static_cast<ssrc_t>(event.packet.ssrc)));
+      break;
+    case BufferedFormatKind::changed:
+      debug(2,"Connection %d: incoming audio encoding is%s \"%s\".",session_.connection_number,
+            event.switching ? " switching to" : "",get_ssrc_name(static_cast<ssrc_t>(event.packet.ssrc)));
+      break;
+    }
+  }
+  void report(const BufferedHistoryDiagnostic &event) {
+    if (event.kind == BufferedHistoryKind::sequence)
+      debug(2,"reading block %u, the sequence number differs from the expected sequence number %u. "
+              "The previous sequence number was %u",event.packet.sequence,event.expected,event.previous);
+    else
+      debug(2,"reading block %u, the timestamp %u differs from expected_timestamp %u.",
+            event.packet.sequence,event.packet.timestamp,event.expected);
+  }
+  void report(const BufferedReadDiagnostic &event) {
+    if (event.read.status == BufferedBlockReadStatus::invalidSize) {
+      debug(1,"Connection %d: invalid buffered audio block length %u.",session_.connection_number,event.read.declaredLength);
+    } else if (event.read.status == BufferedBlockReadStatus::readError) {
+      char errorstring[1024];
+      (void)!strerror_r(event.read.errorCode,errorstring,sizeof(errorstring));
+      debug(1,"error in rtp_buffered_audio_processor %d: \"%s\". Could not recv a data_len .",
+            event.read.errorCode,errorstring);
+    } else {
+      debug(2,"Connection %d: buffered audio port closed!",session_.connection_number);
+    }
+  }
+  void report(const BufferedAdmissionDiagnostic &event) {
+    switch (event.kind) {
+    case BufferedAdmissionDiagnosticKind::clockWait:
+      debug(4,"just you wait, Henry Higgins, without valid timing information...");
+      break;
+    case BufferedAdmissionDiagnosticKind::early:
+      debug(1,"incoming frame, sequence number %u suddenly has a lead time of %f seconds, "
+              "with a desired decoded buffer length of %f.",event.packet.sequence,event.leadNs*1E-9,desired_);
+      break;
+    case BufferedAdmissionDiagnosticKind::drop:
+      debug(1,"dropping buffer that should have played before the last actually played.");
+      break;
+    case BufferedAdmissionDiagnosticKind::late:
+      debug(3,"skipped deciphering block %u with timestamp %u because its lead time is out of range at %f seconds.",
+            event.packet.sequence,event.packet.timestamp,event.leadNs*1E-9);
+      break;
+    case BufferedAdmissionDiagnosticKind::invalidFormat:
+      debug(2,"Unrecognised or invalid ssrc: %s.",get_ssrc_name(static_cast<ssrc_t>(event.packet.ssrc)));
+      break;
+    }
+  }
+  void report(const BufferedPreparationDiagnostic &event) {
+    switch (event.kind) {
+    case BufferedPreparationKind::missingKey:
+      debug(2,"No session key, so the audio packet can not be deciphered -- skipped.");
+      break;
+    case BufferedPreparationKind::authenticationFailed:
+      debug(1,"Error decrypting audio packet %u -- packet length %zd.",event.packet.sequence,
+            static_cast<ssize_t>(event.packet.length));
+      break;
+    case BufferedPreparationKind::unsupportedRate:
+      debug(1,"Unsupported AAC sample rate %u.",event.rate);
+      break;
+    }
+  }
+  void report(const BufferedSubmissionDiagnostic &event) {
+    const auto &packet = event.packet;
+    switch (event.kind) {
+    case BufferedSubmissionKind::firstMute:
+      debug(2,"Connection %d: muting first AAC block -- block %u -- timestamp %u.",
+            session_.connection_number,packet.sequence,packet.timestamp);
+      break;
+    case BufferedSubmissionKind::first:
+      debug(2,"Connection %d: first block %u, first timestamp %u.",session_.connection_number,packet.sequence,packet.timestamp);
+      break;
+    case BufferedSubmissionKind::discontinuity:
+      debug(2,"Connection %d: unexpected timestamp in block %u. Actual: %u, expected: %u difference: %d, %f ms. "
+              "Positive means later, i.e. a gap. First timestamp was %u, payload type: \"%s\".",
+            session_.connection_number,packet.sequence,packet.timestamp,event.expected,event.gap,
+            1000.0*event.gap/event.rate,event.firstTimestamp,get_ssrc_name(static_cast<ssrc_t>(packet.ssrc)));
+      break;
+    case BufferedSubmissionKind::discontinuityMute:
+      debug(2,"Connection %d: muting first AAC block -- block %u -- following a timestamp discontinuity, timestamp %u.",
+            session_.connection_number,packet.sequence,packet.timestamp);
+      break;
+    case BufferedSubmissionKind::skip:
+      debug(2,"skipping block %u because it is too old. Timestamp difference: %d, length of block: %zu.",
+            packet.sequence,event.gap,static_cast<size_t>(event.frames));
+      break;
+    case BufferedSubmissionKind::submitted:
+      debug(4,"block %u, timestamp %u, length %u sent to the player.",packet.sequence,packet.timestamp,event.frames);
+      break;
+    }
+  }
+};
+class RuntimeBufferedClock : public BufferedClockPort {
+public:
+  explicit RuntimeBufferedClock(SessionState &session) : session_(session) {}
+  bool ready() override { return have_ptp_timing_information(&session_) != 0; }
+  std::optional<uint64_t> schedule(uint32_t timestamp) override {
+    uint64_t time = 0;
+    if (frame_to_local_time(timestamp,&time,&session_) == 0) return time;
+    return std::nullopt;
+  }
+  uint64_t now() override { return get_absolute_time_in_ns(); }
+  void wait(unsigned microseconds) override { usleep(microseconds); }
+  void diagnoseAnchor() override {
+    uint32_t rtp = 0;
+    uint64_t local = 0;
+    if (get_ptp_anchor_local_time_info(&session_,&rtp,&local) == clock_ok)
+      debug(3,"anchorRTP: %u, anchorLocalTime: %" PRIu64 ".",rtp,local);
+    else
+      debug(3,"Clock not okay");
+  }
+private:
+  SessionState &session_;
+};
+class RuntimeBufferedAudioSink : public BufferedAudioSinkPort {
+public:
+  explicit RuntimeBufferedAudioSink(SessionState &session) : session_(session) {}
+  BufferedInputShape shape() const override { return {session_.inputAudio.framesPerPacket(),session_.inputAudio.sampleRate()}; }
+  void initialize(uint32_t ssrc) override { prepareIncomingAudio(session_,static_cast<ssrc_t>(ssrc)); }
+  void reset() override { reset_buffer(&session_); }
+  unsigned submit(const BufferedPacketMetadata &packet,const BufferedAudioSubmission &submission,
+                  std::span<uint8_t> payload) override {
+    return player_put_packet(packet.ssrc,submission.sequence,packet.timestamp,payload.data(),payload.size(),
+                             submission.mute,submission.gap,&session_);
+  }
+private:
+  SessionState &session_;
+};
+
 void *rtp_buffered_audio_processor(void *arg) {
-  rtsp_conn_info *conn = (rtsp_conn_info *)arg;
-  // #include <syscall.h>
-  // debug(1, "Connection %d: rtp_buffered_audio_processor PID %d start", conn->connection_number,
-  //         syscall(SYS_gettid));
+  auto *conn = static_cast<rtsp_conn_info *>(arg);
   int previousDecoderCancellationState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousDecoderCancellationState);
   conn->decoder.reset();
   conn->resampler.reset();
   pthread_setcancelstate(previousDecoderCancellationState, nullptr);
-
   conn->bufferedFlush.resetForBufferedReceiver();
 
   pthread_cleanup_push(rtp_buffered_audio_cleanup_handler, arg);
-
   {
-  BufferedTcpTransport buffered_audio(conn->buffered_audio_socket, conn->ap2_audio_buffer_size,
-      "ap2_buf_rdr_" + std::to_string(conn->connection_number));
-  const auto transportStarted = buffered_audio.start();
-  if (!transportStarted) {
-    debug(1, "Connection %d: buffered TCP transport startup failed: %d.",
-          conn->connection_number, transportStarted.error());
-  } else {
-
-  const size_t buffer_packet_size = 16 * 1024; // it looks as if 4096 is the largest size (?)
-  uint8_t *packet = static_cast<uint8_t *>(malloc(buffer_packet_size));
-  if (packet == NULL)
-    debug(1, "cannot allocate an audio packet buffer of %zu bytes!", buffer_packet_size);
-  pthread_cleanup_push(malloc_cleanup, &packet);
-
-  std::optional<BufferedAudioBlock> bufferedBlock;
-  ssrc_t payload_ssrc =
-      SSRC_NONE; // this is the SSRC of the payload, needed to decide if it should be muted
-  ssrc_t previous_ssrc = SSRC_NONE;
-  std::optional<AudioFormat> payloadFormat;
-
-  uint32_t seq_no =
-      0; // audio packet number. Initialised to avoid a "possibly uninitialised" warning.
-  uint32_t previous_seqno = 0;
-
-  uint32_t timestamp = 0; // initialised to avoid a "possibly uninitialised" warning.
-  uint32_t previous_timestamp = 0;
-
-  BufferedPlaybackPolicy playback(config.audio_decoded_buffer_desired_length);
-
-  ssize_t nread;
-
-  int new_audio_block_needed = 0; // goes true when a block is needed, false one is read in, but
-                                  // will be made true by flushing or by playing the block
-  int finished = 0;
-
-  uint64_t blocks_read = 0;
-
-
-  // wait until our timing information is valid
-  while (have_ptp_timing_information(conn) == 0)
-    usleep(1000);
-
-  reset_buffer(conn); // in case there is any garbage in the player
-
-  do {
-
-    const auto play = playback.onPlayState(conn->ap2_play_enabled != 0);
-    if (play.started) {
-      debug(2, "Play started.");
+    BufferedTcpTransport transport(conn->buffered_audio_socket, conn->ap2_audio_buffer_size,
+                                   "ap2_buf_rdr_" + std::to_string(conn->connection_number));
+    const auto started = transport.start();
+    if (!started) {
+      debug(1, "Connection %d: buffered TCP transport startup failed: %d.",
+            conn->connection_number, started.error());
+    } else {
+      const auto desired = config.audio_decoded_buffer_desired_length;
+      RuntimeBufferedSession session(*conn,desired);
+      RuntimeBufferedClock clock(*conn);
+      RuntimeBufferedAudioSink audio(*conn);
+      BufferedReceiverCoordinator coordinator(transport,session,clock,audio,desired);
+      coordinator.run();
     }
-    if (play.needFreshBlock)
-      new_audio_block_needed = 1;
-
-    if (play.stopped) {
-      debug(2, "Play stopped.");
-    }
-    if (play.resetPlayer)
-      reset_buffer(conn);
-
-
-    // now, if get_next_block is non-zero, read a block. We may flush or use it
-
-    if (new_audio_block_needed != 0) {
-      auto blockRead = readBufferedAudioBlock(buffered_audio, std::span(packet, buffer_packet_size));
-      conn->statistics.observeBufferedBytes(blockRead.prefixRemaining);
-      if (blockRead.bodyRemaining)
-        conn->statistics.observeBufferedBytes(*blockRead.bodyRemaining);
-      nread = blockRead.status == BufferedBlockReadStatus::complete ? static_cast<ssize_t>(blockRead.count)
-          : blockRead.status == BufferedBlockReadStatus::readError ? -1 : 0;
-      if (blockRead.status == BufferedBlockReadStatus::complete) {
-        auto parsed = BufferedAudioBlock::parse(std::span(packet, blockRead.count));
-        if (!parsed) {
-          blockRead.status = BufferedBlockReadStatus::invalidSize;
-          nread = 0;
-        } else {
-          bufferedBlock = *parsed;
-
-          // got the block
-          blocks_read++;                  // note, this doesn't mean they are valid audio blocks
-
-          // get the sequence number
-          // see https://en.wikipedia.org/wiki/Real-time_Transport_Protocol#Packet_header
-          // the Marker bit is always set, and it and the remaining 23 bits form the sequence number
-
-          previous_seqno = seq_no;
-          seq_no = bufferedBlock->sequence();
-
-          previous_timestamp = timestamp;
-          timestamp = bufferedBlock->timestamp();
-
-          if (payload_ssrc != SSRC_NONE)
-            previous_ssrc = payload_ssrc;
-          payload_ssrc = static_cast<ssrc_t>(bufferedBlock->ssrc());
-          payloadFormat = AudioFormat::fromSsrc(payload_ssrc);
-
-          if ((payload_ssrc != previous_ssrc) && (payload_ssrc != SSRC_NONE)) {
-            if (!payloadFormat) {
-              debug(2, "Unrecognised SSRC: %u.", payload_ssrc);
-            } else {
-              debug(2, "Connection %d: incoming audio encoding is%s \"%s\".",
-                    conn->connection_number, previous_ssrc == SSRC_NONE ? "" : " switching to",
-                    get_ssrc_name(payload_ssrc));
-            }
-          }
-
-          if (payloadFormat) {
-            new_audio_block_needed = 0; // a valid block has been read.
-            // if necessary, set the input rate...
-            if (conn->inputAudio.sampleRate() == 0) {
-              debug(2, "Preparing initial decoding chain for %s.", get_ssrc_name(payload_ssrc));
-              prepareIncomingAudio(*conn, payload_ssrc);
-              playback.seedPlayerSequence(seq_no);
-            } else {
-              uint32_t t_expected_seqno = (previous_seqno + 1) & 0x7fffff;
-              if (t_expected_seqno != seq_no) {
-                debug(2,
-                      "reading block %u, the sequence number differs from the expected sequence "
-                      "number %u. The previous sequence number was %u",
-                      seq_no, t_expected_seqno, previous_seqno);
-              }
-              auto previousFormat = AudioFormat::fromSsrc(previous_ssrc);
-              uint32_t t_expected_timestamp = previous_timestamp +
-                  (previousFormat ? previousFormat->framesPerPacket() : 0);
-              int32_t diff = timestamp - t_expected_timestamp;
-              if (diff != 0) {
-                debug(2, "reading block %u, the timestamp %u differs from expected_timestamp %u.",
-                      seq_no, timestamp, t_expected_timestamp);
-              }
-            }
-          }
-        }
-      }
-
-      if (blockRead.status == BufferedBlockReadStatus::invalidSize) {
-        debug(1, "Connection %d: invalid buffered audio block length %u.",
-              conn->connection_number, blockRead.declaredLength);
-        finished = 1;
-      } else if (nread == 0) {
-        // nread is 0 -- the port has been closed
-        debug(2, "Connection %d: buffered audio port closed!", conn->connection_number);
-        finished = 1;
-      } else if (nread < 0) {
-        char errorstring[1024];
-        (void)!strerror_r(blockRead.errorCode, (char *)errorstring,
-                          sizeof(errorstring)); // (void) ! to suppress unused response warning
-        debug(1, "error in rtp_buffered_audio_processor %d: \"%s\". Could not recv a data_len .",
-              blockRead.errorCode, errorstring);
-        finished = 1;
-      }
-    }
-
-    if (finished == 0) {
-      pthread_mutex_lock_and_cleanup_push(&conn->flush_mutex);
-      const auto flush = conn->bufferedFlush.evaluate(blocks_read != 0, seq_no, timestamp);
-      if (flush.discardCurrent)
-        new_audio_block_needed = 1;
-      logBufferedFlush(flush, payload_ssrc);
-      pthread_cleanup_pop(1); // the mutex
-
-      if (new_audio_block_needed == 0) {
-        uint64_t scheduledTime = 0;
-        const bool validTime = frame_to_local_time(timestamp, &scheduledTime, conn) == 0;
-        const auto admission = playback.admit(
-            validTime ? std::optional<uint64_t>{scheduledTime} : std::nullopt,
-            validTime ? get_absolute_time_in_ns() : 0,
-            conn->inputAudio.framesPerPacket(), conn->inputAudio.sampleRate());
-        if (admission.kind == BufferedAdmissionKind::waitClock) {
-          debug(4, "just you wait, Henry Higgins, without valid timing information...");
-          usleep(admission.waitUs);
-        } else if (admission.kind == BufferedAdmissionKind::waitPacket) {
-          if (admission.warnEarly)
-            debug(1, "incoming frame, sequence number %u suddenly has a lead time of %f seconds, "
-                     "with a desired decoded buffer length of %f.",
-                  seq_no, admission.leadNs * 1E-9, config.audio_decoded_buffer_desired_length);
-          usleep(admission.waitUs);
-        } else {
-          if (admission.kind == BufferedAdmissionKind::dropBeforePrevious) {
-            debug(1, "dropping buffer that should have played before the last actually played.");
-          } else if (payloadFormat && bufferedBlock) {
-            if (admission.kind == BufferedAdmissionKind::prepare) {
-              const auto key = conn->session_key
-                  ? std::span<const uint8_t>(conn->session_key, 32) : std::span<const uint8_t>{};
-              auto prepared = bufferedBlock->prepare(
-                  {payloadFormat->isAac() ? BufferedBlockCodec::aac : BufferedBlockCodec::alac,
-                   payloadFormat->aacChannelConfiguration()},
-                  key, conn->inputAudio.sampleRate());
-              if (!prepared) {
-                if (prepared.error() == BufferedBlockError::missingKey)
-                  debug(2, "No session key, so the audio packet can not be deciphered -- skipped.");
-                else if (prepared.error() == BufferedBlockError::authenticationFailed)
-                  debug(1, "Error decrypting audio packet %u -- packet length %zd.", seq_no, nread);
-              } else {
-                if (payloadFormat->isAac() && conn->inputAudio.sampleRate() != 44100 &&
-                    conn->inputAudio.sampleRate() != 48000)
-                  debug(1, "Unsupported AAC sample rate %u.", conn->inputAudio.sampleRate());
-                const auto submission = playback.planAuthenticated(
-                    timestamp, payloadFormat->isAac(), payloadFormat->framesPerPacket());
-                if (submission.first) {
-                  if (submission.mute)
-                    debug(2, "Connection %d: muting first AAC block -- block %u -- timestamp %u.",
-                          conn->connection_number, seq_no, timestamp);
-                  debug(2, "Connection %d: first block %u, first timestamp %u.",
-                        conn->connection_number, seq_no, timestamp);
-                } else if (submission.gap != 0) {
-                  debug(2, "Connection %d: unexpected timestamp in block %u. Actual: %u, expected: %u "
-                           "difference: %d, %f ms. Positive means later, i.e. a gap. "
-                           "First timestamp was %u, payload type: \"%s\".",
-                        conn->connection_number, seq_no, timestamp, submission.expectedTimestamp,
-                        submission.gap, 1000.0 * submission.gap / conn->inputAudio.sampleRate(),
-                        submission.firstTimestamp, get_ssrc_name(payload_ssrc));
-                  if (submission.mute)
-                    debug(2, "Connection %d: muting first AAC block -- block %u -- following a "
-                             "timestamp discontinuity, timestamp %u.",
-                          conn->connection_number, seq_no, timestamp);
-                }
-                if (submission.skipTooOld) {
-                  debug(2, "skipping block %u because it is too old. Timestamp difference: %d, "
-                           "length of block: %zu.",
-                        seq_no, submission.gap, static_cast<size_t>(payloadFormat->framesPerPacket()));
-                } else {
-                  const auto packetSize = player_put_packet(
-                      payload_ssrc, submission.sequence, timestamp, prepared->data(), prepared->size(),
-                      submission.mute, submission.gap, conn);
-                  debug(4, "block %u, timestamp %u, length %u sent to the player.",
-                        seq_no, timestamp, packetSize);
-                  playback.didSubmit(timestamp, packetSize);
-                }
-              }
-            } else {
-              debug(3, "skipped deciphering block %u with timestamp %u because its lead time is "
-                       "out of range at %f seconds.",
-                    seq_no, timestamp, admission.leadNs * 1E-9);
-              uint32_t anchorRtp = 0;
-              uint64_t anchorLocalTime = 0;
-              if (get_ptp_anchor_local_time_info(conn, &anchorRtp, &anchorLocalTime) == clock_ok)
-                debug(3, "anchorRTP: %u, anchorLocalTime: %" PRIu64 ".", anchorRtp, anchorLocalTime);
-              else
-                debug(3, "Clock not okay");
-            }
-          } else {
-            debug(2, "Unrecognised or invalid ssrc: %s.", get_ssrc_name(payload_ssrc));
-          }
-          new_audio_block_needed = 1;
-        }
-      }
-    }
-  } while (finished == 0);
-  // debug(1, "Connection %d: rtp_buffered_audio_processor PID %d exiting", conn->connection_number,
-  //       syscall(SYS_gettid));
-  pthread_cleanup_pop(1); // packet
   }
-  }
-  pthread_cleanup_pop(1); // do the cleanup.
-  // debug(1, "Connection %d: rtp_buffered_audio_processor PID %d finish", conn->connection_number,
-  //       syscall(SYS_gettid));
-  pthread_exit(NULL);
+  pthread_cleanup_pop(1);
+  pthread_exit(nullptr);
 }

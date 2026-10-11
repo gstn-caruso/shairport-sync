@@ -415,6 +415,56 @@ its production objects contain ASan+UBSan and TSan instrumentation. Full process
 cooperative shutdown, device playback, and controlled timing/performance
 acceptance remain open. The installed receiver was not restarted or installed.
 
+The buffered receiver coordinator slice completes extraction of the buffered
+decision loop into `receiver.protocol.ap2.buffered_coordinator`. It applies
+Long Method (#82) and God Service (#78): the coordinator owns stable 16-KiB wire
+storage, borrowed block views, copied metadata/history, format selection,
+block accounting, cached/fresh read state, and its playback policy. Three focused
+ports supply live session observations/effects, clocks, and audio effects. The
+processor retains decoder/resampler reset, flush reset, transport ownership,
+cancellation cleanup, concrete port adapters, and a call to `run()`; it contains
+no block-reading, parsing, admission, authentication, or submission decisions.
+
+The component owns `readBufferedAudioBlock` and links only the existing block,
+playback, and format components plus their standard-library/libsodium dependencies.
+Its public protocol and implementation contain no session, common runtime,
+configuration, player, FFmpeg, logging, or backend types. Ports return coherent
+values and accept typed diagnostics whose metadata is copied. Runtime formatting
+preserves the existing diagnostics. Session flush evaluation and logging execute
+inside the original cancel-safe flush mutex scope. Player payload spans are
+consumed synchronously and must not be retained. Fixed wire storage is left
+uninitialized until read; allocation exceptions propagate, and forced unwind is
+not caught. Port/input lifetimes remain the caller's responsibility.
+
+`advance()` performs one original iteration after its first timing-readiness wait
+and initial player reset. It observes prefix/body occupancy before parsing,
+counts even unknown-format blocks, preserves metadata history and initial sequence
+seeding, and evaluates flush on every nonterminal iteration before admission.
+Cached clock/early/disabled waits retain stable wire bytes; playback restart asks
+for fresh input. Missing key, failed authentication, late/too-old consumption,
+zero-frame player accounting, and the constant-zero previous schedule quirk retain
+their established behavior. Terminal prefix/body, EOF, error, and malformed-size
+results return before flush/admission. `run()` repeats until such a terminal result.
+
+Thirteen standalone encrypted-pipeline cases cover startup/effect order, complete
+submission, codec/metadata history, cached storage after input mutation, disabled
+restart, cached flush, preparation failure, late consumption, old-block skip,
+zero return, unknown formats, and terminal boundaries. The existing real encrypted
+TCP loopback and actual processor cancellation fixtures still exercise production
+wiring. Evidence and per-scenario red/green logs are preserved under
+`/tmp/buffered-coordinator-*`; independent review and hosted CI remain pending.
+The Release baseline passes 548/548 in 17.34 seconds; the final suite passes
+561/561 in 17.44 seconds. All 80 focused coordinator, policy, block/authentication,
+transport, player-handoff, and session lifecycle cases pass under each of
+ASan+UBSan and TSan.
+The isolated link contains only coordinator/block/playback/format libraries,
+libsodium, and GoogleTest. Coordinator, framing, and module-interface objects
+contain the respective sanitizer instrumentation. This is a structural slice:
+the existing v6.1.6 version remains unchanged, with no new release bump required.
+Whole-processor cooperative stop, other workers, device acceptance, and controlled
+performance measurements remain open. No package installation or live restart
+was performed.
+
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
 fixture comparing every decoded sample; a temporary left/right decoder-plane
