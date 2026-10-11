@@ -139,5 +139,3 @@ TEST_F(PlayerResampler, NegotiationPreservesMappingAndOwnedStateOnRejection) {
   EXPECT_EQ(config.current_output_configuration, previousConfiguration);
   clear_software_resampler(&session);
 }
-
-
