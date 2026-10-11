@@ -64,6 +64,14 @@ TEST_F(RequestSocket, HeaderEofClosesLocalDescriptorAndReleasesMessage) {
   EXPECT_EQ(message, nullptr);
 }
 
+TEST_F(RequestSocket, StaleTimeoutAtHeaderEofRequestsShutdownWithoutClosing) {
+  shutdown(peer, SHUT_WR);
+  errno = ETIMEDOUT;
+  EXPECT_EQ(rtsp_read_request(&connection, &message), rtsp_read_request_response_immediate_shutdown_requested);
+  EXPECT_GE(connection.fd, 0);
+  EXPECT_EQ(message, nullptr);
+}
+
 TEST_F(RequestSocket, BodyEofLeavesDescriptorForSessionTeardown) {
   send("POST /feedback RTSP/1.0\r\nContent-Length: 3\r\n\r\nA");
   shutdown(peer, SHUT_WR);

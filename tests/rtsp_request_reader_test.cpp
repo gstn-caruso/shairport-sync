@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <new>
 #include <span>
@@ -15,6 +16,8 @@ public:
   bool stopped() override { return stop || sizes.size() >= stopAfterReads; }
   RtspRequestRead read(std::span<char> destination) override {
     sizes.push_back(destination.size());
+    if (beforeRead)
+      beforeRead();
     if (allocationFails)
       throw std::bad_alloc();
     if (index < fragments.size()) {
@@ -34,6 +37,7 @@ public:
   std::size_t stopAfterReads = std::numeric_limits<std::size_t>::max();
   RtspRequestRead terminal{0, 0, false};
   bool allocationFails = false;
+  std::function<void()> beforeRead;
 };
 class RequestClock : public RtspRequestClock {
 public:
@@ -95,6 +99,7 @@ struct ReadFailure {
   RtspRequestDiagnostic diagnostic;
   unsigned closes;
 };
+void PrintTo(const ReadFailure &scenario, std::ostream *output) { *output << scenario.name; }
 class RequestFailures : public testing::TestWithParam<ReadFailure> {};
 TEST_P(RequestFailures, ClassifiesFailureAndRetainsNoRequest) {
   const auto &scenario = GetParam();
@@ -154,4 +159,93 @@ TEST(RtspRequestReader, AllocationFailureReturnsTypedStatusWithoutClosingChannel
   EXPECT_EQ(effects.closes, 0u);
   ASSERT_EQ(effects.diagnostics.size(), 1u);
   EXPECT_EQ(effects.diagnostics[0].event, RtspRequestDiagnostic::allocationFailure);
+}
+
+TEST(RtspRequestReader, StallWarningUsesStrictThresholdAndOccursOnceBeforeReading) {
+  RequestInput input;
+  input.stop = false;
+  input.fragments = {"POST /feedback RTSP/1.0\r\nContent-Length: 3\r\n\r\n", "A", "B", "C"};
+  RequestClock clock;
+  clock.times = {0, 15000000000, 15000000001};
+  RequestEffects effects;
+  std::vector<unsigned> warningsAtRead;
+  input.beforeRead = [&] { warningsAtRead.push_back(effects.warnings); };
+  RtspRequestReader reader(input, clock, effects);
+  auto result = reader.read();
+  ASSERT_EQ(result.status, RtspRequestStatus::success);
+  EXPECT_EQ(result.message->bodyText(), "ABC");
+  EXPECT_EQ(effects.warnings, 1u);
+  EXPECT_EQ(warningsAtRead, (std::vector<unsigned>{0, 0, 1, 1}));
+}
+
+TEST(RtspRequestReader, BodyStallWarningPrecedesStopAndNoBodyReadOccurs) {
+  RequestInput input;
+  input.stop = false;
+  input.stopAfterReads = 1;
+  input.fragments = {"POST /feedback RTSP/1.0\r\nContent-Length: 3\r\n\r\n"};
+  RequestClock clock;
+  clock.times = {0, 15000000001};
+  RequestEffects effects;
+  RtspRequestReader reader(input, clock, effects);
+  auto result = reader.read();
+  EXPECT_EQ(result.status, RtspRequestStatus::shutdown);
+  EXPECT_FALSE(result.message);
+  EXPECT_EQ(input.sizes.size(), 1u);
+  EXPECT_EQ(effects.warnings, 1u);
+  ASSERT_EQ(effects.diagnostics.size(), 1u);
+  EXPECT_EQ(effects.diagnostics[0].phase, RtspRequestPhase::body);
+}
+
+TEST(RtspRequestReader, HeaderStopAfterPartialLineRetainsNoRequest) {
+  RequestInput input;
+  input.stop = false;
+  input.stopAfterReads = 1;
+  input.fragments = {"OPTIONS /info"};
+  RequestClock clock;
+  RequestEffects effects;
+  RtspRequestReader reader(input, clock, effects);
+  auto result = reader.read();
+  EXPECT_EQ(result.status, RtspRequestStatus::shutdown);
+  EXPECT_FALSE(result.message);
+  EXPECT_EQ(input.sizes.size(), 1u);
+  EXPECT_EQ(effects.closes, 0u);
+}
+
+TEST(RtspRequestReader, TerminalCarriageReturnIsConsumedWithinEachFragment) {
+  RequestInput input;
+  input.stop = false;
+  input.fragments = {"OPTIONS /info RTSP/1.0\r", "Content-Length: 0\r", "\r"};
+  RequestClock clock;
+  RequestEffects effects;
+  RtspRequestReader reader(input, clock, effects);
+  auto result = reader.read();
+  ASSERT_EQ(result.status, RtspRequestStatus::success);
+  EXPECT_TRUE(result.message->requestsPath("/info"));
+  EXPECT_TRUE(result.message->bodyText().empty());
+}
+
+TEST(RtspRequestReader, SplitCrLfKeepsLeadingLfAsEmptyLineAndBufferedExcessAsBody) {
+  RequestInput input;
+  input.stop = false;
+  input.fragments = {"OPTIONS /info RTSP/1.0\r", "\nCSeq: 1\r\n\r\n"};
+  RequestClock clock;
+  RequestEffects effects;
+  RtspRequestReader reader(input, clock, effects);
+  auto result = reader.read();
+  ASSERT_EQ(result.status, RtspRequestStatus::success);
+  EXPECT_EQ(result.message->headerValue("CSeq"), nullptr);
+  EXPECT_EQ(result.message->bodyText(), "CSeq: 1\r\n\r\n");
+}
+
+TEST(RtspRequestReader, BodyLargerThanHeaderBufferReadsDeclaredMissingLength) {
+  RequestInput input;
+  input.stop = false;
+  input.fragments = {"POST /feedback RTSP/1.0\r\nContent-Length: 5000\r\n\r\n", std::string(5000, 'X')};
+  RequestClock clock;
+  RequestEffects effects;
+  RtspRequestReader reader(input, clock, effects);
+  auto result = reader.read();
+  ASSERT_EQ(result.status, RtspRequestStatus::success);
+  EXPECT_EQ(result.message->bodyText(), std::string(5000, 'X'));
+  EXPECT_EQ(input.sizes, (std::vector<std::size_t>{4096, 5000}));
 }
