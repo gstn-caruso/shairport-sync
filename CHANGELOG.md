@@ -1,3 +1,9 @@
+## [6.1.6](https://github.com/gstn-caruso/shairport-sync/compare/v6.1.5...v6.1.6) (2026-10-11)
+
+### Bug Fixes
+
+* **ap2:** prevent timestamp overflow in buffered playback policy ([#60](https://github.com/gstn-caruso/shairport-sync/issues/60)) ([ed47033](https://github.com/gstn-caruso/shairport-sync/commit/ed47033389e314ea1f770410fc9e94e365ca1777))
+
 ## [6.1.5](https://github.com/gstn-caruso/shairport-sync/compare/v6.1.4...v6.1.5) (2026-10-11)
 
 ### Bug Fixes
