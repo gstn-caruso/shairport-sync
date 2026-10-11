@@ -1,1 +1,5 @@
-target_sources(receiver PRIVATE rtsp.cpp rtsp_message.cpp rtsp_listener.cpp)
+target_sources(receiver PRIVATE rtsp.cpp rtsp_listener.cpp)
+add_library(receiver-rtsp-message STATIC rtsp_message.cpp)
+target_include_directories(receiver-rtsp-message PUBLIC "${CMAKE_SOURCE_DIR}/src")
+target_compile_options(receiver-rtsp-message PRIVATE -Wall -Wextra -Wshadow -Wformat=2 -fno-common)
+target_link_libraries(receiver PUBLIC receiver-rtsp-message)
