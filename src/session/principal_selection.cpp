@@ -20,7 +20,14 @@ PrincipalSelection::Acquisition PrincipalSelection::acquire(PrincipalParticipant
   ++generation_;
   return {true, false, previous};
 }
-bool PrincipalSelection::releaseIfCurrent(int) { return false; }
+bool PrincipalSelection::releaseIfCurrent(int id) {
+  std::lock_guard lock(mutex_);
+  if (!current_ || current_->id() != id)
+    return false;
+  current_ = nullptr;
+  ++generation_;
+  return true;
+}
 std::optional<int> PrincipalSelection::clear() { return std::nullopt; }
 bool PrincipalSelection::isCurrent(int id) const {
   std::lock_guard lock(mutex_);

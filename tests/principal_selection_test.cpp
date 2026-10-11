@@ -59,3 +59,19 @@ TEST(PrincipalSelection, AdmissionPreservesIdentityAndRetiresDisplacedParticipan
   sameId.beginRetirement();
   EXPECT_FALSE(selection.acquire(sameId, true).accepted);
 }
+
+TEST(PrincipalSelection, ReleaseInvalidatesTicketsWithoutRetiringParticipant) {
+  PrincipalSelection selection;
+  Participant participant(5);
+  ASSERT_TRUE(selection.acquire(participant, true).accepted);
+  auto ticket = selection.ticketFor(5);
+  ASSERT_TRUE(ticket);
+  EXPECT_FALSE(selection.releaseIfCurrent(6));
+  EXPECT_TRUE(selection.commitIfSelected(*ticket, [] {}));
+  EXPECT_TRUE(selection.releaseIfCurrent(5));
+  EXPECT_FALSE(participant.retired);
+  EXPECT_FALSE(selection.isCurrent(5));
+  EXPECT_FALSE(selection.commitIfSelected(*ticket, [] {}));
+  EXPECT_TRUE(selection.acquire(participant, true).accepted);
+  EXPECT_FALSE(selection.commitIfSelected(*ticket, [] {}));
+}
