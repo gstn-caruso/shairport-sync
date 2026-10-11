@@ -44,6 +44,8 @@ export class RtspRequestReader {
 public:
   RtspRequestReader(RtspRequestInput &input, RtspRequestClock &clock, RtspRequestEffects &effects)
       : input_(input), clock_(clock), effects_(effects) {}
+  // Allocation failures become a result without a message. Other exceptions propagate;
+  // in particular, cancellation unwinding releases pending storage through RAII.
   RtspRequestResult read();
 private:
   struct Pending;

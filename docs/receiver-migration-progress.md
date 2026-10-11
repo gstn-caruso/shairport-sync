@@ -196,17 +196,17 @@ The RTSP request-reader slice moves framing into the named module
 `receiver.protocol.rtsp.request`. `RtspRequestReader` owns the pending message
 and header/body storage, with explicit input, monotonic-clock, and diagnostic
 ports. Its library depends only on the standard library and
+`receiver-rtsp-message`; its twenty-seven standalone cases link without the receiver,
+audio, pairing, or native service libraries. The runtime adapter retains socket
+and cipher reads, captured transport errors, stop state, diagnostic wording,
+and header-EOF descriptor closure. The framing loop and old line scanner have
+been removed from `rtsp.cpp`.
+
 Pending header/body storage uses uninitialized owned arrays. Growth copies only
 already received bytes, avoiding eager initialization of the declared content
 length. A bounded 5000-byte allocation-poisoning check failed with zero-filled
 vector growth and passes with uninitialized storage; it also checks that the
 buffered body prefix survives growth.
-
-`receiver-rtsp-message`; its twenty standalone cases link without the receiver,
-audio, pairing, or native service libraries. The runtime adapter retains socket
-and cipher reads, captured transport errors, stop state, diagnostic wording,
-and header-EOF descriptor closure. The framing loop and old line scanner have
-been removed from `rtsp.cpp`.
 
 Seven socket cases first passed against the original reader, including actual
 HomeKit cipher encryption/decryption, binary bodies, mixed line delimiters,
@@ -219,12 +219,21 @@ after fifteen seconds, once, before the next read or stop check. Existing
 partially read request cancellation still releases the request and leaves its
 output null under ASan+UBSan and TSan.
 
-The pinned Release suite passes 473/473; focused Release, ASan+UBSan, and TSan
-each pass 29/29. Core objects contain actual sanitizer instrumentation.
+After allocation review corrections, the pinned Release suite passes 480/480;
+focused ASan+UBSan and TSan each pass 36/36. Core objects contain actual
+sanitizer instrumentation.
 Independent review and hosted CI remain pending for this slice. Only
 `std::bad_alloc` is caught; pthread forced unwind propagates through RAII.
-Allocation failure is injected through the input port rather than exhaustion
-of the host heap. The bounded scanner avoids the original terminal-CR
+Allocation recovery is an intentional behavior fix: the original message
+constructor terminated the process on allocation failure, and parser/body-copy
+allocation failures escaped. These failures now return allocation-failure
+status with no message and release pending resources, consistently with header
+and body storage failure. Six bounded linker fault-injection cases exercise
+actual message, header-array, request-line, header-list, body-growth, and
+body-copy allocations across both diagnostic phases, then verify successful
+retry. No host heap exhaustion is used. The PR must retain `fix` classification,
+requiring a patch release through the project's release automation.
+The bounded scanner avoids the original terminal-CR
 uninitialized lookahead while preserving observable delimiter behavior,
 including treating a following fragment's leading LF as a separate empty
 line. Buffered excess, including a following request, remains body content;
