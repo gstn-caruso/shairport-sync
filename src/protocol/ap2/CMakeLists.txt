@@ -5,3 +5,8 @@ target_include_directories(receiver-buffered-flush PUBLIC "${CMAKE_SOURCE_DIR}/s
 target_compile_options(receiver-buffered-flush PRIVATE -Wall -Wextra -Wshadow -Wformat=2 -fno-common)
 target_link_libraries(receiver-buffered-flush PUBLIC receiver-mod23 Threads::Threads)
 target_link_libraries(receiver PUBLIC receiver-buffered-flush)
+add_library(receiver-buffered-block STATIC buffered_audio_block.cpp)
+target_sources(receiver-buffered-block PUBLIC FILE_SET CXX_MODULES FILES buffered_audio_block.cppm)
+set_target_properties(receiver-buffered-block PROPERTIES CXX_SCAN_FOR_MODULES ON)
+target_compile_options(receiver-buffered-block PRIVATE -Wall -Wextra -Wshadow -Wformat=2 -fno-common)
+target_link_libraries(receiver-buffered-block PUBLIC PkgConfig::SODIUM)
