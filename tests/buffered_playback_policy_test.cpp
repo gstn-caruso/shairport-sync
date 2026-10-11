@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <optional>
+#include <cstdint>
 import receiver.protocol.ap2.buffered_playback;
 
 TEST(BufferedPlaybackPolicy, PlayTransitionsRequestFreshBlockAndResetOnlyOnStop) {
@@ -42,4 +43,62 @@ TEST(BufferedPlaybackPolicy, DisabledPlayStillWarnsOnceAndAdmissionRearmsWarning
   policy.onPlayState(true);
   EXPECT_EQ(policy.admit(1100000000, 1000000000, 352, 44100).kind, BufferedAdmissionKind::prepare);
   EXPECT_TRUE(policy.admit(1450000001, 1000000000, 352, 44100).warnEarly);
+}
+TEST(BufferedPlaybackPolicy, AuthenticatedPlansCommitOnlyAfterSubmissionIncludingZeroFrames) {
+  BufferedPlaybackPolicy policy(0.25);
+  policy.seedPlayerSequence(0x7fffff);
+  auto first = policy.planAuthenticated(1000, true, 1024);
+  EXPECT_TRUE(first.first);
+  EXPECT_TRUE(first.mute);
+  EXPECT_FALSE(first.skipTooOld);
+  EXPECT_EQ(first.sequence, 0xffff);
+  EXPECT_EQ(first.firstTimestamp, 1000u);
+  EXPECT_EQ(policy.planAuthenticated(2000, true, 1024).sequence, 0xffff);
+  policy.didSubmit(1000, 0);
+  auto next = policy.planAuthenticated(1000, true, 1024);
+  EXPECT_FALSE(next.first);
+  EXPECT_FALSE(next.mute);
+  EXPECT_EQ(next.sequence, 0);
+  EXPECT_EQ(next.gap, 0);
+  EXPECT_EQ(next.expectedTimestamp, 1000u);
+}
+TEST(BufferedPlaybackPolicy, SignedGapBoundaryMutesAacAndSkipsOnlyMoreThanOneNegativeBlock) {
+  BufferedPlaybackPolicy policy(0.25);
+  policy.didSubmit(1000, 1024);
+  EXPECT_TRUE(policy.planAuthenticated(3048, true, 1024).mute);
+  EXPECT_FALSE(policy.planAuthenticated(3048, false, 352).mute);
+  auto boundary = policy.planAuthenticated(1000, true, 1024);
+  EXPECT_EQ(boundary.gap, -1024);
+  EXPECT_FALSE(boundary.skipTooOld);
+  auto old = policy.planAuthenticated(999, true, 1024);
+  EXPECT_EQ(old.gap, -1025);
+  EXPECT_TRUE(old.skipTooOld);
+  EXPECT_EQ(policy.planAuthenticated(2024, true, 1024).sequence, 1);
+}
+TEST(BufferedPlaybackPolicy, StopRetainsSequenceExpectedTimestampAndWarningButResetsFirstPacket) {
+  BufferedPlaybackPolicy policy(0.25);
+  policy.onPlayState(true);
+  policy.seedPlayerSequence(42);
+  policy.planAuthenticated(1000, true, 1024);
+  policy.didSubmit(1000, 1024);
+  EXPECT_TRUE(policy.admit(1450000001, 1000000000, 1024, 48000).warnEarly);
+  policy.onPlayState(false);
+  policy.onPlayState(true);
+  EXPECT_FALSE(policy.admit(1450000001, 1000000000, 1024, 48000).warnEarly);
+  auto resumed = policy.planAuthenticated(3000, true, 1024);
+  EXPECT_TRUE(resumed.first);
+  EXPECT_TRUE(resumed.mute);
+  EXPECT_EQ(resumed.gap, 0);
+  EXPECT_EQ(resumed.sequence, 43);
+  EXPECT_EQ(resumed.expectedTimestamp, 2024u);
+  EXPECT_EQ(resumed.firstTimestamp, 3000u);
+}
+TEST(BufferedPlaybackPolicy, TimestampWrapAndConstantPreviousScheduleRemainCompatible) {
+  BufferedPlaybackPolicy policy(0.25);
+  policy.onPlayState(true);
+  policy.planAuthenticated(0xfffffff0, false, 352);
+  policy.didSubmit(0xfffffff0, 352);
+  EXPECT_EQ(policy.planAuthenticated(336, false, 352).gap, 0);
+  EXPECT_EQ(policy.admit(0, 0, 352, 44100).kind, BufferedAdmissionKind::dropBeforePrevious);
+  EXPECT_EQ(policy.admit(1, 1, 352, 44100).kind, BufferedAdmissionKind::prepare);
 }

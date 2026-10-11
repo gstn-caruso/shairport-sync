@@ -30,3 +30,24 @@ BufferedAdmission BufferedPlaybackPolicy::admit(std::optional<std::uint64_t> sch
   earlyWarning_ |= warning;
   return {BufferedAdmissionKind::waitPacket, warning, 2 * ((1000000u * frames) / sampleRate), lead};
 }
+void BufferedPlaybackPolicy::seedPlayerSequence(std::uint32_t sequence) {
+  playerSequence_ = sequence & 0xffff;
+}
+BufferedSubmissionPlan BufferedPlaybackPolicy::planAuthenticated(std::uint32_t timestamp,
+    bool isAac, unsigned frames) {
+  const bool first = playedCount_ == 0;
+  if (first) firstTimestamp_ = timestamp;
+  const auto gap = first ? std::int32_t{0} : std::bit_cast<std::int32_t>(timestamp - expectedTimestamp_);
+  bool skip = false;
+  if (gap < 0) {
+    const std::int32_t magnitude = -gap;
+    skip = static_cast<unsigned>(magnitude) > frames;
+  }
+  return {first, isAac && (first || gap != 0), skip, playerSequence_, gap,
+          firstTimestamp_, expectedTimestamp_};
+}
+void BufferedPlaybackPolicy::didSubmit(std::uint32_t timestamp, unsigned returnedFrames) {
+  ++playerSequence_;
+  expectedTimestamp_ = timestamp + returnedFrames;
+  ++playedCount_;
+}
