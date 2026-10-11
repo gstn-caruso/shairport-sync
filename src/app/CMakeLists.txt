@@ -1,2 +1,7 @@
-target_sources(receiver PRIVATE shairport.cpp startup_options.cpp configuration_validation.cpp)
+target_sources(receiver PRIVATE shairport.cpp legacy_config_lease.cpp)
+add_library(receiver-configuration STATIC configuration_loader.cpp startup_options.cpp configuration_validation.cpp)
+target_include_directories(receiver-configuration PUBLIC "${CMAKE_SOURCE_DIR}/src")
+target_compile_options(receiver-configuration PRIVATE -Wall -Wextra -Wshadow -Wformat=2 -fno-common)
+target_link_libraries(receiver-configuration PUBLIC PkgConfig::LIBCONFIG PkgConfig::AVUTIL receiver-text receiver-audio-format)
+target_link_libraries(receiver PUBLIC receiver-configuration)
 target_sources(shairport-sync PRIVATE main.cpp)

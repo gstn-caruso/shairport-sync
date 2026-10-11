@@ -10,6 +10,7 @@
 
 #include "config.h"
 #include "runtime/definitions.h"
+#include "app/settings_types.h"
 #include "discovery/mdns.h"
 
 #ifdef __cplusplus
@@ -37,31 +38,13 @@ typedef enum { YNA_AUTO = -1, YNA_NO = 0, YNA_YES = 1 } yna_type;
 // yeah/no/dont-care
 typedef enum { YNDK_DONT_KNOW = -1, YNDK_NO = 0, YNDK_YES = 1 } yndk_type;
 
-typedef enum {
-  SS_LITTLE_ENDIAN = 0,
-  SS_PDP_ENDIAN,
-  SS_BIG_ENDIAN,
-} endian_type;
 
-typedef enum {
-  ST_basic = 0, // straight deletion or insertion of a frame in a 352-frame packet
-  ST_vernier,   // interpolate from 352/1024 samples to 353/1025 or 351/1023
-  ST_auto,      // select interpolation automatically
-} stuffing_type;
 
-typedef enum {
-  ST_stereo = 0,
-  ST_mono,
-  ST_reverse_stereo,
-  ST_left_only,
-  ST_right_only,
-} playback_mode_type;
 
-typedef enum {
-  VCP_standard = 0,
-  VCP_flat,
-  VCP_dasl_tapered,
-} volume_control_profile_type;
+
+
+
+
 
 typedef enum {
   decoder_ffmpeg_alac,
@@ -80,39 +63,6 @@ typedef enum {
 // this!
 #include "audio/format/audio_types.h"
 
-typedef enum {
-  SPS_RATE_UNKNOWN = 0,
-  SPS_RATE_5512,
-  SPS_RATE_LOWEST = SPS_RATE_5512,
-  SPS_RATE_8000,
-  SPS_RATE_11025,
-  SPS_RATE_16000,
-  SPS_RATE_22050,
-  SPS_RATE_32000,
-  SPS_RATE_44100,
-  SPS_RATE_48000,
-  SPS_RATE_64000,
-  SPS_RATE_88200,
-  SPS_RATE_96000,
-  SPS_RATE_176400,
-  SPS_RATE_192000,
-  SPS_RATE_352800,
-  SPS_RATE_384000,
-  SPS_RATE_HIGHEST = SPS_RATE_384000,
-  SPS_RATE_ILLEGAL,
-} sps_rate_t;
-
-// these sets omit the _UNKNOWN, _AUTO and _ILLEGAL values
-#define SPS_FORMAT_SET (((1 << (SPS_FORMAT_HIGHEST_NATIVE + 1)) - 1) - (1 << SPS_FORMAT_UNKNOWN))
-#define SPS_RATE_SET (((1 << (SPS_RATE_HIGHEST + 1)) - 1) - (1 << SPS_RATE_UNKNOWN))
-
-// in SPS_CHANNEL_SET, bit 0 set means a channel set of no channels, bit 1 set means a channel set
-// of 1 channel and so on to bit 31 meaning a channel set of 31 channels. We want to consider all
-// possible channel sets apart from channel set 0.
-#define SPS_GREATEST_CHANNEL_COUNT 31 // should be 32 to be fully in line with ALSA limits
-#define SPS_CHANNEL_SET 0xFFFFFFFE    // channel sets 31 to 1, but no channel set 0
-// #define SPS_CHANNEL_SET (((1 << (SPS_GREATEST_CHANNEL_COUNT + 1)) - 1) - (1 << 0)) // channels 1
-// to 31, not 0-based!
 
 
 #include "audio/format/encoded_output_format.h"
@@ -340,17 +290,11 @@ uint64_t get_monotonic_time_in_ns(void); // NTP-disciplined
 uint32_t uatoi(const char *nptr);
 
 extern shairport_cfg config;
-extern config_t config_file_stuff;
 
 
-int config_lookup_non_empty_string(const config_t *cfg, const char *path, const char **value);
-int config_set_lookup_bool(config_t *cfg, const char *where, int *dst);
 int check_string_or_list_setting(config_setting_t *setting, const char *item);
 int check_int_or_list_setting(config_setting_t *setting, const int item);
 
-unsigned int config_get_string_settings_as_string_array(config_setting_t *setting,
-                                                        const char ***result);
-unsigned int config_get_int_settings_as_int_array(config_setting_t *setting, int **result);
 
 
 void command_start(void);

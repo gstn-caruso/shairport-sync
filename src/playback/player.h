@@ -30,7 +30,7 @@ typedef uint16_t seq_t;
 
 
 // maximum number of frames that can be added or removed from a packet_count
-#define BUFFER_FRAMES 1024
+#include "packets/packet_limits.h"
 #define INTERPOLATION_LIMIT 20
 
 

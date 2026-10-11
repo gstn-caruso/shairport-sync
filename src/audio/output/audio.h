@@ -109,13 +109,6 @@ int32_t search_for_suitable_configuration(
 
 audio_output *audio_get_output(const char *name);
 void audio_ls_outputs(void);
-void load_pulseaudio_settings(void);
-void parse_audio_options(const char *named_stanza, uint32_t default_format_set,
-                         uint32_t default_rate_set,
-                         uint32_t default_channel_set); // look in "general" and in the named stanza
-uint32_t get_format_settings(const char *stanza_name, const char *setting_name);
-uint32_t get_rate_settings(const char *stanza_name, const char *setting_name);
-uint32_t get_channel_settings(const char *stanza_name, const char *setting_name);
 
 #ifdef __cplusplus
 }

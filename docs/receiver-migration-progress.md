@@ -112,6 +112,39 @@ The full pinned Release build passes 419/419 cases in 16.94 seconds. All
 16 output-setup/player-boundary cases pass under Debug ASan+UBSan; the actual
 output-setup implementation object has both sanitizer instrumentations.
 
+The configuration slice replaces the shallow daemon snapshot with move-only
+`ReceiverSettings`: owned diagnostics, network/discovery identity, audio and
+PulseAudio, volume, and session-hook groups. `ConfigurationLoader` receives
+explicit path, host/version, hardware-address, endianness, and interface-index
+inputs. Each load owns its libconfig tree and temporary parsing storage; returned
+strings, channel names, and ordered diagnostics retain their values after source
+removal or moves. Two configurations coexist, and valid/malformed/valid loads do
+not reset native logging or share state. Fatal results retain earlier warnings.
+The existing libconfig grammar, conversions, range checks, deprecated-option
+notices, and warning fallbacks remain the parsing contract.
+
+The standalone `receiver-configuration` target links only libconfig, FFmpeg
+util, and standard-library text/format utilities. Its startup/parser tests pass
+31 cases without linking receiver services. Runtime initialization separately
+probes the MAC address, selects the backend, configures logging/FFmpeg, seeds
+randomness, generates pairing/UUID identity, and establishes the shared level.
+`LegacyConfigLease` explicitly maps all 75 settings fields plus diagnostic/path
+and PulseAudio metadata into the transitional global view without copying its
+mutex. It keeps settings and the diagnostic-dump tree alive through cleanup;
+cleanup is registered after lease construction and runs before its destruction.
+Settings-owned strings and the libconfig tree are no longer manually freed.
+A receiver-linked test holds the runtime mutex across mapping, checks all five
+groups and mapped pointers/channel arrays, then dumps the retained tree after
+source removal. Explicit/default unreadable-file rejection also runs under root
+by dropping credentials in an isolated child. Runtime consumers still use the
+compatibility view, and broader migration/device acceptance work remains open.
+The full pinned Release build passes 430/430 cases. The standalone startup/parser
+suite passes 31/31; 35 focused startup/parser/lease/daemon cases pass under Debug
+ASan+UBSan. Both loader and lease implementation objects were checked for actual
+sanitizer instrumentation. Existing effective runtime log formatting and FFmpeg
+error-only logging remain unchanged; accepting the configured log-format flags
+would be a separate behavior change.
+
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
 fixture comparing every decoded sample; a temporary left/right decoder-plane
@@ -192,8 +225,9 @@ nonblocking timeout hooks. A blocking caller hook can delay stop; effect
 admission is serialized without a FIFO guarantee. Broader subprocess ownership
 and realtime system-clock adjustments remain outside its verified scope.
 
-The daemon settings snapshot still bridges global configuration; complete
-owned settings and explicit dependencies remain migration work. `popt` is
+`ConfigurationLoader` now returns owned settings with explicit environment
+inputs. Runtime consumers still use a global compatibility view held by the
+process-lifetime settings lease; removing that view remains migration work. `popt` is
 still used for subprocess-hook argument splitting. Stage 4 cooperative worker
 stopping, Stage 5 session encapsulation, Stage 6 protocol decomposition,
 Stage 7 audio/timing ownership, Stage 8 infrastructure, Stage 9 bundled pairing,

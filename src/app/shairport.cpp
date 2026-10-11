@@ -37,6 +37,8 @@
 #include "app/configuration_loader.hpp"
 #include "app/configuration_validation.hpp"
 #include "app/receiver_application.hpp"
+#include "app/legacy_config_lease.hpp"
+#include <bit>
 #include <vector>
 #include <stdexcept>
 
@@ -96,9 +98,7 @@ pid_t pid;
 
 
 
-char configuration_file_path[4096 + 1];
 char *config_file_real_path = NULL;
-static bool configuration_initialized = false;
 
 char first_backend_name[256];
 
@@ -148,957 +148,6 @@ int has_fltp_capable_aac_decoder(void) {
 }
 
 
-static void reject_removed_settings(config_t *settings) {
-  const char *removed[] = {"alsa", "jack", "sndio", "ao", "soundio", "pipewire", "pipe",
-                           "stdout", "dummy", "dsp", "metadata", "dbus", "mpris", "mqtt",
-                           "general.service_type", "general.output_backend", "general.mdns_backend",
-                           "general.alac_decoder", "diagnostics.get_plist_metadata",
-                           "sessioncontrol.daemonize_with_pid_file",
-                           "sessioncontrol.daemonize_without_pid_file",
-                           "sessioncontrol.daemon_pid_dir", "general.soxr_delay_threshold",
-                           "general.dbus_service_bus", "general.mpris_service_bus",
-                           "diagnostics.retain_cover_art"};
-  for (size_t index = 0; index < sizeof(removed) / sizeof(removed[0]); index++) {
-    if (config_lookup(settings, removed[index]) != NULL)
-      die("%s is a removed option in this AirPlay 2 Linux PulseAudio fork.", removed[index]);
-  }
-}
-
-void load_receiver_configuration(const StartupOptions &options) {
-  char *raw_service_name = nullptr;
-  config.audio_backend_silent_lead_in_time_auto =
-      1; // start outputting silence as soon as packets start arriving
-  config.default_airplay_volume = -24.0;
-  config.fixedLatencyOffset = 11025; // this sounds like it works properly.
-  config.diagnostic_drop_packet_fraction = 0.0;
-  config.active_state_timeout = 10.0;
-                                              // is to be chosen automatically.
-  config.volume_range_hw_priority =
-      0; // if combining software and hardware volume control, give the software priority
-         // i.e. when reducing volume, reduce the sw first before reducing the software.
-         // this is because some hw mixers mute at the bottom of their range, and they don't always
-  // advertise this fact
-  config.resend_control_first_check_time =
-      0.10; // wait this many seconds before requesting the resending of a missing packet
-  config.resend_control_check_interval_time =
-      0.25; // wait this many seconds before again requesting the resending of a missing packet
-  config.resend_control_last_check_time =
-      0.10; // give up if the packet is still missing this close to when it's needed
-  config.missing_port_dacp_scan_interval_seconds =
-      2.0; // check at this interval if no DACP port number is known
-
-  config.minimum_free_buffer_headroom = 125; // leave approximately one second's worth of buffers
-                                             // free after calculating the effective latency.
-  // e.g. if we have 1024 buffers or 352 frames = 8.17 seconds and we have a nominal latency of 2.0
-  // seconds then we can add an offset of 5.17 seconds and still leave a second's worth of buffers
-  // for unexpected circumstances
-
-  config.model = strdup("ShairportSync");
-  // config.model = strdup("AirPort10,115");
-  //  config.model = strdup("AudioAccessory5,1");
-
-  // config.srcvers = strdup(PACKAGE_VERSION);
-  // config.srcvers = strdup("760.13.1");
-
-  config.srcvers = strdup("366.0");
-
-  // config.osvers = strdup(VERSION);
-  config.osvers = strdup("15.0");
-
-  // make up a firmware version
-#ifdef CONFIG_USE_GIT_VERSION_STRING
-  if (git_version_string[0] != '\0')
-    config.firmware_version = strdup(git_version_string);
-  else
-#endif
-    config.firmware_version = strdup(PACKAGE_VERSION);
-
-
-
-
-  // config_setting_t *setting;
-  const char *str = NULL;
-  int value = 0;
-  double dvalue = 0.0;
-
-  // debug(1, "Looking for the configuration file \"%s\".", config.configfile);
-
-  // use the MAC address placed in config.hw_addr to generate the default airplay_device_id
-  uint64_t temporary_airplay_id = nctoh64(config.hw_addr);
-  temporary_airplay_id =
-      temporary_airplay_id >> 16; // we only use the first 6 bytes but have imported 8.
-
-  config_init(&config_file_stuff);
-  configuration_initialized = true;
-
-  config_file_real_path = realpath(config.configfile, NULL);
-  if (config_file_real_path == NULL) {
-    if (options.configurationPath() || errno != ENOENT)
-      die("Unable to read configuration %s: %s", config.configfile, strerror(errno));
-    debug(2, "can't resolve the configuration file \"%s\".", config.configfile);
-  } else {
-    debug(1, "looking for configuration file at full path \"%s\"", config_file_real_path);
-    /* Read the file. If there is an error, report it and exit. */
-    if (config_read_file(&config_file_stuff, config_file_real_path)) {
-      config_set_auto_convert(&config_file_stuff,
-                              1); // allow autoconversion from int/float to int/float
-      // make config.cfg point to it
-      config.cfg = &config_file_stuff;
-      reject_removed_settings(config.cfg);
-      if (const auto valid = validateConfigurationTypes(*config.cfg); !valid)
-        die("%s", valid.error().c_str());
-
-      /* See if a specific service type has been requested */
-      if (config_lookup_non_empty_string(config.cfg, "general.service_type", &str)) {
-        die("general.service_type is a removed option; only AirPlay 2 is supported.");
-      }
-      /* Get the Service Name. */
-      if (config_lookup_non_empty_string(config.cfg, "general.name", &str)) {
-        raw_service_name = (char *)str;
-      }
-
-
-      /* Get the port setting. */
-      if (config_lookup_int(config.cfg, "general.port", &value)) {
-        if ((value < 0) || (value > 65535))
-          die("Invalid port number  \"%d\". It should be between 0 and 65535, default is 7000",
-              value);
-        else
-          config.port = value;
-      }
-
-      /* Get the udp port base setting. */
-      if (config_lookup_int(config.cfg, "general.udp_port_base", &value)) {
-        if ((value < 0) || (value > 65535))
-          die("Invalid port number  \"%d\". It should be between 0 and 65535, default is 6001",
-              value);
-        else
-          config.udp_port_base = value;
-      }
-
-      /* Get the udp port range setting. This is number of ports that will be tried for free ports ,
-       * starting at the port base. Only three ports are needed. */
-      if (config_lookup_int(config.cfg, "general.udp_port_range", &value)) {
-        if ((value < 3) || (value > 65535))
-          die("Invalid port range  \"%d\". It should be between 3 and 65535, default is 10", value);
-        else
-          config.udp_port_range = value;
-      }
-
-      /* Get the password setting. */
-      if (config_lookup_non_empty_string(config.cfg, "general.password", &str))
-        config.password = (char *)str;
-
-      if (config_lookup_string(config.cfg, "general.interpolation", &str)) {
-        if (strcasecmp(str, "basic") == 0)
-          config.packet_stuffing = ST_basic;
-        else if (strcasecmp(str, "vernier") == 0)
-          config.packet_stuffing = ST_vernier;
-        else if (strcasecmp(str, "auto") == 0)
-          config.packet_stuffing = ST_auto;
-        else if (strcasecmp(str, "soxr") == 0)
-          die("soxr is a removed option; use auto, basic or vernier interpolation.");
-        else
-          die("Invalid interpolation option choice \"%s\". It should be \"auto\", \"basic\", "
-              "\"vernier\" or "
-              "\"soxr\"",
-              str);
-      }
-
-
-      /* Get the statistics setting. */
-      if (config_set_lookup_bool(config.cfg, "general.statistics",
-                                 &(config.statistics_requested))) {
-        warn("The \"general\" \"statistics\" setting is deprecated. Please use the \"diagnostics\" "
-             "\"statistics\" setting instead.");
-      }
-
-      /* The old drift tolerance setting. */
-      if (config_lookup_int(config.cfg, "general.drift", &value)) {
-        inform("The drift setting  is deprecated and ignored. Please use "
-               "drift_tolerance_in_seconds instead");
-      }
-
-      /* The old resync setting. */
-      if (config_lookup_int(config.cfg, "general.resync_threshold", &value)) {
-        inform("The resync_threshold setting is deprecated and ignored. Please use "
-               "resync_threshold_in_seconds instead");
-      }
-
-      /* Get the drift tolerance setting. */
-      if (config_lookup_float(config.cfg, "general.drift_tolerance_in_seconds", &dvalue))
-        config.tolerance = dvalue;
-
-      /* Get the resync setting. */
-      if (config_lookup_float(config.cfg, "general.resync_threshold_in_seconds", &dvalue))
-        config.resync_threshold = dvalue;
-
-      /* Get the verbosity setting. */
-      if (config_lookup_int(config.cfg, "general.log_verbosity", &value)) {
-        warn("The \"general\" \"log_verbosity\" setting is deprecated. Please use the "
-             "\"diagnostics\" \"log_verbosity\" setting instead.");
-        if ((value >= 0) && (value <= 3))
-          set_debug_level(value);
-        else
-          die("Invalid log verbosity setting option choice \"%d\". It should be between 0 and 3, "
-              "inclusive.",
-              value);
-      }
-
-
-      /* Get the verbosity setting. */
-      if (config_lookup_int(config.cfg, "diagnostics.log_verbosity", &value)) {
-        if ((value >= 0) && (value <= 3))
-          set_debug_level(value);
-        else
-          die("Invalid diagnostics log_verbosity setting option choice \"%d\". It should be "
-              "between 0 and 3, "
-              "inclusive.",
-              value);
-      }
-
-      /* Get the config.debugger_show_file_and_line in debug messages setting. */
-      if (config_lookup_string(config.cfg, "diagnostics.log_show_file_and_line", &str)) {
-        if (strcasecmp(str, "no") == 0)
-          config.debugger_show_file_and_line = 0;
-        else if (strcasecmp(str, "yes") == 0)
-          config.debugger_show_file_and_line = 1;
-        else
-          die("Invalid diagnostics log_show_file_and_line option choice \"%s\". It should be "
-              "\"yes\" or \"no\"",
-              str);
-      }
-
-      /* Get the show elapsed time in debug messages setting. */
-      if (config_lookup_string(config.cfg, "diagnostics.log_show_time_since_startup", &str)) {
-        if (strcasecmp(str, "no") == 0)
-          config.debugger_show_elapsed_time = 0;
-        else if (strcasecmp(str, "yes") == 0)
-          config.debugger_show_elapsed_time = 1;
-        else
-          die("Invalid diagnostics log_show_time_since_startup option choice \"%s\". It should be "
-              "\"yes\" or \"no\"",
-              str);
-      }
-
-      /* Get the show relative time in debug messages setting. */
-      if (config_lookup_string(config.cfg, "diagnostics.log_show_time_since_last_message", &str)) {
-        if (strcasecmp(str, "no") == 0)
-          config.debugger_show_relative_time = 0;
-        else if (strcasecmp(str, "yes") == 0)
-          config.debugger_show_relative_time = 1;
-        else
-          die("Invalid diagnostics log_show_time_since_last_message option choice \"%s\". It "
-              "should be \"yes\" or \"no\"",
-              str);
-      }
-
-      /* Get the statistics setting. */
-      if (config_lookup_string(config.cfg, "diagnostics.statistics", &str)) {
-        if (strcasecmp(str, "no") == 0)
-          config.statistics_requested = 0;
-        else if (strcasecmp(str, "yes") == 0)
-          config.statistics_requested = 1;
-        else
-          die("Invalid diagnostics statistics option choice \"%s\". It should be \"yes\" or "
-              "\"no\"",
-              str);
-      }
-
-      if (config_lookup_string(config.cfg, "diagnostics.log_output_level", &str)) {
-        if (strcasecmp(str, "yes") == 0)
-          config.logOutputLevel = 1;
-        else if (strcasecmp(str, "no") == 0)
-          config.logOutputLevel = 0;
-        else
-          die("Invalid diagnostics.log_output_level: expected yes or no");
-      }
-
-      /* Get the disable_resend_requests setting. */
-      if (config_lookup_string(config.cfg, "diagnostics.disable_resend_requests", &str)) {
-        config.disable_resend_requests = 0; // this is for legacy -- only set by -t 0
-        if (strcasecmp(str, "no") == 0)
-          config.disable_resend_requests = 0;
-        else if (strcasecmp(str, "yes") == 0)
-          config.disable_resend_requests = 1;
-        else
-          die("Invalid diagnostic disable_resend_requests option choice \"%s\". It should be "
-              "\"yes\" "
-              "or \"no\"",
-              str);
-      }
-
-      /* Get the drop packets setting. */
-      if (config_lookup_float(config.cfg, "diagnostics.drop_this_fraction_of_audio_packets",
-                              &dvalue)) {
-        if ((dvalue >= 0.0) && (dvalue <= 3.0))
-          config.diagnostic_drop_packet_fraction = dvalue;
-        else
-          die("Invalid diagnostics drop_this_fraction_of_audio_packets setting \"%f\". It should "
-              "be "
-              "between 0.0 and 1.0, "
-              "inclusive.",
-              dvalue);
-      }
-
-      /* Get the diagnostics output default. */
-      if (config_lookup_string(config.cfg, "diagnostics.log_output_to", &str)) {
-
-        warn("the diagnostic \"log_output_to\" setting is obsolete and is ignored. All logging is to STDERR, which is directed to the system log when Shairport Sync is running as a service.");
-      }
-
-
-      /* Get the ignore_volume_control setting. */
-      if (config_lookup_string(config.cfg, "general.ignore_volume_control", &str)) {
-        if (strcasecmp(str, "no") == 0)
-          config.ignore_volume_control = 0;
-        else if (strcasecmp(str, "yes") == 0)
-          config.ignore_volume_control = 1;
-        else
-          die("Invalid ignore_volume_control option choice \"%s\". It should be \"yes\" or \"no\"",
-              str);
-      }
-
-      /* Get the optional volume_max_db setting. */
-      if (config_lookup_float(config.cfg, "general.volume_max_db", &dvalue)) {
-        // debug(1, "Max volume setting of %f dB", dvalue);
-        config.volume_max_db = dvalue;
-        config.volume_max_db_set = 1;
-      }
-
-      /* Get the optional default_volume setting. */
-      if (config_lookup_float(config.cfg, "general.default_airplay_volume", &dvalue)) {
-        // debug(1, "Default airplay volume setting of %f on the -30.0 to 0 scale", dvalue);
-        if ((dvalue >= -30.0) && (dvalue <= 0.0)) {
-          config.default_airplay_volume = dvalue;
-        } else {
-          warn("The default airplay volume setting must be between -30.0 and 0.0.");
-        }
-      }
-
-      if (config_lookup_non_empty_string(config.cfg, "general.run_this_when_volume_is_set", &str)) {
-        config.cmd_set_volume = (char *)str;
-      }
-
-      /* Get the playback_mode setting */
-      if (config_lookup_string(config.cfg, "general.playback_mode", &str)) {
-        if (strcasecmp(str, "stereo") == 0)
-          config.playback_mode = ST_stereo;
-        else if (strcasecmp(str, "mono") == 0)
-          config.playback_mode = ST_mono;
-        else if (strcasecmp(str, "reverse stereo") == 0)
-          config.playback_mode = ST_reverse_stereo;
-        else if (strcasecmp(str, "both left") == 0)
-          config.playback_mode = ST_left_only;
-        else if (strcasecmp(str, "both right") == 0)
-          config.playback_mode = ST_right_only;
-        else
-          die("Invalid playback_mode choice \"%s\". It should be \"stereo\" (default), \"mono\", "
-              "\"reverse stereo\", \"both left\", \"both right\"",
-              str);
-      }
-
-      /* Get the volume control profile setting -- "standard" or "flat" */
-      if (config_lookup_string(config.cfg, "general.volume_control_profile", &str)) {
-        if (strcasecmp(str, "standard") == 0)
-          config.volume_control_profile = VCP_standard;
-        else if (strcasecmp(str, "flat") == 0)
-          config.volume_control_profile = VCP_flat;
-        else if (strcasecmp(str, "dasl_tapered") == 0)
-          config.volume_control_profile = VCP_dasl_tapered;
-        else
-          die("Invalid volume_control_profile choice \"%s\". It should be \"standard\" (default), "
-              "\"dasl_tapered\", or \"flat\"",
-              str);
-      }
-
-      config_set_lookup_bool(config.cfg, "general.volume_control_combined_hardware_priority",
-                             &config.volume_range_hw_priority);
-
-      /* Get the interface to listen on, if specified Default is all interfaces */
-      /* we keep the interface name and the index */
-
-      if (config_lookup_string(config.cfg, "general.interface", &str)) {
-
-        config.interface = strdup(str);
-        config.interface_index = if_nametoindex(config.interface);
-
-        if (config.interface_index == 0) {
-          inform(
-              "The mdns service interface \"%s\" was not found, so the setting has been ignored.",
-              config.interface);
-          free(config.interface);
-          config.interface = NULL;
-        }
-      }
-
-      /* Get the regtype -- the service type and protocol, separated by a dot. Default is
-       * "_raop._tcp" */
-      if (config_lookup_non_empty_string(config.cfg, "general.regtype", &str))
-        config.regtype = strdup(str);
-
-      /* Get the volume range, in dB, that should be used If not set, it means you just use the
-       * range set by the mixer. */
-      if (config_lookup_int(config.cfg, "general.volume_range_db", &value)) {
-        if ((value < 30) || (value > 150))
-          die("Invalid volume range  %d dB. It should be between 30 and 150 dB. Zero means use "
-              "the mixer's native range. The setting reamins at %d.",
-              value, config.volume_range_db);
-        else
-          config.volume_range_db = value;
-      }
-
-if (config_lookup(config.cfg, "general.alac_decoder") != NULL)
-  die("general.alac_decoder is a removed option; FFmpeg is required.");
-
-      /* Get the resend control settings. */
-      if (config_lookup_float(config.cfg, "general.resend_control_first_check_time", &dvalue)) {
-        if ((dvalue >= 0.0) && (dvalue <= 3.0))
-          config.resend_control_first_check_time = dvalue;
-        else
-          warn("Invalid general resend_control_first_check_time setting \"%f\". It should "
-               "be "
-               "between 0.0 and 3.0, "
-               "inclusive. The setting remains at %f seconds.",
-               dvalue, config.resend_control_first_check_time);
-      }
-
-      if (config_lookup_float(config.cfg, "general.resend_control_check_interval_time", &dvalue)) {
-        if ((dvalue >= 0.0) && (dvalue <= 3.0))
-          config.resend_control_check_interval_time = dvalue;
-        else
-          warn("Invalid general resend_control_check_interval_time setting \"%f\". It should "
-               "be "
-               "between 0.0 and 3.0, "
-               "inclusive. The setting remains at %f seconds.",
-               dvalue, config.resend_control_check_interval_time);
-      }
-
-      if (config_lookup_float(config.cfg, "general.resend_control_last_check_time", &dvalue)) {
-        if ((dvalue >= 0.0) && (dvalue <= 3.0))
-          config.resend_control_last_check_time = dvalue;
-        else
-          warn("Invalid general resend_control_last_check_time setting \"%f\". It should "
-               "be "
-               "between 0.0 and 3.0, "
-               "inclusive. The setting remains at %f seconds.",
-               dvalue, config.resend_control_last_check_time);
-      }
-
-      if (config_lookup_float(config.cfg, "general.missing_port_dacp_scan_interval_seconds",
-                              &dvalue)) {
-        if ((dvalue >= 0.0) && (dvalue <= 300.0))
-          config.missing_port_dacp_scan_interval_seconds = dvalue;
-        else
-          warn("Invalid general missing_port_dacp_scan_interval_seconds setting \"%f\". It should "
-               "be "
-               "between 0.0 and 300.0, "
-               "inclusive. The setting remains at %f seconds.",
-               dvalue, config.missing_port_dacp_scan_interval_seconds);
-      }
-
-      /* Get the default latency. Deprecated! */
-      if (config_lookup_int(config.cfg, "latencies.default", &value))
-        config.userSuppliedLatency = value;
-
-
-
-      if (config_lookup_non_empty_string(config.cfg, "sessioncontrol.run_this_before_play_begins",
-                                         &str)) {
-        config.cmd_start = (char *)str;
-      }
-
-      if (config_lookup_non_empty_string(config.cfg, "sessioncontrol.run_this_after_play_ends",
-                                         &str)) {
-        config.cmd_stop = (char *)str;
-      }
-
-      if (config_lookup_non_empty_string(
-              config.cfg, "sessioncontrol.run_this_before_entering_active_state", &str)) {
-        config.cmd_active_start = (char *)str;
-      }
-
-      if (config_lookup_non_empty_string(
-              config.cfg, "sessioncontrol.run_this_after_exiting_active_state", &str)) {
-        config.cmd_active_stop = (char *)str;
-      }
-
-      if (config_lookup_float(config.cfg, "sessioncontrol.active_state_timeout", &dvalue)) {
-        if (dvalue < 0.0)
-          warn("Invalid value \"%f\" for \"active_state_timeout\". It must be positive. "
-               "The default of %f will be used instead.",
-               dvalue, config.active_state_timeout);
-        else
-          config.active_state_timeout = dvalue;
-      }
-
-      if (config_lookup_non_empty_string(
-              config.cfg, "sessioncontrol.run_this_if_an_unfixable_error_is_detected", &str)) {
-        config.cmd_unfixable = (char *)str;
-      }
-
-      if (config_lookup_string(config.cfg, "sessioncontrol.wait_for_completion", &str)) {
-        if (strcasecmp(str, "no") == 0)
-          config.cmd_blocking = 0;
-        else if (strcasecmp(str, "yes") == 0)
-          config.cmd_blocking = 1;
-        else
-          warn("Invalid \"wait_for_completion\" option choice \"%s\". It should be "
-               "\"yes\" or \"no\". It is set to \"no\".",
-               str);
-      }
-
-      if (config_lookup_string(config.cfg, "sessioncontrol.before_play_begins_returns_output",
-                               &str)) {
-        if (strcasecmp(str, "no") == 0)
-          config.cmd_start_returns_output = 0;
-        else if (strcasecmp(str, "yes") == 0)
-          config.cmd_start_returns_output = 1;
-        else
-          die("Invalid \"before_play_begins_returns_output\" option choice \"%s\". It "
-              "should be "
-              "\"yes\" or \"no\"",
-              str);
-      }
-
-      if (config_lookup_string(config.cfg, "sessioncontrol.allow_session_interruption", &str)) {
-        config.dont_check_timeout = 0; // this is for legacy -- only set by -t 0
-        if (strcasecmp(str, "no") == 0)
-          config.allow_session_interruption = 0;
-        else if (strcasecmp(str, "yes") == 0)
-          config.allow_session_interruption = 1;
-        else
-          die("Invalid \"allow_interruption\" option choice \"%s\". It should be "
-              "\"yes\" "
-              "or \"no\"",
-              str);
-      }
-
-      if (config_lookup_int(config.cfg, "sessioncontrol.session_timeout", &value)) {
-        if (value == 0) {
-          config.dont_check_timeout = 1;
-        } else if (value < 60) {
-          warn("Invalid value \"%d\" for \"session_timeout\". It must be 0 (i.e. no timeout) or at "
-               "least 60. "
-               "The default of %d will be used instead.",
-               value, config.timeout);
-          config.dont_check_timeout = 0;
-        } else {
-          config.timeout = value;
-          config.dont_check_timeout = 0;
-        }
-      }
-
-
-      long long aid;
-
-      // replace the airplay_device_id with this, if provided
-      if (config_lookup_int64(config.cfg, "general.airplay_device_id", &aid)) {
-        temporary_airplay_id = aid;
-      }
-
-      // add the airplay_device_id_offset if provided
-      if (config_lookup_int64(config.cfg, "general.airplay_device_id_offset", &aid)) {
-        temporary_airplay_id += aid;
-      }
-
-
-    } else {
-      if (config_error_type(&config_file_stuff) == CONFIG_ERR_FILE_IO)
-        die("Error reading configuration file \"%s\": \"%s\".", config_file_real_path,
-            config_error_text(&config_file_stuff));
-      else {
-        die("Line %d of the configuration file \"%s\":\n%s", config_error_line(&config_file_stuff),
-            config_error_file(&config_file_stuff), config_error_text(&config_file_stuff));
-      }
-    }
-  }
-
-  char shared_memory_interface_name[256] = "";
-  snprintf(shared_memory_interface_name, sizeof(shared_memory_interface_name), "/%s-%" PRIx64 "",
-           config.appName, temporary_airplay_id);
-  // debug(1, "smi name: \"%s\"", shared_memory_interface_name);
-
-  config.nqptp_shared_memory_interface_name = strdup(NQPTP_INTERFACE_NAME);
-
-  // create the config.ap1_prefix[i]
-  char apids[6 * 2 + 5 + 1]; // six pairs of digits, 5 colons and a NUL
-  apids[6 * 2 + 5] = 0;      // NUL termination
-  int i;
-  char hexchar[] = "0123456789abcdef";
-  for (i = 5; i >= 0; i--) {
-    // In AirPlay 2 mode, the AP1 name prefix must be
-    // the same as the AirPlay 2 device id less the colons.
-    config.ap1_prefix[i] = temporary_airplay_id & 0xFF;
-    apids[i * 3 + 1] = hexchar[temporary_airplay_id & 0xF];
-    temporary_airplay_id = temporary_airplay_id >> 4;
-    apids[i * 3] = hexchar[temporary_airplay_id & 0xF];
-    temporary_airplay_id = temporary_airplay_id >> 4;
-    if (i != 0)
-      apids[i * 3 - 1] = ':';
-  }
-
-  config.airplay_device_id = strdup(apids);
-
-  // Create an airplay psi UUID based on the ap1_prefix.
-
-  // a uuid_t and an md5 hash are both 128 bits, 16 bytes
-  uuid_t result;
-  memset(result, 0, sizeof(result));
-  if (sizeof(config.ap1_prefix) < sizeof(result))
-    memcpy(result, config.ap1_prefix, sizeof(config.ap1_prefix));
-  else
-    memcpy(result, config.ap1_prefix, sizeof(result));
-
-  // OpenSSL is mandatory for AirPlay 2
-  EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
-  EVP_DigestInit_ex(mdctx, EVP_md5(), NULL);
-  EVP_DigestUpdate(mdctx, config.ap1_prefix, sizeof(config.ap1_prefix));
-  unsigned int md5_digest_len = EVP_MD_size(EVP_md5());
-  EVP_DigestFinal_ex(mdctx, result, &md5_digest_len);
-  EVP_MD_CTX_free(mdctx);
-
-  // now, convert it into a type 4 UUID
-  // see https://stackoverflow.com/questions/10867405/generating-v5-uuid-what-is-name-and-namespace
-  // //set high-nibble to 5 to indicate type 5
-
-  result[6] &= 0x0F;
-  result[6] |= 0x40;
-
-  // set upper two bits to "10"
-  result[8] &= 0x3F;
-  result[8] |= 0x80;
-
-  char *psi_uuid = static_cast<char *>(malloc(UUID_STR_LEN + 1));
-  // Produces a UUID string at uuid consisting of lower-case letters
-  uuid_unparse_lower(result, psi_uuid);
-  config.airplay_psi = psi_uuid;
-
-  debug(3, "size of pk is %zu.", sizeof(config.airplay_pk));
-  pair_public_key_get(PAIR_SERVER_HOMEKIT, config.airplay_pk, config.airplay_device_id);
-  char buf[128];
-  char *ptr = buf;
-  size_t pk_index;
-  for (pk_index = 0; pk_index < sizeof(config.airplay_pk); pk_index++)
-    ptr += sprintf(ptr, "%02x", config.airplay_pk[pk_index]);
-  *ptr = '\0';
-  config.pk_string = strdup(buf);
-
-  // the features code is a 64-bit number, but in the mDNS advertisement, the least significant 32
-  // bit are given first for example, if the features number is 0x1C340405F4A00, it will be given as
-  // features=0x405F4A00,0x1C340 in the mDNS string, and in a signed decimal number in the plist:
-  // 496155702020608 this setting here is the source of both the plist features response and the
-  // mDNS string.
-
-  config.airplay_features = 0x00018340405C4A00; // no AP2 metadata (b50), no AP1 text (b17), no AP1
-                                                // progress (b16), no AP1 artwork (b15)
-
-
-  // now generate the fex field
-  uint8_t fexbytes[8];
-  uint64_t temp = config.airplay_features;
-  debug(4, "airplay_features are %" PRIx64 ".", temp);
-  for (i = 0; i < 8; i++) {
-    fexbytes[i] = temp & 0xff;
-    temp = temp >> 8;
-  }
-
-  config.airplay_fex = base64_enc(fexbytes, 8);
-  if (config.airplay_fex == NULL)
-    die("could not allocate memory for \"airplay_fex\"");
-  // strip the padding.
-  char *padding = strchr(config.airplay_fex, '=');
-  if (padding)
-    *padding = 0;
-  debug(2, "airplay_fex is \"%s\"", config.airplay_fex);
-
-  // now the status flags
-  // Advertised with mDNS and returned with GET /info, see
-  // https://openairplay.github.io/airplay-spec/status_flags.html
-
-  config.airplay_statusflags = 0;
-  config.airplay_statusflags |= 1 << 2; // Audio cable is attached
-  if (config.password != NULL) {
-    config.airplay_statusflags |= 1 << 7; // Password required
-  }
-  // config.airplay_statusflags |= 1 << 10; // DeviceWasSetupForHKAccessControl
-  // config.airplay_statusflags |= 1 << 11; // DeviceSupportsRelay
-  // config.airplay_statusflags |= 1 << 19; // Unknown. Seems to control whether individual volume
-  // controls are shown and whether the SPS devices shows when its active.
-
-  config.airplay_pi = generate_device_uuid(config.airplay_device_id);
-  config.airplay_pgid = generate_random_uuid();
-
-  /* if the regtype hasn't been set, do it now */
-  if (config.regtype == NULL)
-    config.regtype = strdup("_raop._tcp");
-  if (config.regtype2 == NULL)
-    config.regtype2 = strdup("_airplay._tcp");
-
-  // now set the initial volume to the default volume
-  sharedVolumeLevel.remember(AirPlayVolume{config.default_airplay_volume});
-
-  config.service_name = service_name(raw_service_name);
-
-
-
-  if (config.port == 0) config.port = 7000;
-  load_pulseaudio_settings();
-#if LIBAVUTIL_VERSION_MAJOR >= 57
-
-  // default multichannel on
-  {
-    AVChannelLayout default_layout =
-        AV_CHANNEL_LAYOUT_7POINT1; // big fat macro to initialise the default layout
-    config.eight_channel_layout = default_layout.u.mask;
-  }
-  {
-    AVChannelLayout default_layout =
-        AV_CHANNEL_LAYOUT_5POINT1; // big fat macro to initialise the default layout
-    config.six_channel_layout = default_layout.u.mask;
-  }
-
-  if ((config.cfg != NULL) &&
-      (config_lookup_string(config.cfg, "general.eight_channel_mode", &str))) {
-    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
-      config.eight_channel_layout = 0; // 0 on initialisation
-    } else if ((strcasecmp(str, "on") == 0) || (strcasecmp(str, "yes") == 0)) {
-      // AVChannelLayout default_layout =
-      //     AV_CHANNEL_LAYOUT_7POINT1; // big fat macro to initialise the default layout
-      // config.eight_channel_layout = default_layout.u.mask;
-    } else {
-      AVChannelLayout channel_layout;
-      if (av_channel_layout_from_string(&channel_layout, str) == 0) {
-        if (channel_layout.nb_channels == 8) {
-          config.eight_channel_layout = channel_layout.u.mask;
-        } else {
-          warn("the eight_channel_mode setting \"%s\" is a %u-channel layout. If a channel layout "
-               "is "
-               "given, it must be an 8-channel layout. eight_channel_mode is set to \"off\".",
-               str, channel_layout.nb_channels);
-        }
-        av_channel_layout_uninit(&channel_layout);
-      } else {
-        warn("the eight_channel_mode setting \"%s\" is not recognised -- it should be \"off\" or "
-             "\"on\" or an eight-channel FFmpeg channel layout, e.g. \"7.1\". "
-             "eight_channel_mode is set to \"off\".",
-             str);
-      }
-    }
-  }
-
-  if ((config.cfg != NULL) &&
-      (config_lookup_string(config.cfg, "general.six_channel_mode", &str))) {
-    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
-      config.six_channel_layout = 0; // 0 on initialisation
-    } else if ((strcasecmp(str, "on") == 0) || (strcasecmp(str, "yes") == 0)) {
-      // AVChannelLayout default_layout =
-      //     AV_CHANNEL_LAYOUT_5POINT1; // big fat macro to initialise the default layout
-      // config.six_channel_layout = default_layout.u.mask;
-    } else {
-      AVChannelLayout channel_layout;
-      if (av_channel_layout_from_string(&channel_layout, str) == 0) {
-        if (channel_layout.nb_channels == 6) {
-          config.six_channel_layout = channel_layout.u.mask;
-        } else {
-          warn("the six_channel_mode setting \"%s\" is a %u-channel layout. If a channel layout is "
-               "given, it must be a 6-channel layout. six_channel_mode is set to \"off\".",
-               str, channel_layout.nb_channels);
-        }
-        av_channel_layout_uninit(&channel_layout);
-      } else {
-        warn("the six_channel_mode setting \"%s\" is not recognised -- it should be \"off\" or "
-             "\"on\" or a six-channel FFmpeg channel layout, e.g. \"5.1\". "
-             "six_channel_mode is set to \"off\".",
-             str);
-      }
-    }
-  }
-
-  if ((config.cfg != NULL) &&
-      (config_lookup_non_empty_string(config.cfg, "general.mixdown", &str))) {
-    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
-      config.mixdown_enable = 0; // 0 on initialisation
-      debug(1, "mixdown disabled.");
-    } else if (strcasecmp(str, "auto") == 0) {
-      config.mixdown_enable = 1;
-      config.mixdown_channel_layout = 0; // 0 means auto
-      debug(1, "mixdown target: auto.");
-    } else {
-      AVChannelLayout channel_layout;
-      if (av_channel_layout_from_string(&channel_layout, str) == 0) {
-        config.mixdown_enable = 1;
-        config.mixdown_channel_layout = channel_layout.u.mask;
-        av_channel_layout_uninit(&channel_layout);
-        debug(1, "mixdown target: \"%s\".", str);
-      } else {
-        warn("the mixdown setting \"%s\" is not recognised -- it should be \"off\" or \"auto\" or "
-             "an "
-             "FFmpeg channel layout, e.g. \"stereo\". the mixdown is set to \"auto\".",
-             str);
-        config.mixdown_enable = 1;
-        config.mixdown_channel_layout = 0; // 0 means auto
-      }
-    }
-  }
-#else
-
-  // default on
-  config.eight_channel_layout = AV_CH_LAYOUT_7POINT1;
-  config.six_channel_layout = AV_CH_LAYOUT_5POINT1;
-
-  const char *str;
-
-  if ((config.cfg != NULL) &&
-      (config_lookup_non_empty_string(config.cfg, "general.eight_channel_mode", &str))) {
-    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
-      config.eight_channel_layout = 0; // 0 on initialisation
-    } else if ((strcasecmp(str, "on") == 0) || (strcasecmp(str, "yes") == 0)) {
-      // config.eight_channel_layout = AV_CH_LAYOUT_7POINT1;
-    } else if (av_get_channel_layout(str) != 0) {
-      if (av_get_channel_layout_nb_channels(av_get_channel_layout(str)) == 8) {
-        config.eight_channel_layout = av_get_channel_layout(str);
-      } else {
-        warn("the eight_channel_mode setting \"%s\" is a %u channel layout. If a channel layout is "
-             "given, it must be an 8-channel layout. eight_channel_mode is set to \"off\".",
-             str, av_get_channel_layout_nb_channels(av_get_channel_layout(str)));
-      }
-    } else {
-      warn("the eight_channel_mode setting \"%s\" is not recognised -- it should be \"off\" or "
-           "\"on\" or an 8-channel FFmpeg channel layout, e.g. \"7.1\". "
-           "eight_channel_mode is set to \"off\".",
-           str);
-    }
-  }
-
-  if ((config.cfg != NULL) &&
-      (config_lookup_non_empty_string(config.cfg, "general.six_channel_mode", &str))) {
-    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
-      config.six_channel_layout = 0; // 0 on initialisation
-    } else if ((strcasecmp(str, "on") == 0) || (strcasecmp(str, "yes") == 0)) {
-      // config.six_channel_layout = AV_CH_LAYOUT_5POINT1;
-    } else if (av_get_channel_layout(str) != 0) {
-      if (av_get_channel_layout_nb_channels(av_get_channel_layout(str)) == 6) {
-        config.six_channel_layout = av_get_channel_layout(str);
-      } else {
-        warn("the six_channel_mode setting \"%s\" is a %u channel layout. If a channel layout is "
-             "given, it must be a 6-channel layout. six_channel_mode is set to \"off\".",
-             str, av_get_channel_layout_nb_channels(av_get_channel_layout(str)));
-      }
-    } else {
-      warn("the six_channel_mode setting \"%s\" is not recognised -- it should be \"off\" or "
-           "\"on\" or a 6-channel FFmpeg channel layout, e.g. \"5.1\". "
-           "six_channel_mode is set to \"off\".",
-           str);
-    }
-  }
-
-  if ((config.cfg != NULL) &&
-      (config_lookup_non_empty_string(config.cfg, "general.mixdown", &str))) {
-    if ((strcasecmp(str, "off") == 0) || (strcasecmp(str, "no") == 0)) {
-      config.mixdown_enable = 0; // 0 on initialisation
-    } else if (strcasecmp(str, "auto") == 0) {
-      config.mixdown_enable = 1;
-      config.mixdown_channel_layout = 0; // 0 means auto
-    } else if (av_get_channel_layout(str) != 0) {
-      config.mixdown_enable = 1;
-      config.mixdown_channel_layout = av_get_channel_layout(str);
-    } else {
-      warn("the mixdown setting \"%s\" is not recognised -- it should be \"off\" or \"auto\" or an "
-           "FFmpeg channel layout, e.g. \"stereo\". the mixdown is set to \"auto\".",
-           str);
-      config.mixdown_enable = 1;
-      config.mixdown_channel_layout = 0; // 0 means auto
-    }
-  }
-#endif
-
-  if (config.cfg != NULL) {
-    config_setting_t *output_channel_mapping_setting =
-        config_lookup(config.cfg, "general.output_channel_mapping");
-    if (output_channel_mapping_setting != NULL) {
-      const char *sstr = config_setting_get_string(output_channel_mapping_setting);
-      if (sstr != NULL) { // definitely a string
-        if (strcasecmp(sstr, "auto") == 0) {
-          config.output_channel_mapping_enable = 1; // this is the default anyway
-          config.output_channel_map_size = 0;       // use the device's channel map
-          debug(1, "device output channel map chosen");
-        } else if ((strcasecmp(sstr, "off") == 0) || (strcasecmp(sstr, "no") == 0)) {
-          config.output_channel_mapping_enable = 0; // no mapping
-        } else {
-          warn("the output_channel_mapping setting \"%s\" is not recognised -- it should be "
-               "\"auto\", \"off\" or a "
-               "bracketed comma-separated list of short channel names, e.g. (\"FL\", \"FR\", "
-               "\"LFE\");",
-               sstr);
-        }
-      } else {
-        if (config_setting_length(output_channel_mapping_setting) >
-            static_cast<int>(std::size(config.output_channel_map)))
-          die("general.output_channel_mapping supports at most eight channels");
-        int i = 0;
-        for (i = 0; i < config_setting_length(output_channel_mapping_setting); i++) {
-          // is a list or array, so okay
-          const char *channel_id =
-              config_setting_get_string_elem(output_channel_mapping_setting, i);
-          if (channel_id != NULL) { // definitely a string
-            int found = 0;
-            if (strcmp(channel_id, "--") == 0) {
-              found = 1;
-            } else {
-#if LIBAVUTIL_VERSION_MAJOR >= 57
-              const int buffer_size = 32;
-              char buffer[buffer_size];
-              enum AVChannel channel_index;
-              for (channel_index = AV_CHAN_NONE;
-                   ((channel_index < AV_CHAN_BOTTOM_FRONT_RIGHT) && (found == 0));
-                   channel_index = static_cast<AVChannel>(channel_index + 1)) {
-                found = av_channel_name(buffer, buffer_size, channel_index);
-                if (found > 0) {
-                  found = ((av_channel_name(buffer, buffer_size, channel_index) > 0) &&
-                           (strcmp(channel_id, buffer) == 0));
-                } else {
-                  found = 0;
-                }
-              }
-#else
-              uint64_t channel_index;
-              for (channel_index = 0; ((channel_index < 64) && (found == 0)); channel_index++) {
-                found = ((av_get_channel_name(1 << channel_index) != NULL) &&
-                         (strcmp(channel_id, av_get_channel_name(1 << channel_index)) == 0));
-              }
-#endif
-            }
-            if (found != 0) {
-              config.output_channel_map[i] = strdup(channel_id);
-              debug(2, "output channel %d is \"%s\".", i, config.output_channel_map[i]);
-            } else {
-
-              warn("during channel mapping, \"%s\" was not recognised as a channel name -- as a "
-                   "result, output channel %d will be silent.",
-                   channel_id, i);
-              config.output_channel_map[i] = strdup("--");
-            }
-            config.output_channel_map_size++;
-          }
-        }
-        if (config.output_channel_map_size == 0)
-          warn("the output_channel_mapping setting was empty. No output channel mapping will be "
-               "done.");
-        else
-          config.output_channel_mapping_enable = 1;
-      }
-    }
-  }
-
-
-
-}
-
-
-
-
-
 void exit_function() {
   debug(2, "Stopping the activity monitor.");
       activity_monitor_stop();
@@ -1115,51 +164,12 @@ void exit_function() {
       }
 
 
-      if (config.service_name)
-        free(config.service_name);
-
-
-
-      if (config.regtype)
-        free(config.regtype);
-      if (config.model)
-        free(config.model);
-      if (config.srcvers)
-        free(config.srcvers);
-      if (config.osvers)
-        free(config.osvers);
-
-      if (config.regtype2)
-        free(config.regtype2);
-      if (config.nqptp_shared_memory_interface_name)
-        free(config.nqptp_shared_memory_interface_name);
-      if (config.airplay_device_id)
-        free(config.airplay_device_id);
-      if (config.airplay_pi)
-        free(config.airplay_pi);
-      if (config.airplay_pgid)
-        free(config.airplay_pgid);
-      if (config.airplay_psi)
-        free(config.airplay_psi);
-      if (config.pk_string)
-        free(config.pk_string);
-      if (config.firmware_version)
-        free(config.firmware_version);
-      ptp_shm_interface_close(); // close it if it's open
-
-    if (configuration_initialized)
-      config_destroy(&config_file_stuff);
-    if (config.configfile != configuration_file_path)
-      free(config.configfile);
-    free(config.airplay_fex);
-    for (const char *channel : config.output_channel_map)
-      free(const_cast<char *>(channel));
-    if (config_file_real_path)
-      free(config_file_real_path);
-    if (config.appName)
-      free(config.appName);
-
-    // probably should be freeing malloc'ed memory here, including strdup-created strings...
+      free(config.airplay_pi);
+      free(config.airplay_pgid);
+      free(config.airplay_psi);
+      free(config.pk_string);
+      free(config.airplay_fex);
+      ptp_shm_interface_close();
 
     mdns_unregister(); // once the dacp handler is done and all player threads are done it should
                        // be safe
@@ -1419,138 +429,150 @@ const char *av_channel_layout_name(uint64_t channel_layout) {
 */
 
 
-static void reject_configuration(int) {
-  throw std::runtime_error("Invalid receiver configuration");
+
+static ConfigurationEnvironment configurationEnvironment(const StartupOptions &options) {
+  ConfigurationEnvironment environment;
+  environment.defaultPath = std::string(SYSCONFDIR) + "/shairport-sync.conf";
+  char hostname[256]{};
+  gethostname(hostname, sizeof(hostname) - 1);
+  environment.hostname = hostname;
+  environment.packageVersion = PACKAGE_VERSION;
+  std::unique_ptr<char, decltype(&free)> version(get_version_string(), &free);
+  environment.detailedVersion = version ? version.get() : PACKAGE_VERSION;
+  environment.firmwareVersion = PACKAGE_VERSION;
+#ifdef CONFIG_USE_GIT_VERSION_STRING
+  if (git_version_string[0] != '\0')
+    environment.firmwareVersion = git_version_string;
+#endif
+  if (options.operation() == StartupOptions::Operation::receive)
+    get_device_id(environment.hardwareAddress.data(), environment.hardwareAddress.size());
+  environment.endianness = std::endian::native == std::endian::little ? SS_LITTLE_ENDIAN :
+                           std::endian::native == std::endian::big ? SS_BIG_ENDIAN : SS_PDP_ENDIAN;
+  environment.interfaceIndex = [](std::string_view name) {
+    return if_nametoindex(std::string(name).c_str());
+  };
+  return environment;
 }
 
-std::expected<ReceiverSettings, std::string> ConfigurationLoader::load(const StartupOptions &options) {
-  try {
-  // initialise debug messages stuff -- level 0, no elapsed time, relative time, file and line
-  // debug_init(int level, int show_elapsed_time, int show_relative_time, int show_file_and_line)
-  debug_init(0, 0, 1, 1, reject_configuration);
-  memset(&config, 0, sizeof(config)); // also clears all strings, BTW
-  config.appName = strdup("shairport-sync");
-  snprintf(configuration_file_path, sizeof(configuration_file_path), "%s/shairport-sync.conf", SYSCONFDIR);
-  config.configfile = options.configurationPath() ? strdup(options.configurationPath()->c_str()) : configuration_file_path;
-  if (options.configurationPath() && access(config.configfile, R_OK) != 0) {
-    fprintf(stderr, "Unable to read configuration %s: %s\n", config.configfile, strerror(errno));
-    free(config.configfile);
-    free(config.appName);
-    return std::unexpected("Unable to read explicitly requested configuration");
+static void initializeRuntimeIdentity() {
+  // Create an airplay psi UUID based on the ap1_prefix.
+
+  // a uuid_t and an md5 hash are both 128 bits, 16 bytes
+  uuid_t result;
+  memset(result, 0, sizeof(result));
+  if (sizeof(config.ap1_prefix) < sizeof(result))
+    memcpy(result, config.ap1_prefix, sizeof(config.ap1_prefix));
+  else
+    memcpy(result, config.ap1_prefix, sizeof(result));
+
+  // OpenSSL is mandatory for AirPlay 2
+  EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
+  EVP_DigestInit_ex(mdctx, EVP_md5(), NULL);
+  EVP_DigestUpdate(mdctx, config.ap1_prefix, sizeof(config.ap1_prefix));
+  unsigned int md5_digest_len = EVP_MD_size(EVP_md5());
+  EVP_DigestFinal_ex(mdctx, result, &md5_digest_len);
+  EVP_MD_CTX_free(mdctx);
+
+  // now, convert it into a type 4 UUID
+  // see https://stackoverflow.com/questions/10867405/generating-v5-uuid-what-is-name-and-namespace
+  // //set high-nibble to 5 to indicate type 5
+
+  result[6] &= 0x0F;
+  result[6] |= 0x40;
+
+  // set upper two bits to "10"
+  result[8] &= 0x3F;
+  result[8] |= 0x80;
+
+  char *psi_uuid = static_cast<char *>(malloc(UUID_STR_LEN + 1));
+  // Produces a UUID string at uuid consisting of lower-case letters
+  uuid_unparse_lower(result, psi_uuid);
+  config.airplay_psi = psi_uuid;
+
+  debug(3, "size of pk is %zu.", sizeof(config.airplay_pk));
+  pair_public_key_get(PAIR_SERVER_HOMEKIT, config.airplay_pk, config.airplay_device_id);
+  char buf[128];
+  char *ptr = buf;
+  size_t pk_index;
+  for (pk_index = 0; pk_index < sizeof(config.airplay_pk); pk_index++)
+    ptr += sprintf(ptr, "%02x", config.airplay_pk[pk_index]);
+  *ptr = '\0';
+  config.pk_string = strdup(buf);
+
+  // the features code is a 64-bit number, but in the mDNS advertisement, the least significant 32
+  // bit are given first for example, if the features number is 0x1C340405F4A00, it will be given as
+  // features=0x405F4A00,0x1C340 in the mDNS string, and in a signed decimal number in the plist:
+  // 496155702020608 this setting here is the source of both the plist features response and the
+  // mDNS string.
+
+  config.airplay_features = 0x00018340405C4A00; // no AP2 metadata (b50), no AP1 text (b17), no AP1
+                                                // progress (b16), no AP1 artwork (b15)
+
+
+  // now generate the fex field
+  uint8_t fexbytes[8];
+  uint64_t temp = config.airplay_features;
+  debug(4, "airplay_features are %" PRIx64 ".", temp);
+  for (int i = 0; i < 8; i++) {
+    fexbytes[i] = temp & 0xff;
+    temp = temp >> 8;
   }
+
+  config.airplay_fex = base64_enc(fexbytes, 8);
+  if (config.airplay_fex == NULL)
+    die("could not allocate memory for \"airplay_fex\"");
+  // strip the padding.
+  char *padding = strchr(config.airplay_fex, '=');
+  if (padding)
+    *padding = 0;
+  debug(2, "airplay_fex is \"%s\"", config.airplay_fex);
+
+  // now the status flags
+  // Advertised with mDNS and returned with GET /info, see
+  // https://openairplay.github.io/airplay-spec/status_flags.html
+
+  config.airplay_statusflags = 0;
+  config.airplay_statusflags |= 1 << 2; // Audio cable is attached
+  if (config.password != NULL) {
+    config.airplay_statusflags |= 1 << 7; // Password required
+  }
+  // config.airplay_statusflags |= 1 << 10; // DeviceWasSetupForHKAccessControl
+  // config.airplay_statusflags |= 1 << 11; // DeviceSupportsRelay
+  // config.airplay_statusflags |= 1 << 19; // Unknown. Seems to control whether individual volume
+  // controls are shown and whether the SPS devices shows when its active.
+
+  config.airplay_pi = generate_device_uuid(config.airplay_device_id);
+  config.airplay_pgid = generate_random_uuid();
+
+
+}
+
+int ReceiverApplication::run(ReceiverSettings settings) {
+  static std::optional<LegacyConfigLease> processSettings;
+  processSettings.emplace(std::move(settings));
+  config_file_real_path = processSettings->configurationRealPath();
+  atexit(exit_function);
+  exit_init();
+  const auto &diagnostics = processSettings->settings().diagnostics();
+  debug_init(diagnostics.verbosity, 0, 1, 1, exit_request);
+  pid = getpid();
+  setlogmask(LOG_UPTO(LOG_DEBUG));
+  openlog(NULL, 0, LOG_DAEMON);
 #if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(53, 10, 0)
   avcodec_init();
 #endif
 #if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(58, 9, 100)
   avcodec_register_all();
 #endif
-  if (debug_level() == 0)
-    av_log_set_level(AV_LOG_ERROR);
-  else
-    av_log_set_level(AV_LOG_VERBOSE);
-
-  pid = getpid();
-  config.log_fd = -1;
-
-  setlogmask(LOG_UPTO(LOG_DEBUG));
-  openlog(NULL, 0, LOG_DAEMON);
-  debug(1, "adding the exit function");
-  atexit(exit_function);
-
-  // get a device id -- the first non-local MAC address
-  if (options.operation() == StartupOptions::Operation::receive)
-    get_device_id((uint8_t *)&config.hw_addr, 6);
-
-  // get the endianness
-  union {
-    uint32_t u32;
-    uint8_t arr[4];
-  } xn;
-
-  xn.arr[0] = 0x44; /* Lowest-address byte */
-  xn.arr[1] = 0x33;
-  xn.arr[2] = 0x22;
-  xn.arr[3] = 0x11; /* Highest-address byte */
-
-  if (xn.u32 == 0x11223344)
-    config.endianness = SS_LITTLE_ENDIAN;
-  else if (xn.u32 == 0x33441122)
-    config.endianness = SS_PDP_ENDIAN;
-  else if (xn.u32 == 0x44332211)
-    config.endianness = SS_BIG_ENDIAN;
-  else
-    die("Can not recognise the endianness of the processor.");
-
-  // set non-zero / non-NULL default values here
-  // but note that audio back ends also have a chance to set defaults
-
-  // get the first output backend in the list and make it the default
-  audio_output *first_backend = audio_get_output(NULL);
-  if (first_backend == NULL) {
-    die("No audio backend found! Check your build of Shairport Sync.");
-  } else {
-    strncpy(first_backend_name, first_backend->name, sizeof(first_backend_name) - 1);
-    config.output_name = first_backend_name;
-  }
-
-  // config.statistics_requested = 0; // don't print stats in the log
-  // config.userSuppliedLatency = 0; // zero means none supplied
-
-  config.debugger_show_file_and_line =
-      1; // by default, log the file and line of the originating message
-  config.debugger_show_relative_time =
-      1;               // by default, log the  time back to the previous debug message
-  config.timeout = 60; // wait this number of seconds to wait for a dropped RTSP connection to come
-                       // back before declaring it lost.
-  config.buffer_start_fill = 220;
-
-  config.resync_threshold = 0.050; // default
-  config.tolerance = 0.002;
-
-  config.packet_stuffing = ST_vernier; // you need to explicitly ask for "basic" (ST_basic)
-
-  // set_requested_connection_state_to_output(
-  //     1); // we expect to be able to connect to the output device
-  config.audio_backend_buffer_desired_length = 0.15; // seconds
-  config.audio_decoded_buffer_desired_length = 0.75; // seconds
-  config.udp_port_base = 6001;
-  config.udp_port_range = 10;
-
-  config.current_output_configuration = 0; // no output configuration selected...
-
-  // config.output_format = SPS_FORMAT_S16_LE; // default
-  config.output_rate_auto_requested = 1;   // default auto select format
-  config.output_format_auto_requested = 1; // default auto select format
-
-  config.decoder_in_use = 1 << decoder_ffmpeg_alac; // If present, use this in preference
-
-  config.output_channel_mapping_enable = 1; // enabled by default
-  config.output_channel_map_size = 0;       // use the device's channel map if it has one
-  config.mixdown_enable = 1;                // enabled by default
-  config.mixdown_channel_layout =
-      0; // 0 means pick a mixdown based on the number of output channels
-
-  // initialise random number generator
-
+  av_log_set_level(AV_LOG_ERROR);
   r64init(0);
-
-  load_receiver_configuration(options);
-  if (config.userSuppliedLatency != 0 &&
-      (config.userSuppliedLatency < 4410 ||
-       config.userSuppliedLatency > BUFFER_FRAMES * 352 - 22050))
-    die("An out-of-range fixed latency has been specified. It must be between 4410 and %d (at "
-        "44100 frames per second).",
-        BUFFER_FRAMES * 352 - 22050);
-  return ReceiverSettings(config);
-  } catch (const std::runtime_error &failure) {
-    return std::unexpected(failure.what());
-  }
-}
-
-int ReceiverApplication::run(const ReceiverSettings &settings) {
-  config = settings.values_;
-  exit_init();
-  debug_init(debug_level(), get_show_elapsed_time(), get_show_relative_timel(), get_show_file_and_line(), exit_request);
+  const auto *firstBackend = audio_get_output(nullptr);
+  if (!firstBackend)
+    die("No audio backend found! Check your build of Shairport Sync.");
+  strncpy(first_backend_name, firstBackend->name, sizeof(first_backend_name) - 1);
+  config.output_name = first_backend_name;
+  sharedVolumeLevel.remember(AirPlayVolume{config.default_airplay_volume});
+  initializeRuntimeIdentity();
   ptp_send_control_message_string("T");
   if (ptp_shm_interface_open() != 0) {
     die("NQPTP is required for AirPlay 2 and must be running with readable, complete shared memory: %s.", strerror(errno));
@@ -1860,13 +882,17 @@ int shairport_receiver_main(int argc, char **argv) {
   }
 
 
-  const auto settings = ConfigurationLoader::load(*options);
+  auto settings = ConfigurationLoader::load(*options, configurationEnvironment(*options));
   if (!settings) {
-    fprintf(stderr, "%s\n", settings.error().c_str());
+    for (const auto &diagnostic : settings.error().precedingDiagnostics)
+      fprintf(stderr, "%s\n", diagnostic.message.c_str());
+    fprintf(stderr, "%s\n", settings.error().message.c_str());
     return 1;
   }
+  for (const auto &diagnostic : settings->diagnosticsLog())
+    fprintf(stderr, "%s\n", diagnostic.message.c_str());
   if (options->operation() == StartupOptions::Operation::checkConfiguration)
     return 0;
   ReceiverApplication application;
-  return application.run(*settings);
+  return application.run(std::move(*settings));
 }

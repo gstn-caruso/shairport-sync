@@ -4,5 +4,5 @@
 
 class ReceiverApplication {
 public:
-  int run(const ReceiverSettings &settings);
+  int run(ReceiverSettings settings);
 };
