@@ -30,6 +30,7 @@ struct CoordinatorInput : ExactByteInput {
 struct CoordinatorSession : BufferedSessionPort {
   std::vector<std::string> &effects;
   bool enabled = false, discard = false, keyPresent = true;
+  mutable unsigned keyCalls = 0;
   std::vector<BufferedPacketMetadata> flushed;
   std::vector<bool> everRead;
   std::vector<BufferedReceiverDiagnostic> diagnostics;
@@ -40,7 +41,7 @@ struct CoordinatorSession : BufferedSessionPort {
     effects.push_back("flush"); flushed.push_back(packet); everRead.push_back(read); return discard;
   }
   void observeRead(const BufferedBlockRead &read) override { effects.push_back("observe"); observations.push_back(read); }
-  std::span<const uint8_t> key() const override { return keyPresent ? std::span(buffered_block_fixture::key) : std::span<const uint8_t>{}; }
+  std::span<const uint8_t> key() const override { ++keyCalls; return keyPresent ? std::span(buffered_block_fixture::key) : std::span<const uint8_t>{}; }
   void diagnostic(const BufferedReceiverDiagnostic &event) override { diagnostics.push_back(event); }
 };
 struct CoordinatorClock : BufferedClockPort {
@@ -142,4 +143,51 @@ TEST_F(BufferedCoordinator, CompleteEncryptedCycleObservesReadsInitializesFlushe
   EXPECT_EQ(session.observations[0].bodyRemaining, 0u);
   EXPECT_TRUE(session.everRead[0]);
   EXPECT_EQ(effects, (std::vector<std::string>{"ready","reset","play","observe","initialize","flush","map:1000","now","submit"}));
+}
+TEST_F(BufferedCoordinator, CachedClockAndEarlyWaitsRetainStableWireWithoutRereadOrAuthentication) {
+  input.add(); session.enabled = true; clock.scheduled = std::nullopt;
+  BufferedReceiverCoordinator coordinator(input,session,clock,sink,0.25);
+  coordinator.advance();
+  EXPECT_EQ(input.reads, 2u); EXPECT_EQ(clock.nowCalls, 0u); EXPECT_EQ(session.keyCalls, 0u);
+  std::fill(input.bytes.begin(),input.bytes.end(),0);
+  clock.scheduled = 1500000000;
+  coordinator.advance(); coordinator.advance();
+  EXPECT_EQ(input.reads, 2u); EXPECT_EQ(session.keyCalls, 0u);
+  auto admissions = diagnostics<BufferedAdmissionDiagnostic>();
+  ASSERT_EQ(admissions.size(), 2u);
+  EXPECT_EQ(admissions[0].kind, BufferedAdmissionDiagnosticKind::clockWait);
+  EXPECT_EQ(admissions[1].kind, BufferedAdmissionDiagnosticKind::early);
+  clock.scheduled = 1050000000;
+  coordinator.advance();
+  ASSERT_EQ(sink.sent.size(), 1u);
+  EXPECT_EQ(input.reads, 2u);
+  EXPECT_TRUE(std::equal(buffered_block_fixture::plaintext.begin(),buffered_block_fixture::plaintext.end(),sink.sent[0].bytes.begin()+7));
+  EXPECT_EQ(session.everRead.size(), 4u);
+}
+TEST_F(BufferedCoordinator, DisabledCachedBlockWaitsButRestartRequiresFreshInput) {
+  input.add(1000); input.add(2024); session.enabled = true; clock.scheduled = std::nullopt;
+  BufferedReceiverCoordinator coordinator(input,session,clock,sink,0.25);
+  coordinator.advance();
+  session.enabled = false;
+  coordinator.advance();
+  EXPECT_EQ(input.reads, 2u); EXPECT_EQ(sink.resets, 2u);
+  session.enabled = true; clock.scheduled = 1050000000;
+  coordinator.advance();
+  EXPECT_EQ(input.reads, 4u);
+  ASSERT_EQ(sink.sent.size(), 1u);
+  EXPECT_EQ(sink.sent[0].packet.timestamp, 2024u);
+  EXPECT_TRUE(sink.sent[0].submission.mute);
+}
+TEST_F(BufferedCoordinator, FlushCachedBlockRunsBeforeAdmissionAndConsumesWithoutAuthentication) {
+  input.add(1000); input.add(2024); session.enabled = true; clock.scheduled = std::nullopt;
+  BufferedReceiverCoordinator coordinator(input,session,clock,sink,0.25);
+  coordinator.advance(); effects.clear();
+  session.discard = true;
+  coordinator.advance();
+  EXPECT_EQ(effects, (std::vector<std::string>{"play","flush"}));
+  EXPECT_EQ(input.reads, 2u); EXPECT_EQ(session.keyCalls, 0u);
+  session.discard = false; clock.scheduled = 1050000000;
+  coordinator.advance();
+  ASSERT_EQ(sink.sent.size(), 1u);
+  EXPECT_EQ(sink.sent[0].packet.timestamp, 2024u);
 }

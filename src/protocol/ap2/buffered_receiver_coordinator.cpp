@@ -46,9 +46,13 @@ struct BufferedReceiverCoordinator::State {
     const auto scheduled = clock.schedule(packet.timestamp);
     const auto shape = sink.shape();
     const auto admission = playback.admit(scheduled, scheduled ? clock.now() : 0, shape.frames, shape.rate);
-    if (admission.kind == BufferedAdmissionKind::waitClock || admission.kind == BufferedAdmissionKind::waitPacket)
+    if (admission.kind == BufferedAdmissionKind::waitClock || admission.kind == BufferedAdmissionKind::waitPacket) {
+      if (admission.kind == BufferedAdmissionKind::waitClock)
+        session.diagnostic(BufferedAdmissionDiagnostic{BufferedAdmissionDiagnosticKind::clockWait,packet});
+      if (admission.warnEarly)
+        session.diagnostic(BufferedAdmissionDiagnostic{BufferedAdmissionDiagnosticKind::early,packet,admission.leadNs});
       clock.wait(admission.waitUs);
-    else {
+    } else {
       if (admission.kind == BufferedAdmissionKind::prepare && block && format) {
         auto prepared = block->prepare({format->isAac() ? BufferedBlockCodec::aac : BufferedBlockCodec::alac,
                                        format->aacChannelConfiguration()}, session.key(), shape.rate);
