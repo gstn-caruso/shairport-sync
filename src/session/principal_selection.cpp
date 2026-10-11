@@ -28,7 +28,15 @@ bool PrincipalSelection::releaseIfCurrent(int id) {
   ++generation_;
   return true;
 }
-std::optional<int> PrincipalSelection::clear() { return std::nullopt; }
+std::optional<int> PrincipalSelection::clear() {
+  std::lock_guard lock(mutex_);
+  auto previous = current_ ? std::optional(current_->id()) : std::nullopt;
+  if (current_)
+    current_->beginRetirement();
+  current_ = nullptr;
+  ++generation_;
+  return previous;
+}
 bool PrincipalSelection::isCurrent(int id) const {
   std::lock_guard lock(mutex_);
   return current_ && current_->id() == id;

@@ -75,3 +75,17 @@ TEST(PrincipalSelection, ReleaseInvalidatesTicketsWithoutRetiringParticipant) {
   EXPECT_TRUE(selection.acquire(participant, true).accepted);
   EXPECT_FALSE(selection.commitIfSelected(*ticket, [] {}));
 }
+
+TEST(PrincipalSelection, ClearRetiresSelectionAndInvalidatesTicket) {
+  PrincipalSelection selection;
+  Participant participant(7);
+  ASSERT_TRUE(selection.acquire(participant, true).accepted);
+  auto ticket = selection.ticketFor(7);
+  ASSERT_TRUE(ticket);
+  EXPECT_EQ(selection.clear(), 7);
+  EXPECT_TRUE(participant.retired);
+  EXPECT_FALSE(selection.ticketFor(7));
+  EXPECT_FALSE(selection.commitIfSelected(*ticket, [] {}));
+  EXPECT_FALSE(selection.clear());
+  EXPECT_FALSE(selection.acquire(participant, true).accepted);
+}
