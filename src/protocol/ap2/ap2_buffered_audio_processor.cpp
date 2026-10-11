@@ -35,6 +35,8 @@
 #include "platform/utilities/network_utilities.h"
 #include <sodium.h>
 #include <stdint.h>
+#include "protocol/ap2/buffered_block_input.hpp"
+import receiver.protocol.ap2.buffered_block;
 
 
 static void logBufferedFlush(const BufferedFlushPolicy::Decision &decision, ssrc_t ssrc) {
@@ -95,56 +97,6 @@ static void logBufferedFlush(const BufferedFlushPolicy::Decision &decision, ssrc
   }
 }
 
-void addADTStoPacket(uint8_t *packet, int packetLen, int rate, int channel_configuration) {
-  // https://stackoverflow.com/questions/18862715/how-to-generate-the-aac-adts-elementary-stream-with-android-mediacodec
-  // with thanks!
-
-  // See https://wiki.multimedia.cx/index.php/Understanding_AAC
-  // see also https://wiki.multimedia.cx/index.php/ADTS for the ADTS layout
-  // see https://wiki.multimedia.cx/index.php/MPEG-4_Audio#Sampling_Frequencies for sampling
-  // frequencies
-
-  /**
-   *  Add ADTS header at the beginning of each and every AAC packet.
-   *  This is needed as the packet is raw AAC data.
-   *
-   *  Note the packetLen must count in the ADTS header itself.
-   **/
-
-  int profile = 2;
-  int freqIdx = 4;
-  if (rate == 44100)
-    freqIdx = 4;
-  else if (rate == 48000)
-    freqIdx = 3;
-  else
-    debug(1, "Unsupported AAC sample rate %d.", rate);
-
-  // Channel Configuration
-  // https://wiki.multimedia.cx/index.php/MPEG-4_Audio#Channel_Configurations
-  // clang-format off
-  // 0: Defined in AOT Specifc Config
-  // 1: 1 channel: front-center
-  // 2: 2 channels: front-left, front-right
-  // 3: 3 channels: front-center, front-left, front-right
-  // 4: 4 channels: front-center, front-left, front-right, back-center
-  // 5: 5 channels: front-center, front-left, front-right, back-left, back-right
-  // 6: 6 channels: front-center, front-left, front-right, back-left, back-right, LFE-channel
-  // 7: 8 channels: front-center, front-left, front-right, side-left, side-right, back-left, back-right, LFE-channel
-  // 8-15: Reserved
-  // clang-format on
-
-  int chanCfg = channel_configuration; // CPE
-
-  // fill in ADTS data
-  packet[0] = 0xFF;
-  packet[1] = 0xF9;
-  packet[2] = ((profile - 1) << 6) + (freqIdx << 2) + (chanCfg >> 2);
-  packet[3] = ((chanCfg & 3) << 6) + (packetLen >> 11);
-  packet[4] = (packetLen & 0x7FF) >> 3;
-  packet[5] = ((packetLen & 7) << 5) + 0x1F;
-  packet[6] = 0xFC;
-}
 
 void rtp_buffered_audio_cleanup_handler(__attribute__((unused)) void *arg) {
   debug(2, "Buffered Audio Receiver Cleanup Start.");
@@ -219,18 +171,7 @@ void *rtp_buffered_audio_processor(void *arg) {
     debug(1, "cannot allocate an audio packet buffer of %zu bytes!", buffer_packet_size);
   pthread_cleanup_push(malloc_cleanup, &packet);
 
-  const size_t leading_free_space_length =
-      256; // leave this many bytes free to make room for prefixes that might be added later
-
-  unsigned char *m = static_cast<unsigned char *>(malloc(buffer_packet_size + leading_free_space_length));
-  if (m == NULL)
-    debug(1, "cannot allocate an audio m buffer of %zu bytes!",
-          buffer_packet_size + leading_free_space_length);
-  pthread_cleanup_push(malloc_cleanup, &m);
-  // unsigned char m[32 * 1024 + leading_free_space_length];
-
-  unsigned char *payload_pointer = NULL;
-  unsigned long long payload_length = 0;
+  std::optional<BufferedAudioBlock> bufferedBlock;
   ssrc_t payload_ssrc =
       SSRC_NONE; // this is the SSRC of the payload, needed to decide if it should be muted
   ssrc_t previous_ssrc = SSRC_NONE;
@@ -288,30 +229,20 @@ void *rtp_buffered_audio_processor(void *arg) {
     // now, if get_next_block is non-zero, read a block. We may flush or use it
 
     if (new_audio_block_needed != 0) {
-      // a block is preceded by its length in a uint16_t
-      uint16_t data_len;
-      // here we read from the buffer that our thread has been reading
+      auto blockRead = readBufferedAudioBlock(*buffered_audio, std::span(packet, buffer_packet_size));
+      conn->statistics.observeBufferedBytes(blockRead.prefixRemaining);
+      if (blockRead.bodyRemaining)
+        conn->statistics.observeBufferedBytes(*blockRead.bodyRemaining);
+      nread = blockRead.status == BufferedBlockReadStatus::complete ? blockRead.count
+          : blockRead.status == BufferedBlockReadStatus::readError ? -1 : 0;
+      if (blockRead.status == BufferedBlockReadStatus::complete) {
+        auto parsed = BufferedAudioBlock::parse(std::span(packet, blockRead.count));
+        if (!parsed) {
+          blockRead.status = BufferedBlockReadStatus::invalidSize;
+          nread = 0;
+        } else {
+          bufferedBlock = *parsed;
 
-      // debug(1,"read a block");
-      size_t bytes_remaining_in_buffer;
-      nread =
-          read_sized_block(buffered_audio, &data_len, sizeof(data_len), &bytes_remaining_in_buffer);
-      data_len = ntohs(data_len);
-
-      // diagnostic
-      conn->statistics.observeBufferedBytes(bytes_remaining_in_buffer);
-
-      if (nread > 0) {
-        // get the block itself
-        // debug(1,"buffered audio packet of size %u detected.", data_len - 2);
-        nread = read_sized_block(buffered_audio, packet, data_len - 2, &bytes_remaining_in_buffer);
-        // debug(1,"block read");
-
-        // diagnostic
-        conn->statistics.observeBufferedBytes(bytes_remaining_in_buffer);
-        // debug(1, "buffered audio packet of size %u received.", nread);
-
-        if (nread > 0) {
           // got the block
           blocks_read++;                  // note, this doesn't mean they are valid audio blocks
 
@@ -320,14 +251,14 @@ void *rtp_buffered_audio_processor(void *arg) {
           // the Marker bit is always set, and it and the remaining 23 bits form the sequence number
 
           previous_seqno = seq_no;
-          seq_no = nctohl(&packet[0]) & 0x7FFFFF;
+          seq_no = bufferedBlock->sequence();
 
           previous_timestamp = timestamp;
-          timestamp = nctohl(&packet[4]);
+          timestamp = bufferedBlock->timestamp();
 
           if (payload_ssrc != SSRC_NONE)
             previous_ssrc = payload_ssrc;
-          payload_ssrc = static_cast<ssrc_t>(nctohl(&packet[8]));
+          payload_ssrc = static_cast<ssrc_t>(bufferedBlock->ssrc());
           payloadFormat = AudioFormat::fromSsrc(payload_ssrc);
 
           if ((payload_ssrc != previous_ssrc) && (payload_ssrc != SSRC_NONE)) {
@@ -370,7 +301,11 @@ void *rtp_buffered_audio_processor(void *arg) {
         }
       }
 
-      if (nread == 0) {
+      if (blockRead.status == BufferedBlockReadStatus::invalidSize) {
+        debug(1, "Connection %d: invalid buffered audio block length %u.",
+              conn->connection_number, blockRead.declaredLength);
+        finished = 1;
+      } else if (nread == 0) {
         // nread is 0 -- the port has been closed
         debug(2, "Connection %d: buffered audio port closed!", conn->connection_number);
         finished = 1;
@@ -445,59 +380,26 @@ void *rtp_buffered_audio_processor(void *arg) {
 
             if ((packets_played_in_this_sequence == 0) || (time_from_last_buffer_time > 0)) {
 
-              payload_length = 0;
-              if (payloadFormat) {
-                unsigned long long new_payload_length = 0;
-                payload_pointer = m + leading_free_space_length;
-                if (lead_time >= 0) { // only decipher the packet if it's not too late
-                  int response = -1;  // guess that there is a problem
-                  if (conn->session_key != NULL) {
-                    unsigned char nonce[12];
-                    memset(nonce, 0, sizeof(nonce));
-                    memcpy(
-                        nonce + 4, packet + nread - 8,
-                        8); // front-pad the 8-byte nonce received to get the 12-byte nonce expected
-
-                    // https://libsodium.gitbook.io/doc/secret-key_cryptography/aead/chacha20-poly1305/ietf_chacha20-poly1305_construction
-                    // Note: the eight-byte nonce must be front-padded out to 12 bytes.
-
-                    // Leave leading_free_space_length bytes at the start for possible headers like
-                    // an ADTS header (7 bytes)
-                    memset(m, 0, leading_free_space_length);
-                    response = crypto_aead_chacha20poly1305_ietf_decrypt(
-                        payload_pointer,     // where the decrypted payload will start
-                        &new_payload_length, // mlen_p
-                        NULL,                // nsec,
-                        packet +
-                            12, // the ciphertext starts 12 bytes in and is followed by the MAC tag,
-                        nread - (8 + 12), // clen -- the last 8 bytes are the nonce
-                        packet + 4,       // authenticated additional data
-                        8,                // authenticated additional data length
-                        nonce,
-                        conn->session_key); // *k
-                    if (response != 0)
-                      debug(1, "Error decrypting audio packet %u -- packet length %zd.", seq_no,
-                            nread);
-                  } else {
-                    debug(2,
-                          "No session key, so the audio packet can not be deciphered -- skipped.");
+              if (payloadFormat && bufferedBlock) {
+                if (lead_time >= 0) {
+                  const auto key = conn->session_key
+                      ? std::span<const uint8_t>(conn->session_key, 32) : std::span<const uint8_t>{};
+                  auto prepared = bufferedBlock->prepare(
+                      {payloadFormat->isAac() ? BufferedBlockCodec::aac : BufferedBlockCodec::alac,
+                       payloadFormat->aacChannelConfiguration()},
+                      key, conn->inputAudio.sampleRate());
+                  if (!prepared) {
+                    if (prepared.error() == BufferedBlockError::missingKey)
+                      debug(2, "No session key, so the audio packet can not be deciphered -- skipped.");
+                    else if (prepared.error() == BufferedBlockError::authenticationFailed)
+                      debug(1, "Error decrypting audio packet %u -- packet length %zd.", seq_no, nread);
                   }
-
-                  if ((response == 0) && (new_payload_length > 0)) {
-                    // now we have the deciphered block, so send it to the player if we can
-                    payload_length = new_payload_length;
-
-                    if (payloadFormat->isAac()) {
-                      payload_pointer =
-                          payload_pointer - 7; // including the 7-byte leader for the ADTS
-                      payload_length = payload_length + 7;
-
-                      // now, fill in the 7-byte ADTS information, which seems to be needed by the
-                      // decoder we made room for it in the front of the buffer by filling from m
-                      // + 7.
-                      addADTStoPacket(payload_pointer, payload_length, conn->inputAudio.sampleRate(),
-                                      payloadFormat->aacChannelConfiguration());
-                    }
+                  if (prepared) {
+                    auto *payload_pointer = prepared->data();
+                    const auto payload_length = prepared->size();
+                    if (payloadFormat->isAac() && conn->inputAudio.sampleRate() != 44100 &&
+                        conn->inputAudio.sampleRate() != 48000)
+                      debug(1, "Unsupported AAC sample rate %u.", conn->inputAudio.sampleRate());
                     int mute =
                         ((packets_played_in_this_sequence == 0) && payloadFormat->isAac());
                     if (mute) {
@@ -611,7 +513,6 @@ void *rtp_buffered_audio_processor(void *arg) {
   } while (finished == 0);
   // debug(1, "Connection %d: rtp_buffered_audio_processor PID %d exiting", conn->connection_number,
   //       syscall(SYS_gettid));
-  pthread_cleanup_pop(1); // m
   pthread_cleanup_pop(1); // packet
   pthread_cleanup_pop(1); // buffered_tcp_reader thread creation
   pthread_cleanup_pop(1); // buffer malloc
