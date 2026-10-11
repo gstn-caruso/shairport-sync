@@ -64,6 +64,8 @@
 #include <format>
 #include <new>
 
+import receiver.protocol.rtsp.parameters;
+
 #include <openssl/evp.h>
 #include <openssl/md5.h>
 
@@ -2566,79 +2568,52 @@ static void handle_ignore(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *r
 }
 */
 
-void handle_set_parameter_parameter(rtsp_conn_info *conn, RtspMessage *req,
-                                    __attribute__((unused)) RtspMessage *resp) {
-
-  for (const auto &parameter : req->parameterLines()) {
-    const char *cp = parameter.c_str();
-    if (!strncmp(cp, "volume: ", strlen("volume: "))) {
-      const auto volume = AirPlayVolume::fromWireParameter(cp + strlen("volume: "));
-      debug(3, "Connection %d: request to set AirPlay Volume to: %f.", conn->connection_number,
-            volume.value());
-      conn->volumeControl.rememberLevel(volume);
-      if (const auto ticket = principalSession.ticketFor(conn->connection_number)) {
-        command_set_volume(volume.value());
-        applySessionVolumeEffects(volume, *conn, [&] {
-          principalSession.commitIfSelected(*ticket, [&] { sharedVolumeLevel.remember(volume); });
-        });
-      }
-    } else if (strncmp(cp, "progress: ", strlen("progress: ")) ==
-               0) { // this can be sent even when metadata is not solicited
-
-
-    } else {
-      debug(1, "Connection %d, unrecognised parameter: \"%s\"\n", conn->connection_number, cp);
+class RuntimeParameterVolumePort : public ParameterVolumePort {
+public:
+  explicit RuntimeParameterVolumePort(rtsp_conn_info &session) : session_(session) {}
+  AirPlayVolume suggestedVolume() override { return suggestedSessionVolume(&session_); }
+  void acceptVolume(AirPlayVolume volume) override {
+    debug(3, "Connection %d: request to set AirPlay Volume to: %f.", session_.connection_number,
+          volume.value());
+    session_.volumeControl.rememberLevel(volume);
+    if (const auto ticket = principalSession.ticketFor(session_.connection_number)) {
+      command_set_volume(volume.value());
+      applySessionVolumeEffects(volume, session_, [&] {
+        principalSession.commitIfSelected(*ticket, [&] { sharedVolumeLevel.remember(volume); });
+      });
     }
   }
-}
 
+private:
+  rtsp_conn_info &session_;
+};
 
-static void handle_get_parameter(__attribute__((unused)) rtsp_conn_info *conn, RtspMessage *req,
-                                 RtspMessage *resp) {
-  // debug(1, "Connection %d: GET_PARAMETER", conn->connection_number);
-  // debug_print_msg_headers(1,req);
-  // debug_print_msg_content(1,req);
-
-  if (req->requestsVolume()) {
+static void handle_get_parameter(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
+  RuntimeParameterVolumePort volume(*conn);
+  RtspParameterHandler handler(volume);
+  if (const auto reportedVolume = handler.get(*req, *resp))
     debug(2, "Connection %d: current volume (%.6f) requested", conn->connection_number,
-          suggestedSessionVolume(conn).value());
-
-    resp->replaceBody(std::format("\r\nvolume: {:.6f}\r\n", suggestedSessionVolume(conn).value()));
-  }
-  resp->respondWith(200);
+          reportedVolume->value());
 }
 
 static void handle_set_parameter(rtsp_conn_info *conn, RtspMessage *req, RtspMessage *resp) {
   debug(4, "Connection %d: SET_PARAMETER", conn->connection_number);
-  // if (!req->bodyLength())
-  //    debug(1, "received empty SET_PARAMETER request.");
-
-  // debug_print_msg_headers(1,req);
-
-  const char *ct = req->headerValue("Content-Type");
-
-  if (ct) {
-    // debug(2, "SET_PARAMETER Content-Type:\"%s\".", ct);
-
-    if (!strncmp(ct, "application/x-dmap-tagged", 25)) {
-      resp->respondWith(req->containsCompleteMetadata() ? 200 : 400);
-      return;
-    } else if (!strncmp(ct, "image/", 6)) {
-      resp->respondWith(200);
-      return;
-    } else if (!strncmp(ct, "text/parameters", 15)) {
-      debug(3, "received parameters in SET_PARAMETER request.");
-      handle_set_parameter_parameter(conn, req, resp); // this could be volume or progress
-    } else {
-      debug(1, "Connection %d: received unknown Content-Type \"%s\" in SET_PARAMETER request.",
-            conn->connection_number, ct);
-      debug_print_msg_headers(1, req);
-    }
-  } else {
+  RuntimeParameterVolumePort volume(*conn);
+  RtspParameterHandler handler(volume);
+  const auto diagnostics = handler.set(*req, *resp);
+  if (diagnostics.content == ParameterContent::text) {
+    debug(3, "received parameters in SET_PARAMETER request.");
+    for (const auto &parameter : diagnostics.unrecognizedParameters)
+      debug(1, "Connection %d, unrecognised parameter: \"%s\"\n", conn->connection_number,
+            parameter.c_str());
+  } else if (diagnostics.content == ParameterContent::unknown) {
+    debug(1, "Connection %d: received unknown Content-Type \"%s\" in SET_PARAMETER request.",
+          conn->connection_number, req->headerValue("Content-Type"));
+    debug_print_msg_headers(1, req);
+  } else if (diagnostics.content == ParameterContent::missing) {
     debug(1, "Connection %d: missing Content-Type header in SET_PARAMETER request.",
           conn->connection_number);
   }
-  resp->respondWith(200);
 }
 
 

@@ -69,6 +69,24 @@ The full pinned Release build passes 390/390 cases in 17.22 seconds; all
 This is a dependency boundary within Stage 7, whose broader ownership work
 remains open.
 
+The RTSP parameter slice gives message parsing and framing their own standard
+library target, `receiver-rtsp-message`. The named C++ module
+`receiver.protocol.rtsp.parameters` owns GET/SET parameter responses, content
+classification, metadata validation, and wire-volume interpretation. Its
+`ParameterVolumePort` explicitly supplies the current level and accepts requested
+levels; runtime logging, principal selection, subprocess commands, output effects,
+and shared-volume commits stay in the receiver adapter. Accepted volume lines
+retain their order and float-rounded permissive parsing. Eight-byte GET volume
+prefixes and suffixed content types preserve the existing compatibility rules.
+Fresh standalone message/parameter builds in `build/rtsp-components` pass
+20/20 cases with only the two protocol libraries and GoogleTest on their link
+commands. Socket writes, cancellation, plist logging, C lifetime, dispatch, and
+session-volume integration remain receiver-linked tests. This is a protocol
+boundary within Stage 6; its broader decomposition remains open.
+The full pinned Release build passes 405/405 cases in 16.96 seconds. All
+54 focused protocol and adapter cases pass under Debug ASan+UBSan; both new
+production implementation objects were checked for sanitizer instrumentation.
+
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
 fixture comparing every decoded sample; a temporary left/right decoder-plane
