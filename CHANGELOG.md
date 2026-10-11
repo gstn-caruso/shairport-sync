@@ -1,3 +1,9 @@
+## [6.1.5](https://github.com/gstn-caruso/shairport-sync/compare/v6.1.4...v6.1.5) (2026-10-11)
+
+### Bug Fixes
+
+* **transport:** preserve buffered TCP terminals and own worker shutdown ([#59](https://github.com/gstn-caruso/shairport-sync/issues/59)) ([e457d99](https://github.com/gstn-caruso/shairport-sync/commit/e457d996d5a77e595b3a55b113f33b12c4cf21ae))
+
 ## [6.1.4](https://github.com/gstn-caruso/shairport-sync/compare/v6.1.3...v6.1.4) (2026-10-11)
 
 ### Bug Fixes
