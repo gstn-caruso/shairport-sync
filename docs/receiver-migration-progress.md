@@ -87,6 +87,31 @@ The full pinned Release build passes 405/405 cases in 16.96 seconds. All
 54 focused protocol and adapter cases pass under Debug ASan+UBSan; both new
 production implementation objects were checked for sanitizer instrumentation.
 
+The playback output-setup slice gives `OutputSetupCoordinator` owned settings
+and an explicit backend port. It chooses the decoded sample format, negotiates
+and configures the output, configures the real resampler, publishes successful
+resampler state, then configures PCM encoding. The runtime bridge copies borrowed
+device channel names and snapshots the configuration's layouts, mixdown, and
+mapping names. Cancellation policy, logging, session publication, and fatal
+unsupported-PCM handling stay at that boundary. Rejection or resampler failure
+keeps prior published/PCM state; an unsupported PCM selection preserves the
+existing publication-before-PCM failure sequence. The encoded output ABI's
+unchanged bit-layout helpers now have an independent format header.
+
+A fresh standalone build in `build/output-setup-components` passes 12 cases
+against real resampler/PCM components, including owned maps, explicit/fallback
+decoded formats, rejection, initialization failure, publication ordering, and
+surround/mono mixing. Surround samples are compared with directly configured
+FFmpeg; the mono oracle verifies normalized matrix weights of 0.5/0.5, producing
+7 from input samples 5 and 9. Its link command contains only output setup,
+resampler, format, PCM, FFmpeg resample/util, and GoogleTest. Four player-boundary
+cases preserve the receiver integration, including missing backend selection
+and the existing ignored native configure result. Broader settings/session
+ownership and Stage 7 remain open.
+The full pinned Release build passes 419/419 cases in 16.94 seconds. All
+16 output-setup/player-boundary cases pass under Debug ASan+UBSan; the actual
+output-setup implementation object has both sanitizer instrumentations.
+
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
 fixture comparing every decoded sample; a temporary left/right decoder-plane

@@ -60,6 +60,11 @@ static int configureBorrowedChannelMap(int32_t, char **channelMap) {
   return 0;
 }
 
+static int configureBorrowedMapDespiteError(int32_t encoded, char **channelMap) {
+  configureBorrowedChannelMap(encoded, channelMap);
+  return -1;
+}
+
 class PlayerResampler : public testing::Test {
   decltype(config.output) savedOutput = config.output;
   decltype(config.current_output_configuration) savedOutputConfiguration = config.current_output_configuration;
@@ -137,5 +142,40 @@ TEST_F(PlayerResampler, NegotiationPreservesMappingAndOwnedStateOnRejection) {
   EXPECT_EQ(session.inputAudio.sampleRate(), previousRate);
   EXPECT_EQ(session.inputAudio.framesPerPacket(), previousFrames);
   EXPECT_EQ(config.current_output_configuration, previousConfiguration);
+  EXPECT_EQ(session.pcmEncoder.silence(1, DitherPolicy::disabled).bytes().size(), 4u);
   clear_software_resampler(&session);
+}
+
+TEST_F(PlayerResampler, MissingBackendChoiceUsesStereo48kS32LittleEndian) {
+  config.output_channel_mapping_enable = 0;
+  config.output_channel_map_size = 0;
+  audio_output backend{};
+  config.output = &backend;
+  SessionState session{};
+  ASSERT_EQ(setup_software_resampler(&session, AAC_48000_F24_2), 0);
+  EXPECT_EQ(config.current_output_configuration,
+            CHANNELS_TO_ENCODED_FORMAT(2) | RATE_TO_ENCODED_FORMAT(48000) |
+            FORMAT_TO_ENCODED_FORMAT(SPS_FORMAT_S32_LE));
+  EXPECT_EQ(session.resampler.outputShape(), NativePcmShape(2, 32, 32));
+  EXPECT_EQ(session.inputAudio.sampleRate(), 48000u);
+  EXPECT_EQ(session.pcmEncoder.silence(1, DitherPolicy::disabled).bytes().size(), 8u);
+}
+
+TEST_F(PlayerResampler, BackendConfigureErrorStillUsesItsBorrowedChannelMap) {
+  config.output_channel_mapping_enable = 1;
+  config.output_channel_map_size = 0;
+  audio_output backend{};
+  backend.get_configuration = chooseStereo;
+  backend.configure = configureBorrowedMapDespiteError;
+  config.output = &backend;
+  SessionState session{};
+  prepare_decoding_chain(&session, ALAC_44100_S16_2);
+  ASSERT_EQ(setup_software_resampler(&session, ALAC_44100_S16_2), 0);
+  auto frame = stereoFrame();
+  auto converted = convertIncomingAudio(session, *frame);
+  ASSERT_EQ(converted.frames(), 64u);
+  ASSERT_EQ(converted.bytes().size(), 256u);
+  const auto *samples = reinterpret_cast<const int16_t *>(converted.bytes().data());
+  EXPECT_EQ(samples[0], 9);
+  EXPECT_EQ(samples[1], 5);
 }

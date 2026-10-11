@@ -115,20 +115,7 @@ typedef enum {
 // to 31, not 0-based!
 
 
-// up to 1048576 fps, but must be an even number
-#define RATE_FROM_ENCODED_FORMAT(encoded_format) (((encoded_format >> 6) & 0x7FFFF) * 2)
-#define RATE_TO_ENCODED_FORMAT(rate) (((rate / 2) & 0x7FFFF) << 6)
-
-// up to 127 channels
-#define CHANNELS_FROM_ENCODED_FORMAT(encoded_format) ((encoded_format >> 25) & 0x7F)
-#define CHANNELS_TO_ENCODED_FORMAT(channels) ((channels & 0x7F) << 25)
-
-// up to 64 different SPS_FORMATs
-static inline sps_format_t format_from_encoded_format(uint32_t encoded_format) {
-  return (sps_format_t)(encoded_format & 0x3F);
-}
-#define FORMAT_FROM_ENCODED_FORMAT(encoded_format) format_from_encoded_format(encoded_format)
-#define FORMAT_TO_ENCODED_FORMAT(format) (format & 0x3F)
+#include "audio/format/encoded_output_format.h"
 
 const char *short_format_description(int32_t encoded_format);
 const char *sps_format_description_string(sps_format_t format);

@@ -31,6 +31,7 @@
 #include "session/session_state.hpp"
 #include "audio/format/audio_format.hpp"
 #include "audio/output/audio_player_adapter.hpp"
+#include "audio/output/output_setup.hpp"
 #include "packets/retransmission_planner.hpp"
 #include "playback/statistics_formatter.hpp"
 #include "volume/volume_runtime.hpp"
@@ -165,51 +166,59 @@ size_t get_ssrc_block_length(ssrc_t ssrc) {
   return format ? format->framesPerPacket() : 0;
 }
 
+class BackendOutputSetupPort : public OutputSetupPort {
+public:
+  explicit BackendOutputSetupPort(audio_output &backend) : backend_(backend) {}
+  std::optional<uint32_t> choose(AudioFormat input) override {
+    if (!backend_.get_configuration)
+      return std::nullopt;
+    return backend_.get_configuration(input.channels(), input.sampleRate(),
+                                      input.suggestedSampleFormat());
+  }
+  std::string configure(uint32_t encoded) override {
+    char *deviceMap = nullptr;
+    if (backend_.configure)
+      backend_.configure(encoded, &deviceMap);
+    return deviceMap ? deviceMap : "";
+  }
+
+private:
+  audio_output &backend_;
+};
+
+static OutputSetupSettings outputSetupSettings() {
+  OutputSetupSettings settings{config.six_channel_layout, config.eight_channel_layout,
+                               config.mixdown_enable != 0, config.mixdown_channel_layout,
+                               config.output_channel_mapping_enable != 0, {}};
+  for (unsigned index = 0; index < config.output_channel_map_size; ++index)
+    settings.channelNames.emplace_back(config.output_channel_map[index]);
+  return settings;
+}
+
 static int setupSoftwareResampler(rtsp_conn_info *conn, ssrc_t ssrc,
                                   AVSampleFormat decodedFormat) {
-  auto format = AudioFormat::fromSsrc(ssrc);
+  const auto format = AudioFormat::fromSsrc(ssrc);
   if (!format)
     return 0;
   int previousState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
-  uint32_t encoded = CHANNELS_TO_ENCODED_FORMAT(2) | RATE_TO_ENCODED_FORMAT(48000) |
-                     FORMAT_TO_ENCODED_FORMAT(SPS_FORMAT_S32_LE);
-  if (config.output->get_configuration)
-    encoded = config.output->get_configuration(format->channels(), format->sampleRate(),
-                                               format->suggestedSampleFormat());
-  if (encoded != 0) {
-    char *deviceMap = nullptr;
-    if (config.output->configure)
-      config.output->configure(encoded, &deviceMap);
-    OutputFormat output{RATE_FROM_ENCODED_FORMAT(encoded), CHANNELS_FROM_ENCODED_FORMAT(encoded)};
-    output.inputLayout = format->channels() == 6 ? config.six_channel_layout :
-                         format->channels() == 8 ? config.eight_channel_layout : AV_CH_LAYOUT_STEREO;
-    output.mixdown = config.mixdown_enable != 0;
-    output.mixdownLayout = config.mixdown_channel_layout;
-    output.mapping.enabled = config.output_channel_mapping_enable != 0;
-    for (unsigned index = 0; index < config.output_channel_map_size; ++index)
-      output.mapping.names.emplace_back(config.output_channel_map[index]);
-    if (deviceMap)
-      output.mapping.deviceNames = deviceMap;
-    const auto decoded = decodedFormat != AV_SAMPLE_FMT_NONE ? decodedFormat :
-        format->isAac() ? AV_SAMPLE_FMT_FLTP :
-        conn->decoder.decodedSampleFormat().value_or(AV_SAMPLE_FMT_FLTP);
-    auto configured = conn->resampler.configure(*format, decoded, std::move(output));
-    if (configured) {
-      if (config.current_output_configuration != encoded)
-        debug(2, "Connection %d: outgoing audio switching to: %s.", conn->connection_number,
-              short_format_description(encoded));
-      config.current_output_configuration = encoded;
-      conn->inputAudio.recordPacketShape(*format);
-      const auto shape = conn->resampler.outputShape();
-      if (!conn->pcmEncoder.configure(
-              {FORMAT_FROM_ENCODED_FORMAT(encoded), shape.channels()}, shape.effectiveBits()))
-        die("Unsupported PCM output format.");
-    } else {
-      debug(1, "Could not configure resampler: %d.", configured.error().nativeCode);
-    }
-  } else {
-    debug(1, "Error setting the configuration of the output backend.");
+  BackendOutputSetupPort backend(*config.output);
+  OutputSetupCoordinator setup(outputSetupSettings(), backend, conn->resampler, conn->pcmEncoder,
+                               [&](uint32_t encoded, AudioFormat input) {
+    if (config.current_output_configuration != encoded)
+      debug(2, "Connection %d: outgoing audio switching to: %s.", conn->connection_number,
+            short_format_description(encoded));
+    config.current_output_configuration = encoded;
+    conn->inputAudio.recordPacketShape(input);
+  });
+  const auto configured = setup.configure(*format, decodedFormat, conn->decoder.decodedSampleFormat());
+  if (!configured) {
+    if (configured.error().kind == OutputSetupFailure::Kind::backendRejected)
+      debug(1, "Error setting the configuration of the output backend.");
+    else if (configured.error().kind == OutputSetupFailure::Kind::resamplerFailed)
+      debug(1, "Could not configure resampler: %d.", configured.error().resamplerFailure->nativeCode);
+    else
+      die("Unsupported PCM output format.");
   }
   pthread_setcancelstate(previousState, nullptr);
   return 0;
