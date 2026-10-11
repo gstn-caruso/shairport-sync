@@ -30,7 +30,7 @@
 #include "runtime/common.h"
 #include "playback/player.h"
 #include "protocol/rtp/rtp.h"
-#include "platform/utilities/buffered_read.h"
+#include "transport/buffered_tcp_transport.hpp"
 #include "platform/utilities/mod23.h"
 #include "platform/utilities/network_utilities.h"
 #include <sodium.h>
@@ -122,48 +122,14 @@ void *rtp_buffered_audio_processor(void *arg) {
 
   pthread_cleanup_push(rtp_buffered_audio_cleanup_handler, arg);
 
-  pthread_t *buffered_reader_thread = static_cast<pthread_t *>(malloc(sizeof(pthread_t)));
-  if (buffered_reader_thread == NULL)
-    debug(1, "cannot allocate a buffered_reader_thread!");
-  memset(buffered_reader_thread, 0, sizeof(pthread_t));
-  pthread_cleanup_push(malloc_cleanup, &buffered_reader_thread);
-
-  buffered_tcp_desc *buffered_audio = static_cast<buffered_tcp_desc *>(malloc(sizeof(buffered_tcp_desc)));
-  if (buffered_audio == NULL)
-    debug(1, "cannot allocate a buffered_tcp_desc!");
-  // initialise the
-
-  memset(buffered_audio, 0, sizeof(buffered_tcp_desc));
-  pthread_cleanup_push(malloc_cleanup, &buffered_audio);
-
-  if (pthread_mutex_init(&buffered_audio->mutex, NULL))
-    debug(1, "Connection %d: error %d initialising buffered_audio mutex.", conn->connection_number,
-          errno);
-  pthread_cleanup_push(mutex_cleanup, &buffered_audio->mutex);
-
-  if (pthread_cond_init(&buffered_audio->not_empty_cv, NULL))
-    die("Connection %d: error %d initialising not_empty cv.", conn->connection_number, errno);
-  pthread_cleanup_push(cv_cleanup, &buffered_audio->not_empty_cv);
-
-  if (pthread_cond_init(&buffered_audio->not_full_cv, NULL))
-    die("Connection %d: error %d initialising not_full cv.", conn->connection_number, errno);
-  pthread_cleanup_push(cv_cleanup, &buffered_audio->not_full_cv);
-
-  // initialise the buffer data structure
-  buffered_audio->buffer_max_size = conn->ap2_audio_buffer_size;
-  buffered_audio->buffer = static_cast<char *>(malloc(conn->ap2_audio_buffer_size));
-  if (buffered_audio->buffer == NULL)
-    debug(1, "cannot allocate an audio buffer of %zu bytes!", buffered_audio->buffer_max_size);
-  pthread_cleanup_push(malloc_cleanup, &buffered_audio->buffer);
-
-  buffered_audio->toq = buffered_audio->buffer;
-  buffered_audio->eoq = buffered_audio->buffer;
-
-  buffered_audio->sock_fd = conn->buffered_audio_socket;
-
-  named_pthread_create(buffered_reader_thread, NULL, &buffered_tcp_reader, buffered_audio,
-                       "ap2_buf_rdr_%d", conn->connection_number);
-  pthread_cleanup_push(thread_cleanup, buffered_reader_thread);
+  {
+  BufferedTcpTransport buffered_audio(conn->buffered_audio_socket, conn->ap2_audio_buffer_size,
+      "ap2_buf_rdr_" + std::to_string(conn->connection_number));
+  const auto transportStarted = buffered_audio.start();
+  if (!transportStarted) {
+    debug(1, "Connection %d: buffered TCP transport startup failed: %d.",
+          conn->connection_number, transportStarted.error());
+  } else {
 
   const size_t buffer_packet_size = 16 * 1024; // it looks as if 4096 is the largest size (?)
   uint8_t *packet = static_cast<uint8_t *>(malloc(buffer_packet_size));
@@ -229,11 +195,11 @@ void *rtp_buffered_audio_processor(void *arg) {
     // now, if get_next_block is non-zero, read a block. We may flush or use it
 
     if (new_audio_block_needed != 0) {
-      auto blockRead = readBufferedAudioBlock(*buffered_audio, std::span(packet, buffer_packet_size));
+      auto blockRead = readBufferedAudioBlock(buffered_audio, std::span(packet, buffer_packet_size));
       conn->statistics.observeBufferedBytes(blockRead.prefixRemaining);
       if (blockRead.bodyRemaining)
         conn->statistics.observeBufferedBytes(*blockRead.bodyRemaining);
-      nread = blockRead.status == BufferedBlockReadStatus::complete ? blockRead.count
+      nread = blockRead.status == BufferedBlockReadStatus::complete ? static_cast<ssize_t>(blockRead.count)
           : blockRead.status == BufferedBlockReadStatus::readError ? -1 : 0;
       if (blockRead.status == BufferedBlockReadStatus::complete) {
         auto parsed = BufferedAudioBlock::parse(std::span(packet, blockRead.count));
@@ -311,10 +277,10 @@ void *rtp_buffered_audio_processor(void *arg) {
         finished = 1;
       } else if (nread < 0) {
         char errorstring[1024];
-        (void)!strerror_r(errno, (char *)errorstring,
+        (void)!strerror_r(blockRead.errorCode, (char *)errorstring,
                           sizeof(errorstring)); // (void) ! to suppress unused response warning
         debug(1, "error in rtp_buffered_audio_processor %d: \"%s\". Could not recv a data_len .",
-              errno, errorstring);
+              blockRead.errorCode, errorstring);
         finished = 1;
       }
     }
@@ -514,13 +480,8 @@ void *rtp_buffered_audio_processor(void *arg) {
   // debug(1, "Connection %d: rtp_buffered_audio_processor PID %d exiting", conn->connection_number,
   //       syscall(SYS_gettid));
   pthread_cleanup_pop(1); // packet
-  pthread_cleanup_pop(1); // buffered_tcp_reader thread creation
-  pthread_cleanup_pop(1); // buffer malloc
-  pthread_cleanup_pop(1); // not_full_cv
-  pthread_cleanup_pop(1); // not_empty_cv
-  pthread_cleanup_pop(1); // mutex
-  pthread_cleanup_pop(1); // descriptor malloc
-  pthread_cleanup_pop(1); // pthread_t malloc
+  }
+  }
   pthread_cleanup_pop(1); // do the cleanup.
   // debug(1, "Connection %d: rtp_buffered_audio_processor PID %d finish", conn->connection_number,
   //       syscall(SYS_gettid));

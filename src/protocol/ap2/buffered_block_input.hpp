@@ -1,15 +1,16 @@
 #pragma once
-#include "platform/utilities/buffered_read.h"
+#include "transport/exact_byte_input.hpp"
 #include <cstdint>
 #include <optional>
 #include <span>
 
-enum class BufferedBlockReadStatus { complete, channelClosed, readError, invalidSize };
+enum class BufferedBlockReadStatus { complete, channelClosed, readError, invalidSize, stopped };
 struct BufferedBlockRead {
   BufferedBlockReadStatus status;
   std::size_t count = 0;
   std::uint16_t declaredLength = 0;
   std::size_t prefixRemaining = 0;
   std::optional<std::size_t> bodyRemaining{};
+  int errorCode = 0;
 };
-BufferedBlockRead readBufferedAudioBlock(buffered_tcp_desc &input, std::span<std::uint8_t> storage);
+BufferedBlockRead readBufferedAudioBlock(ExactByteInput &input, std::span<std::uint8_t> storage);

@@ -1,4 +1,5 @@
 #pragma once
+#include "transport/exact_byte_input.hpp"
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -6,18 +7,11 @@
 #include <mutex>
 #include <span>
 
-enum class ByteQueueStatus { complete, endOfStream, error, stopped };
-struct ByteQueueResult {
-  ByteQueueStatus status;
-  std::size_t count;
-  std::size_t remaining;
-  int errorCode = 0;
-};
-class BoundedByteQueue {
+class BoundedByteQueue : public ExactByteInput {
 public:
   explicit BoundedByteQueue(std::size_t capacity);
   ByteQueueResult append(std::span<const std::uint8_t> bytes);
-  ByteQueueResult readExact(std::span<std::uint8_t> destination);
+  ByteQueueResult readExact(std::span<std::uint8_t> destination) override;
   void finish();
   void fail(int errorCode);
   // Stop discards buffered bytes and wakes both blocked readers and producers.

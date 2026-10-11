@@ -18,8 +18,12 @@ BufferedTcpTransport::BufferedTcpTransport(int listener, std::size_t capacity, s
   if (name_.size() > 15) name_.resize(15);
 }
 BufferedTcpTransport::~BufferedTcpTransport() {
+  int previousState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
   if (!requestStop()) std::terminate();
   join();
+  // Receiver callers use deferred cancellation; restore without adding a destructor cancellation point.
+  pthread_setcancelstate(previousState, nullptr);
 }
 int BufferedTcpTransport::createThread(pthread_t *thread, void *(*routine)(void *), void *argument) {
   return pthread_create(thread, nullptr, routine, argument);
@@ -63,6 +67,12 @@ std::expected<void, int> BufferedTcpTransport::requestStop() {
   return {};
 }
 void BufferedTcpTransport::join() {
+  int previousState;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previousState);
+  joinWorker();
+  pthread_setcancelstate(previousState, nullptr);
+}
+void BufferedTcpTransport::joinWorker() {
   std::lock_guard joining(joining_);
   {
     std::lock_guard lock(lifecycle_);

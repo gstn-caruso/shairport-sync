@@ -6,21 +6,22 @@
 #include <pthread.h>
 #include <string>
 
-class BufferedTcpTransport {
+class BufferedTcpTransport : public ExactByteInput {
 public:
   using Starter = std::function<int(pthread_t *, void *(*)(void *), void *)>;
   // The listener is borrowed, nonblocking, and has this worker as its sole acceptor.
   BufferedTcpTransport(int listener, std::size_t capacity, std::string name = {}, Starter starter = createThread);
-  ~BufferedTcpTransport();
+  ~BufferedTcpTransport() override;
   std::expected<void, int> start();
   std::expected<void, int> requestStop();
   void join();
-  ByteQueueResult readExact(std::span<std::uint8_t> destination) { return queue_.readExact(destination); }
+  ByteQueueResult readExact(std::span<std::uint8_t> destination) override { return queue_.readExact(destination); }
 private:
   static int createThread(pthread_t *, void *(*)(void *), void *);
   static void *worker(void *);
   bool readable(int descriptor);
   void run();
+  void joinWorker();
   int listener_, wake_ = -1;
   BoundedByteQueue queue_;
   std::string name_;
