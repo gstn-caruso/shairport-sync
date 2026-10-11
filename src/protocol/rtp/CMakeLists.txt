@@ -1,4 +1,5 @@
 target_sources(receiver PRIVATE rtp.cpp)
+set_source_files_properties(rtp.cpp TARGET_DIRECTORY receiver PROPERTIES CXX_SCAN_FOR_MODULES ON)
 add_library(receiver-realtime-audio STATIC realtime_audio.cpp)
 target_sources(receiver-realtime-audio PUBLIC FILE_SET CXX_MODULES FILES realtime_audio.cppm)
 set_target_properties(receiver-realtime-audio PROPERTIES CXX_SCAN_FOR_MODULES ON)

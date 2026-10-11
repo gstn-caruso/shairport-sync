@@ -23,12 +23,14 @@ extern "C" uint32_t __wrap_player_put_packet(uint32_t ssrc,seq_t sequence,uint32
     uint8_t *data,size_t size,int mute,int32_t gap,rtsp_conn_info *) {
   {
     std::lock_guard lock(submittedMutex);
-    submitted.push_back({ssrc,timestamp,sequence,mute,gap,{data,data+size}});
+    std::vector<uint8_t> bytes;
+    if (size != 0) bytes.assign(data,data+size);
+    submitted.push_back({ssrc,timestamp,sequence,mute,gap,std::move(bytes)});
   }
   submittedChanged.notify_all();
   return 352;
 }
-int32_t decipher_player_put_packet(uint8_t *,ssize_t,rtsp_conn_info *);
+void decipher_player_put_packet(uint8_t *,ssize_t,rtsp_conn_info *);
 
 TEST(RealtimeAudioLegacy, GoldenStrippedPacketAuthenticatesAndSubmitsExactPlaintext) {
   submitted.clear();
@@ -50,6 +52,16 @@ TEST(RealtimeAudioLegacy, FailedAuthenticationMustNotSubmitToPlayer) {
   auto wire = buffered_block_fixture::encrypt(); wire[12] ^= 1;
   decipher_player_put_packet(wire.data()+2,wire.size()-2,&session);
   EXPECT_TRUE(submitted.empty());
+}
+TEST(RealtimeAudioLegacy, AuthenticatedEmptyControlPayloadStillSubmits) {
+  submitted.clear();
+  SessionState session{};
+  session.session_key = const_cast<uint8_t *>(buffered_block_fixture::key.data());
+  auto wire = buffered_block_fixture::encrypt(std::span<const uint8_t>{});
+  decipher_player_put_packet(wire.data()+2,wire.size()-2,&session);
+  ASSERT_EQ(submitted.size(),1u);
+  EXPECT_TRUE(submitted[0].bytes.empty());
+  EXPECT_EQ(submitted[0].sequence,0xcdef);
 }
 class RealtimeIngressSockets : public testing::TestWithParam<bool> {};
 TEST_P(RealtimeIngressSockets, AudioAndD6UseExactAuthenticatedBytesAndRejectFailedMacBeforeSubmission) {

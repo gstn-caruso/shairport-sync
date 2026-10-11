@@ -53,7 +53,8 @@
 #include "timing/ptp-utilities.h"
 #include "platform/utilities/structured_buffer.h"
 #include "platform/utilities/ffmpeg_api.h"
-#include <sodium.h>
+#include <span>
+import receiver.protocol.ap2.realtime_audio;
 
 
 
@@ -372,68 +373,41 @@ void rtp_ap2_control_handler_cleanup_handler(void *arg) {
          // recreated (needed for resend requests in the realtime mode)
 }
 
-int32_t decipher_player_put_packet(uint8_t *ciphered_audio_alt, ssize_t nread,
-                                   rtsp_conn_info *conn) {
-
-  // this deciphers the packet -- it doesn't decode it from ALAC
-  uint16_t sequence_number = 0;
-
-  // if the packet is too small, don't go ahead.
-  // it must contain an uint16_t sequence number and eight bytes of AAD followed by the
-  // ciphertext and then followed by an eight-byte nonce. Thus it must be greater than 18
-  if (nread > 18) {
-
-    memcpy(&sequence_number, ciphered_audio_alt, sizeof(uint16_t));
-    sequence_number = ntohs(sequence_number);
-
-    uint32_t timestamp;
-    memcpy(&timestamp, ciphered_audio_alt + sizeof(uint16_t), sizeof(uint32_t));
-    timestamp = ntohl(timestamp);
-
-    if (conn->session_key != NULL) {
-      unsigned char nonce[12];
-      memset(nonce, 0, sizeof(nonce));
-      memcpy(nonce + 4, ciphered_audio_alt + nread - 8,
-             8); // front-pad the 8-byte nonce received to get the 12-byte nonce expected
-
-      // https://libsodium.gitbook.io/doc/secret-key_cryptography/aead/chacha20-poly1305/ietf_chacha20-poly1305_construction
-      // Note: the eight-byte nonce must be front-padded out to 12 bytes.
-
-      unsigned char m[4096];
-      unsigned long long new_payload_length = 0;
-      int response = crypto_aead_chacha20poly1305_ietf_decrypt(
-          m,                   // m
-          &new_payload_length, // mlen_p
-          NULL,                // nsec,
-          ciphered_audio_alt +
-              10,           // the ciphertext starts 10 bytes in and is followed by the MAC tag,
-          nread - (8 + 10), // clen -- the last 8 bytes are the nonce
-          ciphered_audio_alt + 2, // authenticated additional data
-          8,                      // authenticated additional data length
-          nonce,
-          conn->session_key); // *k
-      if (response != 0) {
-        debug(1, "Error decrypting an audio packet.");
-        return sequence_number;
-      }
-      // now pass it in to the regular processing chain
-
-      unsigned long long max_int = INT_MAX; // put in the right format
-      if (new_payload_length > max_int)
-        debug(1, "Madly long payload length!");
-      int plen = new_payload_length; //
-      // debug(1,"                                                        Write packet to buffer %d,
-      // timestamp %u.", sequence_number, timestamp);
-      player_put_packet(ALAC_44100_S16_2, sequence_number, timestamp, m, plen, 0, 0,
-                        conn); // 0 = no mute, 0 = non discontinuous
-    } else {
-      debug(2, "No session key, so the audio packet can not be deciphered -- skipped.");
-    }
-    return sequence_number;
-  } else {
-    debug(1, "packet was too small -- ignored");
-    return -1;
+static std::span<const uint8_t> realtimeSessionKey(const SessionState &session) {
+  return session.session_key ? std::span<const uint8_t>(session.session_key,32) : std::span<const uint8_t>{};
+}
+static void submitRealtimeAudio(AuthenticatedRealtimeAudio &audio, SessionState &session) {
+  player_put_packet(ALAC_44100_S16_2,audio.sequence,audio.timestamp,audio.plaintext.data(),
+                    audio.plaintext.size(),0,0,&session);
+}
+static void reportRealtimeAudioError(RealtimeAudioError error) {
+  switch (error) {
+  case RealtimeAudioError::authenticationFailed:
+    debug(1,"Error decrypting an audio packet.");
+    break;
+  case RealtimeAudioError::missingKey:
+    debug(2,"No session key, so the audio packet can not be deciphered -- skipped.");
+    break;
+  case RealtimeAudioError::invalidKeySize:
+    debug(1,"Invalid realtime audio key length -- ignored.");
+    break;
+  case RealtimeAudioError::tooShort:
+    debug(1,"packet was too small -- ignored");
+    break;
+  case RealtimeAudioError::tooLarge:
+    debug(1,"packet was too large -- ignored");
+    break;
   }
+}
+void decipher_player_put_packet(uint8_t *packet, ssize_t count, rtsp_conn_info *conn) {
+  if (count < 0) {
+    reportRealtimeAudioError(RealtimeAudioError::tooShort);
+    return;
+  }
+  auto audio = RealtimeEncryptedAudio::decode(
+      std::span<const uint8_t>(packet,static_cast<size_t>(count)),realtimeSessionKey(*conn));
+  if (!audio) reportRealtimeAudioError(audio.error());
+  else submitRealtimeAudio(*audio,*conn);
 }
 
 void *rtp_ap2_control_receiver(void *arg) {
@@ -548,7 +522,6 @@ void *rtp_ap2_control_receiver(void *arg) {
             } break;
             case 0xd6:
               // six bytes in is the sequence number at the start of the encrypted audio packet
-              // returns the sequence number but we're not really interested
               decipher_player_put_packet(packet + 6, nread - 6, conn);
               break;
             default: {
@@ -603,66 +576,47 @@ void rtp_realtime_audio_cleanup_handler(__attribute__((unused)) void *arg) {
   debug(2, "Realtime Audio Receiver Cleanup Done.");
 }
 
+class RealtimeSocketInput : public DatagramInput {
+public:
+  explicit RealtimeSocketInput(int socket) : socket_(socket) {}
+  DatagramRead read(std::span<uint8_t> destination) override {
+    const auto count = recv(socket_,destination.data(),destination.size(),0);
+    if (count < 0) return {0,errno};
+    return {static_cast<size_t>(count),0};
+  }
+private:
+  int socket_;
+};
+class RealtimeRandomSource : public RandomSource {
+public:
+  double draw() override { return drand48(); }
+};
 void *rtp_realtime_audio_receiver(void *arg) {
-  //  #include <syscall.h>
-  //  debug(1, "rtp_realtime_audio_receiver PID %d", syscall(SYS_gettid));
-  pthread_cleanup_push(rtp_realtime_audio_cleanup_handler, arg);
-  rtsp_conn_info *conn = (rtsp_conn_info *)arg;
-  uint8_t packet[4096];
-  int32_t last_seqno = -1;
-  ssize_t nread;
-  while (1) {
-    nread = recv(conn->realtime_audio_socket, packet, sizeof(packet), 0);
-
-    if (nread > 36) { // 36 is the 12-byte header and and 24-byte footer
-      if ((config.diagnostic_drop_packet_fraction == 0.0) ||
-          (drand48() > config.diagnostic_drop_packet_fraction)) {
-
-        /*
-                char *packet_in_hex_cstring =
-                    debug_malloc_hex_cstring(packet, nread); // remember to free this afterwards
-                debug(1, "Audio Receiver Packet of type 0x%02X length %d received: \"%s\".",
-                packet[1], nread, packet_in_hex_cstring);
-                free(packet_in_hex_cstring);
-        */
-
-        /*
-        // debug(1, "Realtime Audio Receiver Packet of type 0x%02X length %d received.", packet[1],
-        nread);
-        // now get hold of its various bits and pieces
-        uint8_t version = (packet[0] & 0b11000000) >> 6;
-        uint8_t padding = (packet[0] & 0b00100000) >> 5;
-        uint8_t extension = (packet[0] & 0b00010000) >> 4;
-        uint8_t csrc_count = packet[0] & 0b00001111;
-        uint8_t marker = (packet[1] & 0b1000000) >> 7;
-        uint8_t payload_type = packet[1] & 0b01111111;
-        */
-        // if (have_ptp_timing_information(conn)) {
-        if (1) {
-          int32_t seqno = decipher_player_put_packet(packet + 2, nread - 2, conn);
-          if (seqno >= 0) {
-            if (last_seqno == -1) {
-              last_seqno = seqno;
-            } else {
-              last_seqno = (last_seqno + 1) & 0xffff;
-              // if (seqno != last_seqno)
-              //  debug(3, "RTP: Packets out of sequence: expected: %d, got %d.", last_seqno,
-              //  seqno);
-              last_seqno = seqno; // reset warning...
-            }
-          } else {
-            debug(1, "Realtime Audio Receiver -- bad packet dropped.");
-          }
-        }
-      } else {
-        debug(3, "Realtime Audio Receiver -- dropping a packet.");
-      }
-    } else {
-      debug(1, "Realtime Audio Receiver -- error receiving a packet.");
+  pthread_cleanup_push(rtp_realtime_audio_cleanup_handler,arg);
+  auto *conn = static_cast<rtsp_conn_info *>(arg);
+  RealtimeSocketInput input(conn->realtime_audio_socket);
+  RealtimeRandomSource random;
+  RealUDPIngress ingress(input,random,config.diagnostic_drop_packet_fraction);
+  while (true) {
+    auto outcome = ingress.one(realtimeSessionKey(*conn));
+    switch (outcome.kind) {
+    case RealtimeReceiveKind::readError:
+    case RealtimeReceiveKind::shortPacket:
+      debug(1,"Realtime Audio Receiver -- error receiving a packet.");
+      break;
+    case RealtimeReceiveKind::dropped:
+      debug(3,"Realtime Audio Receiver -- dropping a packet.");
+      break;
+    case RealtimeReceiveKind::rejected:
+      reportRealtimeAudioError(outcome.rejection);
+      break;
+    case RealtimeReceiveKind::audio:
+      submitRealtimeAudio(*outcome.audio,*conn);
+      break;
     }
   }
-  pthread_cleanup_pop(0); // don't execute anything here.
-  pthread_exit(NULL);
+  pthread_cleanup_pop(0);
+  pthread_exit(nullptr);
 }
 
 int frame_to_local_time(uint32_t timestamp, uint64_t *time, rtsp_conn_info *conn) {
