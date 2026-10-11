@@ -4,3 +4,8 @@ target_sources(receiver-output-queue PUBLIC FILE_SET CXX_MODULES FILES pcm_outpu
 set_target_properties(receiver-output-queue PROPERTIES CXX_SCAN_FOR_MODULES ON)
 set_source_files_properties(audio_pa.cpp TARGET_DIRECTORY receiver PROPERTIES CXX_SCAN_FOR_MODULES ON)
 target_link_libraries(receiver PUBLIC receiver-output-queue)
+add_library(receiver-output-setup STATIC output_setup.cpp)
+target_include_directories(receiver-output-setup PUBLIC "${CMAKE_SOURCE_DIR}/src")
+target_compile_options(receiver-output-setup PRIVATE -Wall -Wextra -Wshadow -Wformat=2 -fno-common)
+target_link_libraries(receiver-output-setup PUBLIC receiver-audio-resampler receiver-pcm)
+target_link_libraries(receiver PUBLIC receiver-output-setup)
