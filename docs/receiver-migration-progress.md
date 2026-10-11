@@ -321,6 +321,53 @@ sanitizer instrumentation is present. Independent review and hosted CI remain
 pending. Complete buffered TCP scheduling/cancellation, device playback,
 performance measurements, and broader decoder/session ownership remain open.
 
+The buffered TCP transport slice applies Feature Envy (#77): `BoundedByteQueue`
+owns bounded FIFO storage, occupancy, blocking, and terminal decisions;
+`BufferedTcpTransport` owns its accepted socket, eventfd, and cooperative worker.
+Their ordinary header interfaces and separate libraries keep the queue dependent
+only on standard-library facilities and Threads, and the Linux socket adapter
+independent of receiver configuration, logging, timing, and media libraries.
+The processor uses an explicit exact-read port. Public raw ring fields, native
+condition variables, `buffered_tcp_desc`, `read_sized_block`, and the legacy reader
+implementation are removed.
+
+EOF and native read errors now remain permanent after buffered bytes drain;
+partial exact reads report their byte count and terminal status. Explicit stop
+discards remaining bytes and wakes empty readers and full producers. Reads larger
+than capacity make progress by draining fragments. Transport startup checks the
+listener, eventfd, and worker creation, reports errors without an invalid join,
+and permits only one start attempt. Its borrowed listener must already be
+nonblocking and have a single acceptor; RTSP owns that flag setup. The worker
+receives at most 4096 bytes and preserves the interruptible ten-millisecond yield
+above 16384 queued bytes. The runtime retains its configured eight-MiB capacity.
+
+The processor's transport scope ends before its outer listener cleanup, including
+pthread cancellation. Transport destruction stops and joins with deferred caller
+cancellation masked; the socket worker itself is never canceled. The actual
+processor lifecycle test wraps only timing admission and initial player reset,
+then verifies canceled completion, listener closure, and descriptor reclamation.
+It does not prove every processor timing/playback cancellation point. Actual
+loopback framing covers a fragmented 6000-byte body through a 31-byte queue;
+malformed-prefix tests now use the real queue and prove body bytes stay unread.
+Other cases cover wraparound, backpressure, partial/sticky EOF and errors,
+bounded idle/full-queue stops, invalid listeners, injected thread/eventfd creation
+failures, and a real peer reset retaining `ECONNRESET`.
+
+The original 520/520 Release baseline and legacy FIFO characterization passed.
+The legacy EOF regression failed in a bounded child, which was killed and reaped
+after 150 milliseconds; the new queue returns terminal reads immediately.
+The final Release suite passes 537/537 in 17.86 seconds. All 56 focused transport,
+block/authentication/player-handoff, and session shutdown/registry cases pass
+under each of ASan+UBSan and TSan. Both production transport objects contain the
+respective sanitizer instrumentation. Standalone link commands contain only the
+queue/socket components and GoogleTest. Local evidence is preserved under
+`/tmp/buffered-transport-*`; independent review and hosted CI remain pending.
+Permanent terminal reads and checked transport startup are intentional fixes,
+requiring `fix` classification and the automated patch release expected v6.1.5;
+no version is incremented manually. Cooperative shutdown of the whole processor,
+other session workers, device playback, and controlled performance measurements
+remain open. The installed receiver was neither installed nor restarted.
+
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
 fixture comparing every decoded sample; a temporary left/right decoder-plane
