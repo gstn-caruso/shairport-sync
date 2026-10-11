@@ -92,3 +92,21 @@ TEST_F(BufferedCoordinator, FirstAdvanceWaitsForTimingResetsAndFlushesBeforeAnyB
   EXPECT_FALSE(session.everRead[0]);
   EXPECT_EQ(effects, (std::vector<std::string>{"ready","wait:1000","ready","reset","play","flush","map:0","wait:20000"}));
 }
+TEST_F(BufferedCoordinator, CompleteEncryptedCycleObservesReadsInitializesFlushesAndSubmitsOwnedPayload) {
+  input.add(); session.enabled = true;
+  BufferedReceiverCoordinator coordinator(input,session,clock,sink,0.25);
+  EXPECT_EQ(coordinator.advance(), BufferedReceiverResult::continued);
+  EXPECT_EQ(input.reads, 2u);
+  ASSERT_EQ(sink.sent.size(), 1u);
+  EXPECT_EQ(sink.sent[0].packet.timestamp, 1000u);
+  EXPECT_EQ(sink.sent[0].submission.sequence, 0xcdef);
+  EXPECT_TRUE(sink.sent[0].submission.mute);
+  EXPECT_EQ(sink.sent[0].submission.gap, 0);
+  ASSERT_EQ(sink.sent[0].bytes.size(), buffered_block_fixture::plaintext.size()+7);
+  EXPECT_TRUE(std::equal(buffered_block_fixture::plaintext.begin(), buffered_block_fixture::plaintext.end(), sink.sent[0].bytes.begin()+7));
+  ASSERT_EQ(session.observations.size(), 1u);
+  EXPECT_EQ(session.observations[0].prefixRemaining, 52u);
+  EXPECT_EQ(session.observations[0].bodyRemaining, 0u);
+  EXPECT_TRUE(session.everRead[0]);
+  EXPECT_EQ(effects, (std::vector<std::string>{"ready","reset","play","observe","initialize","flush","map:1000","now","submit"}));
+}

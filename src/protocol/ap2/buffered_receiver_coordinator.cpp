@@ -3,8 +3,12 @@ module;
 #include "protocol/ap2/buffered_block_input.hpp"
 #include <memory>
 #include <optional>
+#include <array>
+#include <cstdint>
+#include "audio/format/audio_format.hpp"
 module receiver.protocol.ap2.buffered_coordinator;
 import receiver.protocol.ap2.buffered_playback;
+import receiver.protocol.ap2.buffered_block;
 
 struct BufferedReceiverCoordinator::State {
   ExactByteInput &input;
@@ -13,6 +17,12 @@ struct BufferedReceiverCoordinator::State {
   BufferedAudioSinkPort &sink;
   BufferedPlaybackPolicy playback;
   bool initialized = false;
+  bool needsRead = false;
+  std::array<std::uint8_t,16384> wire;
+  std::optional<BufferedAudioBlock> block;
+  std::optional<AudioFormat> format;
+  BufferedPacketMetadata packet{};
+  std::uint64_t blocksRead = 0;
   State(ExactByteInput &bytes, BufferedSessionPort &live, BufferedClockPort &time,
         BufferedAudioSinkPort &audio, double desired)
       : input(bytes), session(live), clock(time), sink(audio), playback(desired) {}
@@ -25,12 +35,59 @@ struct BufferedReceiverCoordinator::State {
     const auto play = playback.onPlayState(session.playbackEnabled());
     if (play.started || play.stopped) session.diagnostic(BufferedPlayDiagnostic{play.started});
     if (play.resetPlayer) sink.reset();
-    session.evaluateFlush(false, {});
-    const auto scheduled = clock.schedule(0);
+    if (play.needFreshBlock) needsRead = true;
+    if (needsRead) {
+      auto result = readBlock();
+      if (result != BufferedReceiverResult::continued) return result;
+    }
+    if (session.evaluateFlush(blocksRead != 0, packet)) needsRead = true;
+    if (needsRead) return BufferedReceiverResult::continued;
+    const auto scheduled = clock.schedule(packet.timestamp);
     const auto shape = sink.shape();
     const auto admission = playback.admit(scheduled, scheduled ? clock.now() : 0, shape.frames, shape.rate);
     if (admission.kind == BufferedAdmissionKind::waitClock || admission.kind == BufferedAdmissionKind::waitPacket)
       clock.wait(admission.waitUs);
+    else {
+      if (admission.kind == BufferedAdmissionKind::prepare && block && format) {
+        auto prepared = block->prepare({format->isAac() ? BufferedBlockCodec::aac : BufferedBlockCodec::alac,
+                                       format->aacChannelConfiguration()}, session.key(), shape.rate);
+        if (prepared) {
+          auto plan = playback.planAuthenticated(packet.timestamp,format->isAac(),format->framesPerPacket());
+          const auto returned = sink.submit(packet,{plan.sequence,plan.mute,plan.gap},*prepared);
+          playback.didSubmit(packet.timestamp,returned);
+        }
+      }
+      needsRead = true;
+    }
+    return BufferedReceiverResult::continued;
+  }
+  BufferedReceiverResult readBlock() {
+    const auto read = readBufferedAudioBlock(input,wire);
+    session.observeRead(read);
+    if (read.status != BufferedBlockReadStatus::complete) {
+      session.diagnostic(BufferedReadDiagnostic{read});
+      if (read.status == BufferedBlockReadStatus::invalidSize) return BufferedReceiverResult::invalidSize;
+      if (read.status == BufferedBlockReadStatus::readError) return BufferedReceiverResult::readError;
+      return BufferedReceiverResult::closed;
+    }
+    auto parsed = BufferedAudioBlock::parse(std::span(wire).first(read.count));
+    if (!parsed) {
+      auto invalid = read;
+      invalid.status = BufferedBlockReadStatus::invalidSize;
+      session.diagnostic(BufferedReadDiagnostic{invalid});
+      return BufferedReceiverResult::invalidSize;
+    }
+    block = *parsed;
+    packet = {block->sequence(),block->timestamp(),block->ssrc(),read.count};
+    ++blocksRead;
+    format = AudioFormat::fromSsrc(static_cast<ssrc_t>(packet.ssrc));
+    if (format) {
+      needsRead = false;
+      if (sink.shape().rate == 0) {
+        sink.initialize(packet.ssrc);
+        playback.seedPlayerSequence(packet.sequence);
+      }
+    }
     return BufferedReceiverResult::continued;
   }
 };
