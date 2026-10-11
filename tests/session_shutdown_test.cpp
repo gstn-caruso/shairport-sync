@@ -1,4 +1,5 @@
 #include "session/session_registry.hpp"
+#include "session/runtime_session_worker.hpp"
 #include "cancellation_wait.hpp"
 #include <gtest/gtest.h>
 #include <cerrno>
@@ -49,7 +50,8 @@ static bool startWorker(SessionRegistry &registry) {
   auto session = std::make_unique<SessionState>();
   session->connection_number = 1;
   session->fd = scenario->sockets[0];
-  const auto result = registry.start(std::move(session), blockWorker);
+  const auto result = registry.start(std::make_unique<RuntimeSessionWorker>(
+      std::move(session), blockWorker));
   {
     std::lock_guard lock(scenario->mutex);
     scenario->startError = result;
@@ -152,7 +154,8 @@ static void *shutdownTwice(void *) {
     return nullptr;
   auto rejected = std::make_unique<SessionState>();
   rejected->fd = sockets[0];
-  EXPECT_EQ(registry.start(std::move(rejected), blockWorker), ECANCELED);
+  EXPECT_EQ(registry.start(std::make_unique<RuntimeSessionWorker>(
+                std::move(rejected), blockWorker)), ECANCELED);
   char byte;
   EXPECT_EQ(read(sockets[1], &byte, 1), 0);
   close(sockets[1]);

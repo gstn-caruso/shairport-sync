@@ -34,11 +34,7 @@ typedef uint16_t seq_t;
 #define INTERPOLATION_LIMIT 20
 
 
-typedef enum {
-  unspecified_stream_category = 0,
-  ptp_stream,
-  remote_control_stream,
-} airplay_stream_c; // "c" for category
+#include "session/session_category.h"
 
 typedef enum { realtime_stream, buffered_stream } airplay_stream_t;
 

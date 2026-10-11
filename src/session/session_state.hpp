@@ -1,5 +1,6 @@
 #pragma once
 
+#include "session/session_category.h"
 #include "runtime/common.h"
 #include "playback/player.h"
 #include "timing/rtp_clock.hpp"

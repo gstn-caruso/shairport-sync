@@ -1,14 +1,7 @@
 #include "session/session_registry.hpp"
 #include <algorithm>
 #include <cerrno>
-#include <exception>
-#include <unistd.h>
-
-SessionState::~SessionState() {
-  playbackRun.stop();
-  if (fd >= 0)
-    close(fd);
-}
+#include <pthread.h>
 
 SessionRegistry::~SessionRegistry() noexcept {
   int previousState;
@@ -19,14 +12,8 @@ SessionRegistry::~SessionRegistry() noexcept {
   pthread_setcancelstate(previousState, nullptr);
 }
 
-int SessionRegistry::createThread(pthread_t *thread, void *(*routine)(void *), void *argument) {
-  auto *session = static_cast<SessionState *>(argument);
-  return named_pthread_create(thread, nullptr, routine, argument, "rtsp_conn_%d",
-                              session->connection_number);
-}
-
-int SessionRegistry::start(std::unique_ptr<SessionState> session, void *(*routine)(void *)) {
-  std::unique_ptr<SessionState> failed;
+int SessionRegistry::start(std::unique_ptr<ManagedSession> session) {
+  std::unique_ptr<ManagedSession> failed;
   int result;
   {
     std::lock_guard lock(mutex_);
@@ -35,7 +22,7 @@ int SessionRegistry::start(std::unique_ptr<SessionState> session, void *(*routin
     finished_.reserve(sessions_.size() + 1);
     sessions_.push_back(std::move(session));
     auto &starting = sessions_.back();
-    result = creator_(&starting->thread, routine, starting.get());
+    result = starting->start();
     if (result != 0) {
       failed = std::move(starting);
       sessions_.pop_back();
@@ -44,10 +31,10 @@ int SessionRegistry::start(std::unique_ptr<SessionState> session, void *(*routin
   return result;
 }
 
-std::unique_ptr<SessionState> SessionRegistry::takeById(int id) {
+std::unique_ptr<ManagedSession> SessionRegistry::takeById(int id) {
   std::lock_guard lock(mutex_);
   auto position = std::find_if(sessions_.begin(), sessions_.end(),
-                               [id](const auto &session) { return session->connection_number == id; });
+                               [id](const auto &session) { return session->id() == id; });
   if (position == sessions_.end())
     return {};
   auto session = std::move(*position);
@@ -59,17 +46,17 @@ std::unique_ptr<SessionState> SessionRegistry::takeById(int id) {
 void SessionRegistry::markFinished(int id) {
   std::lock_guard lock(mutex_);
   if (std::ranges::any_of(sessions_, [id](const auto &session) {
-        return session->connection_number == id;
+        return session->id() == id;
       }) && std::ranges::find(finished_, id) == finished_.end())
     finished_.push_back(id);
 }
 
-std::vector<std::unique_ptr<SessionState>> SessionRegistry::takeFinished() {
-  std::vector<std::unique_ptr<SessionState>> completed;
+std::vector<std::unique_ptr<ManagedSession>> SessionRegistry::takeFinished() {
+  std::vector<std::unique_ptr<ManagedSession>> completed;
   std::lock_guard lock(mutex_);
   completed.reserve(finished_.size());
   for (auto position = sessions_.begin(); position != sessions_.end();) {
-    if (std::ranges::find(finished_, (*position)->connection_number) == finished_.end()) {
+    if (std::ranges::find(finished_, (*position)->id()) == finished_.end()) {
       ++position;
       continue;
     }
@@ -80,32 +67,31 @@ std::vector<std::unique_ptr<SessionState>> SessionRegistry::takeFinished() {
   return completed;
 }
 
-std::vector<std::unique_ptr<SessionState>>
+std::vector<std::unique_ptr<ManagedSession>>
 SessionRegistry::takeMatching(airplay_stream_c category, int exceptId) {
-  std::vector<std::unique_ptr<SessionState>> matching;
+  std::vector<std::unique_ptr<ManagedSession>> matching;
   std::lock_guard lock(mutex_);
   matching.reserve(sessions_.size());
   for (auto position = sessions_.begin(); position != sessions_.end();) {
     auto &session = *position;
-    if (session->connection_number == exceptId ||
-        (category != unspecified_stream_category && session->airplay_stream_category != category)) {
+    if (session->id() == exceptId ||
+        (category != unspecified_stream_category && session->liveCategory() != category)) {
       ++position;
       continue;
     }
-    std::erase(finished_, session->connection_number);
+    std::erase(finished_, session->id());
     matching.push_back(std::move(session));
     position = sessions_.erase(position);
   }
   return matching;
 }
 
-void SessionRegistry::joinSessions(std::vector<std::unique_ptr<SessionState>> sessions, bool cancel) {
+void SessionRegistry::joinSessions(std::vector<std::unique_ptr<ManagedSession>> sessions, bool cancel) {
   if (cancel)
     for (const auto &session : sessions)
-      pthread_cancel(session->thread);
+      session->requestStop();
   for (const auto &session : sessions)
-    if (pthread_join(session->thread, nullptr) != 0)
-      std::terminate();
+    session->join();
 }
 
 bool SessionRegistry::cancelAndJoin(int id) {
@@ -116,9 +102,8 @@ bool SessionRegistry::cancelAndJoin(int id) {
     auto session = takeById(id);
     found = session != nullptr;
     if (session) {
-      pthread_cancel(session->thread);
-      if (pthread_join(session->thread, nullptr) != 0)
-        std::terminate();
+      session->requestStop();
+      session->join();
     }
   }
   pthread_setcancelstate(previousState, nullptr);
@@ -142,7 +127,7 @@ void SessionRegistry::joinFinished() {
   pthread_testcancel();
 }
 
-std::vector<std::unique_ptr<SessionState>> SessionRegistry::takeAllForShutdown() {
+std::vector<std::unique_ptr<ManagedSession>> SessionRegistry::takeAllForShutdown() {
   std::lock_guard lock(mutex_);
   closed_ = true;
   finished_.clear();

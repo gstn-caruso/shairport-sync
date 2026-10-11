@@ -145,6 +145,26 @@ sanitizer instrumentation. Existing effective runtime log formatting and FFmpeg
 error-only logging remain unchanged; accepting the configured log-format flags
 would be a separate behavior change.
 
+The session-registry slice separates lifecycle policy from runtime session data.
+`SessionRegistry` owns `ManagedSession` workers through stable identity, live
+category, start, stop-request, and join operations. The standalone library links
+only Threads; a fresh `build/session-components` target compiles and links its
+seven lifecycle cases without receiver, audio, pairing, or native service
+dependencies. Admission failure and closure release ownership, finished IDs are
+idempotent, category selection uses current state, and every selected worker
+receives its stop request before any join. Worker resources remain owned until
+joining completes.
+
+`RuntimeSessionWorker` retains named pthread creation, cancellation, and fatal
+join-error handling. `SessionState` still stops playback before closing its
+socket, and the registry preserves caller cancellation masking, including
+deferred pending delivery after its noexcept destructor. Existing immediate
+completion, cancellation, principal replacement, and socket-lifetime integration
+assertions are retained. Focused Release, ASan+UBSan, and TSan pass 21/21 cases;
+the full pinned Release suite passes 437/437. Registry and runtime adapter objects
+have actual sanitizer instrumentation. This boundary preserves pthread cancellation;
+cooperative worker stopping and broader session encapsulation remain open.
+
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
 fixture comparing every decoded sample; a temporary left/right decoder-plane
