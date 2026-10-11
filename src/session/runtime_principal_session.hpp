@@ -1,18 +1,14 @@
 #pragma once
 
 #include "session/session_state.hpp"
-#include <mutex>
 #include <optional>
 #include <string>
+import receiver.session.principal;
 
 class RuntimePrincipalSession {
 public:
-  struct SelectionTicket { int id; uint64_t generation; };
-  struct Acquisition {
-    bool accepted;
-    bool alreadyCurrent;
-    std::optional<int> previousId;
-  };
+  using SelectionTicket = PrincipalSelection::SelectionTicket;
+  using Acquisition = PrincipalSelection::Acquisition;
   struct Snapshot {
     std::optional<int> id;
     bool playing = false;
@@ -23,76 +19,37 @@ public:
     bool groupContainsLeader = false;
   };
   Acquisition acquire(SessionState &session, bool allowReplacement) {
-    std::lock_guard lock(mutex_);
-    if (!session.mayAcquirePrincipal())
-      return {false, false, {}};
-    if (current_ == &session)
-      return {true, true, {}};
-    if (current_ && !allowReplacement)
-      return {false, false, {}};
-    auto previous = current_ ? std::optional(current_->connection_number) : std::nullopt;
-    if (current_)
-      current_->beginRetirement();
-    current_ = &session;
-    ++generation_;
-    return {true, false, previous};
+    return selection_.acquire(session, allowReplacement);
   }
-  bool releaseIfCurrent(int id) {
-    std::lock_guard lock(mutex_);
-    if (!current_ || current_->connection_number != id)
-      return false;
-    current_ = nullptr;
-    ++generation_;
-    return true;
-  }
-  std::optional<int> clear() {
-    std::lock_guard lock(mutex_);
-    auto previous = current_ ? std::optional(current_->connection_number) : std::nullopt;
-    if (current_)
-      current_->beginRetirement();
-    current_ = nullptr;
-    ++generation_;
-    return previous;
-  }
-  bool isCurrent(int id) const {
-    std::lock_guard lock(mutex_);
-    return current_ && current_->connection_number == id;
-  }
+  bool releaseIfCurrent(int id) { return selection_.releaseIfCurrent(id); }
+  std::optional<int> clear() { return selection_.clear(); }
+  bool isCurrent(int id) const { return selection_.isCurrent(id); }
   Snapshot snapshot() const {
-    std::lock_guard lock(mutex_);
-    if (!current_)
-      return {};
-    return {current_->connection_number, current_->playbackRun.isActive(),
-            current_->airplay_stream_category, current_->inputAudio.sampleRate(), current_->type,
-            current_->airplay_gid ? current_->airplay_gid : "",
-            current_->groupContainsGroupLeader != 0};
+    return selection_.withCurrent([](PrincipalParticipant *participant) -> Snapshot {
+      const auto *current = static_cast<SessionState *>(participant);
+      if (!current)
+        return {};
+      return {current->connection_number, current->playbackRun.isActive(),
+              current->airplay_stream_category, current->inputAudio.sampleRate(), current->type,
+              current->airplay_gid ? current->airplay_gid : "",
+              current->groupContainsGroupLeader != 0};
+    });
   }
   // Synchronous effect boundary: do not retain the borrowed session, join threads or reenter this
   // object from the action. Session teardown releases selection before freeing its resources.
   template <typename Action> auto withCurrent(Action action) {
-    std::lock_guard lock(mutex_);
-    return action(current_);
+    return selection_.withCurrent([&](PrincipalParticipant *participant) {
+      return action(static_cast<SessionState *>(participant));
+    });
   }
-  std::optional<SelectionTicket> ticketFor(int id) const {
-    std::lock_guard lock(mutex_);
-    if (!current_ || current_->connection_number != id)
-      return std::nullopt;
-    return SelectionTicket{id, generation_};
-  }
+  std::optional<SelectionTicket> ticketFor(int id) const { return selection_.ticketFor(id); }
   template <typename Action> bool commitIfSelected(SelectionTicket ticket, Action action) {
-    std::lock_guard lock(mutex_);
-    if (!current_ || current_->connection_number != ticket.id || generation_ != ticket.generation)
-      return false;
-    action();
-    return true;
+    return selection_.commitIfSelected(ticket, action);
   }
   template <typename Action> auto mutateSession(SessionState &session, Action action) {
-    std::lock_guard lock(mutex_);
-    return action(session);
+    return selection_.withCurrent([&](PrincipalParticipant *) { return action(session); });
   }
 
 private:
-  mutable std::mutex mutex_;
-  SessionState *current_ = nullptr;
-  uint64_t generation_ = 0;
+  PrincipalSelection selection_;
 };

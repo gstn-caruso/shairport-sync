@@ -165,6 +165,33 @@ the full pinned Release suite passes 437/437. Registry and runtime adapter objec
 have actual sanitizer instrumentation. This boundary preserves pthread cancellation;
 cooperative worker stopping and broader session encapsulation remain open.
 
+The principal-selection slice moves admission, replacement, retirement, identity,
+and generation-ticket decisions into the named module `receiver.session.principal`.
+`PrincipalSelection` borrows participants through stable identity, eligibility,
+and retirement operations; its library depends only on the standard library and
+Threads. Its six standalone cases link without receiver, playback, pairing, or
+native service libraries. Repeated selection preserves a ticket, denied
+replacement preserves the current participant, and replacing a distinct object
+with the same numeric ID invalidates the earlier generation. Release clears
+selection without retirement; explicit clear retires it. Effects execute under
+the selection lock only while their ticket remains valid.
+
+`RuntimePrincipalSession` admits only `SessionState` participants and delegates
+selection to that module. Playback/group snapshots and session mutation use the
+same lock as selection; snapshot values remain owned copies. Two runtime cases
+cover active playback metadata, copied group IDs, empty defaults, synchronized
+group updates, and mutations of a nonselected session. Existing volume,
+replacement, registry, shutdown, and playback assertions remain intact. The full
+pinned Release suite passes 445/445; focused ASan+UBSan passes 23/23 and TSan
+passes 36/36, including existing cancellation scenarios. Core objects contain
+actual ASan, UBSan, and TSan instrumentation. The playback fixture uses the
+existing `CancellationWait` helper: cancellation through `pause` initially
+produced a TSan cleanup-lock visibility warning, whereas the helper's
+`pthread_cond_wait` cancellation restores LLVM 23.1.3 interceptor state.
+Independent review and hosted CI remain pending for this slice. Participants
+must outlive selection and callbacks must not reenter or retain borrowed
+pointers. Broader session encapsulation and cooperative stopping remain open.
+
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
 fixture comparing every decoded sample; a temporary left/right decoder-plane
