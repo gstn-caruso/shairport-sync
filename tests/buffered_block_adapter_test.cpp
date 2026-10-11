@@ -2,7 +2,7 @@
 #include <gtest/gtest.h>
 #include <span>
 
-void addADTStoPacket(uint8_t *, int, int, int);
+import receiver.protocol.ap2.buffered_block;
 
 TEST(BufferedBlockLegacy, SodiumContractAndAdtsMatchDeterministicGoldenBytes) {
   ASSERT_GE(sodium_init(), 0);
@@ -19,6 +19,10 @@ TEST(BufferedBlockLegacy, SodiumContractAndAdtsMatchDeterministicGoldenBytes) {
   EXPECT_TRUE(std::equal(payload.begin(), payload.begin() + length,
       buffered_block_fixture::plaintext.begin(), buffered_block_fixture::plaintext.end()));
   std::array<uint8_t, 7> adts{};
-  addADTStoPacket(adts.data(), 23, 44100, 2);
+  auto block = BufferedAudioBlock::parse(wire);
+  ASSERT_TRUE(block);
+  auto framed = block->prepare({BufferedBlockCodec::aac, 2}, buffered_block_fixture::key, 44100);
+  ASSERT_TRUE(framed);
+  std::copy_n(framed->begin(), 7, adts.begin());
   EXPECT_EQ(adts, (std::array<uint8_t,7>{0xff,0xf9,0x50,0x80,0x02,0xff,0xfc}));
 }

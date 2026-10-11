@@ -10,3 +10,6 @@ target_sources(receiver-buffered-block PUBLIC FILE_SET CXX_MODULES FILES buffere
 set_target_properties(receiver-buffered-block PROPERTIES CXX_SCAN_FOR_MODULES ON)
 target_compile_options(receiver-buffered-block PRIVATE -Wall -Wextra -Wshadow -Wformat=2 -fno-common)
 target_link_libraries(receiver-buffered-block PUBLIC PkgConfig::SODIUM)
+target_link_libraries(receiver PUBLIC receiver-buffered-block)
+target_sources(receiver PRIVATE buffered_block_input.cpp)
+set_source_files_properties(ap2_buffered_audio_processor.cpp TARGET_DIRECTORY receiver PROPERTIES CXX_SCAN_FOR_MODULES ON)
