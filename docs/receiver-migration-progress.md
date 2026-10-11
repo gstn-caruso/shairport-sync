@@ -368,6 +368,53 @@ no version is incremented manually. Cooperative shutdown of the whole processor,
 other session workers, device playback, and controlled performance measurements
 remain open. The installed receiver was neither installed nor restarted.
 
+The buffered playback slice applies Long Method (#82) and Feature Envy (#77)
+by moving play transitions, admission, warning latching, authenticated timestamp
+planning, mute/skip decisions, and player accounting into the standard-library
+named module `receiver.protocol.ap2.buffered_playback`. A local policy captures
+the immutable desired decoded-buffer length. It knows no session, configuration,
+clock, decoder, logger, or socket. Runtime retains current block validity,
+transport reads, flush effects, format selection, key authentication, and player
+submission. Player sequence is seeded at the existing first decoding setup;
+accounting commits only after the player returns, including a zero-frame return.
+The separate decoded-player `PlaybackTiming` owner is unchanged.
+
+Compatibility includes strict lead thresholds at desired length plus 0.1/0.2
+seconds, disabled-play early warnings, one warning until admission rearms it,
+integer two-packet waits, and a 20-millisecond invalid-clock wait without a now
+clock call. Late blocks consume without authentication. Stop resets only the
+submitted packet count; sequence, expected timestamp, warning state, and first
+timestamp remain until their existing update points. First AAC packets and AAC
+discontinuities mute; negative gaps skip only beyond one block. Timestamp and
+player sequence wrap remain defined. The historical previous-scheduled-time
+value remains constant zero, so the policy intentionally preserves that quirk.
+Packet waits require a positive sample rate; absent timing accepts no packet
+shape, and supported runtime formats supply the rate before packet admission.
+
+An independent safety change widens a negative timestamp gap before negation.
+The signed minimum formerly overflowed both the extracted policy and the actual
+processor on an authenticated encrypted block; UBSan recorded both failures.
+It now deterministically skips the excessively old block without committing
+accounting. This requires `fix` classification and an automated patch release,
+expected v6.1.6, with no manual version increment.
+
+The original encrypted TCP stream passed against the old decision loop before
+extraction. Runtime fixtures exercise real transport and sodium authentication,
+with only clocks, initial decoding setup, waits, and player effects supplied at
+their boundaries. They verify clock/effect order, first mute, old-block skip,
+failed authentication preserving accounting, late blocks never authenticating,
+and zero-frame player returns. Standalone cases cover transition, threshold,
+warning, gap, wrap, and stop/resume boundaries. Evidence logs are preserved in
+`/tmp/buffered-playback-*`; hosted CI and independent review remain pending.
+The Release baseline passes 537/537 in 17.62 seconds and the final suite passes
+548/548 in 17.93 seconds. All 67 focused policy, adapter, block/authentication,
+transport, player-handoff, and session lifecycle cases pass under each of
+ASan+UBSan and TSan, including actual processor cancellation.
+The module links only its standard-library component and GoogleTest in isolation;
+its production objects contain ASan+UBSan and TSan instrumentation. Full processor
+cooperative shutdown, device playback, and controlled timing/performance
+acceptance remain open. The installed receiver was not restarted or installed.
+
 Each delivered PR received independent review and passed all four AMD64 CI
 configurations before merge. The Stage 1 work includes a non-silent stereo ALAC
 fixture comparing every decoded sample; a temporary left/right decoder-plane
